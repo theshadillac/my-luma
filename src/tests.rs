@@ -1647,6 +1647,7 @@ fn weather_units_save_without_replacing_celsius_cache_and_hide_keeps_city() {
             temperature: 14.2,
             code: 2,
             is_day: true,
+            daily: None,
         },
     });
     state.focus = Target::WeatherTemperature;
@@ -3812,4 +3813,135 @@ fn hovering_an_inactive_nav_tab_draws_a_highlight() {
     assert_eq!(highlights(&state), 1);
     state.pointer_focus(Target::Nav(0));
     assert_eq!(highlights(&state), 0);
+}
+
+fn with_forecast(state: &mut State) {
+    let place = crate::weather::Location {
+        name: "Fort Collins".into(),
+        region: "Colorado".into(),
+        country: "United States".into(),
+        latitude: 40.5853,
+        longitude: -105.0844,
+    };
+    let day = |weekday, code| crate::weather::Day {
+        weekday,
+        high: 10.,
+        low: -2.,
+        code,
+    };
+    state.preferences.weather_location = Some(place.clone());
+    state.weather.cache = Some(crate::weather::Cache {
+        key: place.key(),
+        updated_at: 1000,
+        reading: crate::weather::Reading {
+            temperature: 8.,
+            code: 2,
+            is_day: true,
+            daily: Some([day(4, 2), day(5, 0), day(6, 0), day(0, 3), day(1, 73)]),
+        },
+    });
+}
+
+fn drawn_texts(state: &State) -> Vec<(String, f32)> {
+    scene(state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(value, _, style, ..) => Some((value.clone(), style.size)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn five_day_forecast_appears_under_the_weather_only_when_switched_on() {
+    let mut state = ready();
+    with_forecast(&mut state);
+    let has_days = |state: &State| {
+        let texts = drawn_texts(state);
+        ["Fri", "Sat", "Sun", "Mon", "Tue"]
+            .iter()
+            .all(|day| texts.iter().any(|(value, _)| value == day))
+    };
+    assert!(!state.preferences.show_forecast);
+    assert!(!has_days(&state));
+    // Settings → Widgets → Weather → 5-day forecast.
+    state.open(2);
+    state.subpage = Some(crate::state::Subpage::Weather);
+    state.focus = Target::WeatherForecast;
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|control| control.target == Target::WeatherForecast)
+    );
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.show_forecast);
+    state.open(0);
+    assert!(has_days(&state));
+    // Hiding the weather widget hides the forecast too.
+    state.preferences.show_weather = false;
+    assert!(!has_days(&state));
+}
+
+#[test]
+fn glass_clock_replaces_the_greeting_and_header_clock_on_home() {
+    use crate::state::GLASS_CLOCK_ROW;
+    let mut state = ready();
+    with_forecast(&mut state);
+    state.preferences.show_forecast = true;
+    let greetings: Vec<String> = (0..24)
+        .map(|hour| state.preferences.language.greeting(hour, ""))
+        .collect();
+    let greeting_shown = |state: &State| {
+        drawn_texts(state)
+            .iter()
+            .any(|(value, _)| greetings.contains(value))
+    };
+    assert!(greeting_shown(&state));
+    // General → Glass clock on Home.
+    state.open(2);
+    state.focus = Target::Setting(GLASS_CLOCK_ROW);
+    assert!(
+        drawn_texts(&state)
+            .iter()
+            .any(|(value, _)| value == "Glass clock on Home")
+    );
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.glass_clock);
+    // Settings keeps the small clock in the header.
+    let small_clocks = drawn_texts(&state)
+        .iter()
+        .filter(|(value, size)| value.contains(':') && *size < 50.)
+        .count();
+    assert_eq!(small_clocks, 1);
+    state.open(0);
+    let texts = drawn_texts(&state);
+    assert!(!greeting_shown(&state));
+    // One large time, no small header clock, and the forecast under it.
+    assert!(
+        texts
+            .iter()
+            .any(|(value, size)| value.contains(':') && *size > 80.)
+    );
+    assert!(
+        !texts
+            .iter()
+            .any(|(value, size)| value.contains(':') && *size < 50.)
+    );
+    assert!(texts.iter().any(|(value, _)| value == "Tue"));
+    // The large time never reaches the favourites.
+    let favourites_y = scene(&state)
+        .controls
+        .iter()
+        .filter(|control| matches!(control.target, Target::App(_)))
+        .map(|control| control.rect.y)
+        .fold(f32::MAX, f32::min);
+    for draw in &scene(&state).draw {
+        if let crate::renderer::Draw::Text(value, rect, style, ..) = draw
+            && value.contains(':')
+            && style.size > 80.
+        {
+            assert!(rect.y + rect.h < favourites_y);
+        }
+    }
 }

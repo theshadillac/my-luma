@@ -4,9 +4,10 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        APPS_COLUMNS, BACK_RECENTS_ROW, Control, HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT,
-        HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW,
-        Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target, TextField, WIDGETS_SECTION,
+        APPS_COLUMNS, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT,
+        HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
+        LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target, TextField,
+        WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -728,13 +729,16 @@ fn header(
     );
     // 6/5 rather than 1.2 keeps Medium's original 28.8 px line exactly.
     let height = style.size * 6. / 5.;
-    out.text(
-        clock,
-        Rect::new(84., 76.8 - height / 2., layout.surface.x - 84., height),
-        style,
-        WHITE,
-        false,
-    );
+    // The glass clock replaces the header clock on Home.
+    if !(state.preferences.glass_clock && state.page == Page::Home) {
+        out.text(
+            clock,
+            Rect::new(84., 76.8 - height / 2., layout.surface.x - 84., height),
+            style,
+            WHITE,
+            false,
+        );
+    }
     let nav = layout.surface;
     out.shadow(nav, 48., 18., 4., 0.06);
     out.shape(nav, 48., c(0x171c20, 0.72));
@@ -1256,15 +1260,185 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
 }
 
 fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
+    if state.preferences.glass_clock {
+        glass_clock(out, state, assets, now);
+    } else {
+        home_heading(out, state, assets, now);
+    }
+    home_content(out, state, assets);
+}
+
+/// The next five days, when the forecast is switched on and the service sent them.
+fn forecast_days(state: &State) -> Option<[weather::Day; 5]> {
+    if !state.preferences.show_weather || !state.preferences.show_forecast {
+        return None;
+    }
+    let place = state.preferences.weather_location.as_ref()?;
+    state.weather.reading(place)?.daily
+}
+
+const FORECAST_COLUMN: f32 = 96.;
+const FORECAST_GAP: f32 = 22.;
+const FORECAST_HEIGHT: f32 = 100.;
+const FORECAST_WIDTH: f32 = 5. * FORECAST_COLUMN + 4. * FORECAST_GAP;
+
+/// Five compact columns: day, condition icon, high and low.
+fn forecast_row(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    days: [weather::Day; 5],
+    x: f32,
+    y: f32,
+) {
+    let language = state.preferences.language;
+    let names: Vec<&str> = language.t("weekdaysShort").split(',').collect();
+    let unit = state.preferences.temperature_unit;
+    let degrees = |celsius: f64| {
+        weather::format_temperature(celsius, unit)
+            .trim_end_matches(['C', 'F'])
+            .to_owned()
+    };
+    for (index, day) in days.into_iter().enumerate() {
+        let left = x + index as f32 * (FORECAST_COLUMN + FORECAST_GAP);
+        let centre = left + FORECAST_COLUMN / 2.;
+        let name = names.get(day.weekday as usize).copied().unwrap_or("");
+        let label = text(18.4, 600, 0.02);
+        let width = assets.width(name, label) + 1.;
+        out.text(
+            name,
+            Rect::new(centre - width / 2., y, width, 24.),
+            label,
+            c(0xf5f5f5, 0.8),
+            false,
+        );
+        let condition = weather::day_condition(day);
+        out.icon(
+            assets,
+            &format!("weather-{}", condition.icon),
+            Rect::new(centre - 18., y + 31., 36., 36.),
+            c(0xf0f0f0, 0.92),
+        );
+        let high = degrees(day.high);
+        let low = degrees(day.low);
+        let high_style = text(19.2, 600, 0.);
+        let low_style = text(19.2, 450, 0.);
+        let high_width = assets.width(&high, high_style) + 1.;
+        let low_width = assets.width(&low, low_style) + 1.;
+        let start = centre - (high_width + 8. + low_width) / 2.;
+        out.text(
+            high,
+            Rect::new(start, y + 74., high_width, 26.),
+            high_style,
+            c(0xf5f5f5, 0.95),
+            false,
+        );
+        out.text(
+            low,
+            Rect::new(start + high_width + 8., y + 74., low_width, 26.),
+            low_style,
+            c(0xf5f5f5, 0.6),
+            false,
+        );
+    }
+}
+
+/// The glass clock: date above a large frosted time, and the forecast under it when on.
+/// It fits between the header and the favourites, shrinking as the favourites rise.
+fn glass_clock(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
+    let language = state.preferences.language;
+    let clock = language.clock(now, state.preferences.hour_24, false);
+    // "3:41 PM" → "3:41": the period would crowd the glass digits.
+    let clock = clock
+        .split_whitespace()
+        .find(|part| part.contains(':'))
+        .unwrap_or(&clock)
+        .to_owned();
+    let days = forecast_days(state);
+    let favourites = 478.5 - state.scroll + state.landing() * LANDING_DROP;
+    let (top, bottom) = (128., favourites - 34.);
+    let date_height = if state.preferences.show_date { 44. } else { 0. };
+    let forecast_height = if days.is_some() {
+        FORECAST_HEIGHT + 22.
+    } else {
+        0.
+    };
+    let room = (bottom - top - date_height - forecast_height).max(80.);
+    // The digits' line box is about 1.02 × the size; cap at 330 px.
+    let size = (room / 1.02).clamp(96., 330.);
+    let style = text(size, 600, -0.045).leading(1.0);
+    let fitted = assets.fit_text(&clock, style, 1500.);
+    let clock_height = fitted.size * 1.02;
+    let block = date_height + clock_height + forecast_height;
+    let mut y = top + (bottom - top - block).max(0.) / 2.;
+    if state.preferences.show_date {
+        let date = state.preferences.date_format.format(language, now);
+        let date_style = text(20.8, 600, 0.14);
+        let width = assets.width(&date, date_style) + 1.;
+        out.text(
+            date,
+            Rect::new(960. - width / 2., y, width, 28.),
+            date_style,
+            c(0xf5f5f5, 0.82),
+            false,
+        );
+        y += date_height;
+    }
+    let width = assets.width(&clock, fitted) + 2.;
+    let rect = Rect::new(960. - width / 2., y, width, clock_height);
+    // Frosted glass: a faint drop shadow, a translucent body that lets the wallpaper
+    // through, and a sheen that fades from the top of the digits (stacked clipped
+    // passes, since text takes a single colour).
+    out.text(
+        clock.clone(),
+        Rect::new(rect.x, rect.y + 4., rect.w, rect.h),
+        fitted,
+        c(0x000000, 0.10),
+        false,
+    );
+    out.text(clock.clone(), rect, fitted, c(0xffffff, 0.44), false);
+    for band in 0..8 {
+        let depth = 0.12 + band as f32 * 0.06;
+        out.draw.push(Draw::Clip(Some(Rect::new(
+            rect.x - 4.,
+            rect.y,
+            rect.w + 8.,
+            rect.h * depth,
+        ))));
+        out.text(clock.clone(), rect, fitted, c(0xffffff, 0.045), false);
+    }
+    out.draw.push(Draw::Clip(None));
+    y += clock_height;
+    if let Some(days) = days {
+        forecast_row(
+            out,
+            state,
+            assets,
+            days,
+            960. - FORECAST_WIDTH / 2.,
+            y + 22.,
+        );
+    }
+}
+
+/// The usual Home heading: date, greeting, weather and, when on, the 5-day forecast.
+fn home_heading(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let language = state.preferences.language;
     let s = state.scroll;
+    let days = forecast_days(state);
+    let forecast_height = if days.is_some() {
+        FORECAST_HEIGHT + 20.
+    } else {
+        0.
+    };
     let summary = state
         .preferences
         .show_weather
         .then(|| weather_summary_layout(state, assets));
     let shift = summary
         .as_ref()
-        .map_or(0., |summary| (summary.height + 18.4) / 2.);
+        .map_or(0., |summary| (summary.height + 18.4) / 2.)
+        + forecast_height / 2.;
     let top = 223.2 - shift - s;
     let date_height = if state.preferences.show_date {
         41.8
@@ -1299,6 +1473,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         } else {
             0.
         };
+        let summary_height = summary.height;
         weather_summary(
             out,
             state,
@@ -1306,9 +1481,24 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             summary,
             top + date_height + greeting_height,
         );
+        if let Some(days) = days {
+            forecast_row(
+                out,
+                state,
+                assets,
+                days,
+                84.,
+                top + date_height + greeting_height + summary_height + 20.,
+            );
+        }
     }
+}
+
+/// Favourites and inputs, below the heading.
+fn home_content(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
     // The wallpaper-first Home lowers the favourites and inputs; the greeting stays.
-    let s = s - state.landing() * LANDING_DROP;
+    let s = state.scroll - state.landing() * LANDING_DROP;
     out.text(
         language.t("favorites"),
         Rect::new(84., 478.5 - s, 1000., 31.),
@@ -2107,6 +2297,25 @@ fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
             chevron: true,
         },
     );
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::WeatherForecast,
+            rect: Rect::new(640., y + 84., 1120., 72.),
+            title: language.t("fiveDayForecast"),
+            icon: Some("weather-partly-cloudy"),
+            value: Some(if state.preferences.show_forecast {
+                language.t("stateOn")
+            } else {
+                language.t("stateOff")
+            }),
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
 }
 
 fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -2573,6 +2782,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     "landingLayout",
                     "eye",
                     Some(if state.preferences.landing_layout {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
+                    false,
+                ),
+                (
+                    GLASS_CLOCK_ROW,
+                    "glassClock",
+                    "clock",
+                    Some(if state.preferences.glass_clock {
                         language.t("stateOn")
                     } else {
                         language.t("stateOff")

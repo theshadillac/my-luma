@@ -310,6 +310,10 @@ pub struct Preferences {
     pub back_recents: bool,
     #[serde(deserialize_with = "deserialize_clock_size")]
     pub clock_size: ClockSize,
+    /// Home shows a large frosted-glass clock in place of the greeting (fork option).
+    pub glass_clock: bool,
+    /// Home shows the next five days under the weather (fork option).
+    pub show_forecast: bool,
 }
 
 impl Default for Preferences {
@@ -345,6 +349,8 @@ impl Default for Preferences {
             wallpaper_changed: 0,
             back_recents: true,
             clock_size: ClockSize::Medium,
+            glass_clock: false,
+            show_forecast: false,
         }
     }
 }

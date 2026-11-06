@@ -3928,5 +3928,50 @@
     "vi": "Rất lớn",
     "nl": "Extra groot",
     "sv": "Extra stor"
+  },
+  "glassClock": {
+    "en": "Glass clock on Home",
+    "de": "Glasuhr auf der Startseite",
+    "es": "Reloj de cristal en Inicio",
+    "zh": "主页玻璃时钟",
+    "zh-tw": "主畫面玻璃時鐘",
+    "pt": "Relógio de vidro no Início",
+    "it": "Orologio in vetro nella Home",
+    "ru": "Стеклянные часы на главной",
+    "pl": "Szklany zegar na ekranie głównym",
+    "fr": "Horloge en verre sur l’accueil",
+    "vi": "Đồng hồ kính trên Trang chủ",
+    "nl": "Glazen klok op Start",
+    "sv": "Glasklocka på Hem"
+  },
+  "fiveDayForecast": {
+    "en": "5-day forecast",
+    "de": "5-Tage-Vorhersage",
+    "es": "Previsión de 5 días",
+    "zh": "5 天预报",
+    "zh-tw": "5 天預報",
+    "pt": "Previsão de 5 dias",
+    "it": "Previsioni a 5 giorni",
+    "ru": "Прогноз на 5 дней",
+    "pl": "Prognoza na 5 dni",
+    "fr": "Prévisions sur 5 jours",
+    "vi": "Dự báo 5 ngày",
+    "nl": "5-daagse verwachting",
+    "sv": "5-dagarsprognos"
+  },
+  "weekdaysShort": {
+    "en": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+    "de": "Mo,Di,Mi,Do,Fr,Sa,So",
+    "es": "lun,mar,mié,jue,vie,sáb,dom",
+    "zh": "周一,周二,周三,周四,周五,周六,周日",
+    "zh-tw": "週一,週二,週三,週四,週五,週六,週日",
+    "pt": "seg,ter,qua,qui,sex,sáb,dom",
+    "it": "lun,mar,mer,gio,ven,sab,dom",
+    "ru": "Пн,Вт,Ср,Чт,Пт,Сб,Вс",
+    "pl": "Pn,Wt,Śr,Cz,Pt,So,Nd",
+    "fr": "lun,mar,mer,jeu,ven,sam,dim",
+    "vi": "T2,T3,T4,T5,T6,T7,CN",
+    "nl": "ma,di,wo,do,vr,za,zo",
+    "sv": "mån,tis,ons,tor,fre,lör,sön"
   }
 }

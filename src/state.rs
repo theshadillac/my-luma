@@ -17,6 +17,8 @@ pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
 /// General settings row: the wallpaper-first Home.
 pub const LANDING_ROW: usize = 11;
+/// General settings row: the glass clock on Home.
+pub const GLASS_CLOCK_ROW: usize = 15;
 /// How far the favourites and inputs sit lower in the wallpaper-first Home.
 pub const LANDING_DROP: f32 = 280.;
 const LANDING_SECONDS: f32 = 0.35;
@@ -105,6 +107,7 @@ pub enum Target {
     WeatherToggle,
     WeatherLocation,
     WeatherTemperature,
+    WeatherForecast,
     WeatherQuery,
     WeatherSearch,
     WeatherClear,
@@ -1425,6 +1428,7 @@ impl State {
                     | Target::WeatherToggle
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
+                    | Target::WeatherForecast
                     | Target::Widget(_)
             ) || (matches!(self.focus, Target::Setting(3) | Target::InputsMenu)
                 && self.subpage == Some(Subpage::Inputs)))
@@ -1444,8 +1448,10 @@ impl State {
             {
                 return self.activate();
             }
-            if matches!(self.focus, Target::Setting(_) | Target::WeatherToggle)
-                && matches!(direction, Direction::Right)
+            if matches!(
+                self.focus,
+                Target::Setting(_) | Target::WeatherToggle | Target::WeatherForecast
+            ) && matches!(direction, Direction::Right)
             {
                 return vec![];
             }
@@ -2203,6 +2209,10 @@ impl State {
                 self.weather.invalidate_forecast();
                 return vec![Effect::Save];
             }
+            Target::WeatherForecast => {
+                self.preferences.show_forecast = !self.preferences.show_forecast;
+                return vec![Effect::Save];
+            }
             Target::WeatherLocation => self.open_location(),
             Target::WeatherTemperature => {
                 self.subpage = Some(Subpage::Temperature);
@@ -2411,6 +2421,7 @@ impl State {
                     LANDING_ROW => {
                         self.preferences.landing_layout = !self.preferences.landing_layout
                     }
+                    GLASS_CLOCK_ROW => self.preferences.glass_clock = !self.preferences.glass_clock,
                     4 => {
                         self.subpage = Some(Subpage::Language);
                         self.focus = Target::Choice(self.preferences.language.index());

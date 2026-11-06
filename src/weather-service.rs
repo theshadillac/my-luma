@@ -119,6 +119,12 @@ impl Client {
                 ("latitude", &latitude),
                 ("longitude", &longitude),
                 ("current", "temperature_2m,is_day,weather_code"),
+                (
+                    "daily",
+                    "weather_code,temperature_2m_max,temperature_2m_min",
+                ),
+                ("forecast_days", "5"),
+                ("timeformat", "unixtime"),
                 ("temperature_unit", "celsius"),
                 ("timezone", "auto"),
             ],
@@ -319,6 +325,7 @@ mod tests {
                 temperature: 14.2,
                 code: 2,
                 is_day: true,
+                daily: None,
             },
         };
         {
