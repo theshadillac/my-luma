@@ -2742,8 +2742,14 @@ impl State {
         }
         if self.page != Page::Home {
             self.return_home()
+        } else if self.preferences.back_recents {
+            self.open_recents()
         } else {
-            self.back_recents()
+            // With the Recent apps shortcut off, Back on Home returns to the first favourite,
+            // scrolling the strip back to its beginning.
+            self.home_scroll = 0.;
+            self.focus = self.first_content();
+            vec![]
         }
     }
 

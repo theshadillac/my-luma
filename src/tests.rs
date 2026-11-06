@@ -3539,6 +3539,30 @@ fn the_wallpaper_first_home_lowers_the_rows_until_focus_moves_into_them() {
 }
 
 #[test]
+fn back_on_home_returns_to_the_first_favourite_when_the_recents_shortcut_is_off() {
+    let mut state = ready();
+    state.preferences.back_recents = false;
+    let first = state.first_content();
+    assert!(matches!(first, Target::App(_)));
+    // Scrolled along the strip.
+    let far = state.apps()[5].id.clone();
+    state.focus = Target::App(far);
+    state.home_scroll = 400.;
+    assert!(state.back().is_empty());
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, first);
+    assert_eq!(state.home_scroll, 0.);
+    // From the header too.
+    state.focus = Target::Nav(0);
+    state.back();
+    assert_eq!(state.focus, first);
+    // With the shortcut on, Back on Home still opens Recent apps.
+    state.preferences.back_recents = true;
+    state.back();
+    assert!(matches!(state.overlay, Some(Overlay::Recents { .. })));
+}
+
+#[test]
 fn wallpaper_first_home_stays_lowered_without_input_cards() {
     use crate::state::LANDING_DROP;
     let tile_y = |state: &State| {
