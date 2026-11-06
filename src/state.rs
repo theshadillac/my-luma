@@ -15,6 +15,11 @@ pub const SECTION_COUNT: usize = 4;
 pub const BACK_RECENTS_ROW: usize = 14;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
+/// General settings row: the wallpaper-first Home.
+pub const LANDING_ROW: usize = 11;
+/// How far the favourites and inputs sit lower in the wallpaper-first Home.
+pub const LANDING_DROP: f32 = 280.;
+const LANDING_SECONDS: f32 = 0.35;
 pub const APPS_COLUMNS: usize = 6;
 /// Automatic inventory retries before the error shows: with the 6.5 s Luna timeout about 50 s.
 pub const INVENTORY_RETRIES: u32 = 5;
@@ -258,6 +263,8 @@ pub struct State {
     pub pointer: bool,
     pub pressed: Option<Target>,
     pub previous_background: Option<(String, Instant)>,
+    /// Wallpaper-first Home: from, to (1 = lowered) and start of the current slide.
+    landing: (f32, f32, Instant),
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     pub deleting_wallpaper: Option<String>,
@@ -275,7 +282,9 @@ pub struct State {
 
 impl State {
     pub fn new(preferences: Preferences) -> Self {
+        let landing = if preferences.landing_layout { 1. } else { 0. };
         Self {
+            landing: (landing, landing, Instant::now()),
             page: Page::Home,
             focus: Target::Nav(0),
             inventory: Inventory::default(),
@@ -394,6 +403,14 @@ impl State {
     }
 
     pub fn tick(&mut self) {
+        let target = self.landing_target();
+        if target != self.landing.1 {
+            self.landing = (self.landing(), target, Instant::now());
+            self.dirty = true;
+        }
+        if self.landing() != self.landing.1 {
+            self.dirty = true;
+        }
         let recents_open = self.recents_open();
         if recents_open || self.recents.visibility > 0. {
             self.dirty |= self.recents.animate(
@@ -450,6 +467,7 @@ impl State {
             && (self.recents.visibility != if self.recents_open() { 1. } else { 0. }
                 || self.recents.cards_animating(self.pointer)))
             || self.previous_background.is_some()
+            || self.landing() != self.landing.1
             || self.panel_started.is_some()
             || (!self.preferences.reduced_motion
                 && self
@@ -555,6 +573,37 @@ impl State {
                 .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
         });
         apps
+    }
+
+    /// With the wallpaper-first Home on, the favourites sit lower while focus is in the header
+    /// of Home; moving down into them slides them up to their usual place.
+    fn landing_target(&self) -> f32 {
+        // Pointer focus must not slide its hit target away. Remote navigation resumes the
+        // focus-led transition; overlays and move mode still use the normal layout.
+        if self.preferences.landing_layout
+            && self.page == Page::Home
+            && self.overlay.is_none()
+            && self.moving.is_none()
+            && self.pointer
+        {
+            return self.landing.1;
+        }
+        let lowered = self.preferences.landing_layout
+            && self.page == Page::Home
+            && self.overlay.is_none()
+            && self.moving.is_none()
+            && matches!(self.focus, Target::Nav(_) | Target::TvSettings);
+        if lowered { 1. } else { 0. }
+    }
+
+    /// 0 in the usual layout, 1 fully lowered; eased while it slides.
+    pub fn landing(&self) -> f32 {
+        let (from, to, start) = self.landing;
+        if self.preferences.reduced_motion {
+            return to;
+        }
+        let t = (start.elapsed().as_secs_f32() / LANDING_SECONDS).min(1.);
+        from + (to - from) * (1. - (1. - t).powi(3))
     }
 
     pub fn content_viewport(&self) -> Rect {
@@ -838,12 +887,18 @@ impl State {
                 } else {
                     120.8
                 };
-                if control.rect.y < top {
-                    self.scroll = (self.scroll + control.rect.y - top).max(0.);
+                // Where the control ends up once the wallpaper-first Home finished sliding.
+                let y = if self.page == Page::Home {
+                    control.rect.y - (self.landing() - self.landing_target()) * LANDING_DROP
+                } else {
+                    control.rect.y
+                };
+                if y < top {
+                    self.scroll = (self.scroll + y - top).max(0.);
                 }
                 let bottom = self.scroll_bottom();
-                if control.rect.y + control.rect.h > bottom {
-                    self.scroll += control.rect.y + control.rect.h - bottom;
+                if y + control.rect.h > bottom {
+                    self.scroll += y + control.rect.h - bottom;
                 }
             }
         }
@@ -858,6 +913,10 @@ impl State {
 
     /// Hover and pointer-down must not move the control before pointer-up.
     pub fn pointer_focus(&mut self, target: Target) {
+        // Stop an in-flight landing slide at the geometry used for this pointer event,
+        // before changing focus. Keep that geometry for hover, down and release.
+        let landing = self.landing();
+        self.landing = (landing, landing, Instant::now());
         if !self.pointer {
             self.dirty = true;
         }
@@ -2313,6 +2372,9 @@ impl State {
                     2 => self.preferences.reduced_motion = !self.preferences.reduced_motion,
                     BACK_RECENTS_ROW => {
                         self.preferences.back_recents = !self.preferences.back_recents
+                    }
+                    LANDING_ROW => {
+                        self.preferences.landing_layout = !self.preferences.landing_layout
                     }
                     4 => {
                         self.subpage = Some(Subpage::Language);
