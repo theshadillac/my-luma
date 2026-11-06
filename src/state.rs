@@ -588,12 +588,25 @@ impl State {
         {
             return self.landing.1;
         }
+        // With no input cards below the favourites there is nothing to make room for, so the
+        // row stays lowered when focus moves into it.
         let lowered = self.preferences.landing_layout
             && self.page == Page::Home
             && self.overlay.is_none()
             && self.moving.is_none()
-            && matches!(self.focus, Target::Nav(_) | Target::TvSettings);
+            && (matches!(
+                self.focus,
+                Target::Nav(_) | Target::TvSettings | Target::InputsButton
+            ) || !self.home_inputs_shown());
         if lowered { 1. } else { 0. }
+    }
+
+    /// Whether Home shows any input cards below the favourites.
+    fn home_inputs_shown(&self) -> bool {
+        self.inventory
+            .inputs
+            .iter()
+            .any(|input| self.preferences.input_visible(input))
     }
 
     /// 0 in the usual layout, 1 fully lowered; eased while it slides.

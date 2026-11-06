@@ -3454,6 +3454,65 @@ fn the_wallpaper_first_home_lowers_the_rows_until_focus_moves_into_them() {
 }
 
 #[test]
+fn wallpaper_first_home_stays_lowered_without_input_cards() {
+    use crate::state::LANDING_DROP;
+    let tile_y = |state: &State| {
+        controls(state)
+            .iter()
+            .find(|control| matches!(control.target, Target::App(_)))
+            .map(|control| control.rect.y)
+            .unwrap()
+    };
+    let mut usual = ready();
+    usual.preferences.reduced_motion = true;
+    let usual_y = tile_y(&usual);
+
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.set_inventory(demo_inventory(), None);
+    let inputs: Vec<String> = state
+        .inventory
+        .inputs
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    assert!(!inputs.is_empty());
+    for id in inputs {
+        state.preferences.input_modes.insert(id, InputMode::Off);
+    }
+    state.tick();
+    assert_eq!(state.landing(), 1.);
+    // Down into the favourites keeps them where they are: there is nothing below to reveal.
+    state.direction(Direction::Down, &controls(&state));
+    assert!(matches!(state.focus, Target::App(_)));
+    state.tick();
+    assert_eq!(state.landing(), 1.);
+    assert_eq!(tile_y(&state), usual_y + LANDING_DROP);
+    assert_eq!(state.scroll, 0.);
+}
+
+#[test]
+fn wallpaper_first_home_treats_the_inputs_button_as_header() {
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        inputs_menu: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.set_inventory(demo_inventory(), None);
+    state.focus = Target::InputsButton;
+    state.tick();
+    assert_eq!(
+        state.landing(),
+        1.,
+        "the top-bar Inputs button keeps the row lowered"
+    );
+}
+
+#[test]
 fn wallpaper_first_pointer_hover_and_press_preserve_card_geometry() {
     for reduced_motion in [false, true] {
         let mut state = State::new(Preferences {
