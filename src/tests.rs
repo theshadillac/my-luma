@@ -3789,3 +3789,27 @@ fn clock_size_preferences_round_trip_and_tolerate_unknown_values() {
         serde_json::from_value(serde_json::json!({ "hour_24": true })).unwrap();
     assert_eq!(older.clock_size, ClockSize::Medium);
 }
+
+#[test]
+fn hovering_an_inactive_nav_tab_draws_a_highlight() {
+    let mut state = ready();
+    let highlights = |state: &State| {
+        let scene = scene(state);
+        let tab = scene
+            .controls
+            .iter()
+            .find(|c| c.target == Target::Nav(1))
+            .unwrap()
+            .rect;
+        scene
+            .draw
+            .iter()
+            .filter(|draw| matches!(draw, crate::renderer::Draw::RoundedGradient(r, ..) if r.x == tab.x && r.w == tab.w))
+            .count()
+    };
+    assert_eq!(highlights(&state), 0);
+    state.pointer_focus(Target::Nav(1));
+    assert_eq!(highlights(&state), 1);
+    state.pointer_focus(Target::Nav(0));
+    assert_eq!(highlights(&state), 0);
+}
