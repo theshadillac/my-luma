@@ -48,6 +48,11 @@ pub enum Page {
 pub enum Target {
     Nav(usize),
     TvSettings,
+    /// The top bar's Inputs button (Settings → Widgets → Inputs) and its menu's rows.
+    InputsButton,
+    InputPick(String),
+    InputsMenu,
+    InputInMenu,
     InstallUpdate,
     CheckUpdates,
     Recent(String),
@@ -135,15 +140,31 @@ pub struct Control {
 
 #[derive(Clone, Debug)]
 pub enum Overlay {
-    Options { id: String, restore: Target },
-    Delete { id: String, restore: Target },
-    Recents { restore: Target },
+    Options {
+        id: String,
+        restore: Target,
+    },
+    Delete {
+        id: String,
+        restore: Target,
+    },
+    Recents {
+        restore: Target,
+    },
     Keyboard,
     SystemKeyboard,
+    /// The top bar's Inputs menu.
+    Inputs,
     WallpaperUpload,
     TileEditor,
-    BackgroundOptions { id: String, restore: Target },
-    BackgroundDelete { id: String, restore: Target },
+    BackgroundOptions {
+        id: String,
+        restore: Target,
+    },
+    BackgroundDelete {
+        id: String,
+        restore: Target,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -470,6 +491,35 @@ impl State {
         self.subpage = None;
         self.panel_started = None;
         self.dirty = true;
+    }
+
+    /// What the top bar's Inputs menu lists, by app ID: Live TV, then the inputs not hidden from
+    /// it (whatever their Home card mode), plugged-in ones first (port order kept within each).
+    pub fn input_choices(&self) -> Vec<String> {
+        let live = self
+            .inventory
+            .apps
+            .iter()
+            .filter(|app| app.id == "com.webos.app.livetv")
+            .map(|app| app.id.clone());
+        let (plugged, rest): (Vec<_>, Vec<_>) = self
+            .inventory
+            .inputs
+            .iter()
+            .filter(|input| !self.preferences.inputs_menu_hidden.contains(&input.id))
+            .partition(|input| input.connected == Some(true));
+        live.chain(
+            plugged
+                .into_iter()
+                .chain(rest)
+                .map(|input| input.id.clone()),
+        )
+        .collect()
+    }
+
+    /// Whether the top bar shows the Inputs button.
+    pub fn inputs_button(&self) -> bool {
+        self.preferences.inputs_menu && !self.input_choices().is_empty()
     }
 
     pub fn apps(&self) -> Vec<&App> {
@@ -1088,7 +1138,21 @@ impl State {
                             let id = apps[next].id.clone();
                             self.focus(Target::App(id), controls);
                         }
-                        Direction::Up => self.focus(Target::Nav(0), controls),
+                        Direction::Up => {
+                            // The top bar's button above the right half of the screen, if shown.
+                            let right = controls
+                                .iter()
+                                .find(|control| control.target == self.focus)
+                                .is_some_and(|control| control.rect.center().0 >= 960.);
+                            self.focus(
+                                if right && self.inputs_button() {
+                                    Target::InputsButton
+                                } else {
+                                    Target::Nav(0)
+                                },
+                                controls,
+                            )
+                        }
                         Direction::Down => {
                             let x = controls
                                 .iter()
@@ -1118,6 +1182,15 @@ impl State {
                     }
                     return vec![];
                 }
+            }
+            if self.focus == Target::InputsButton {
+                match direction {
+                    Direction::Left => self.focus(Target::Nav(self.page_index()), controls),
+                    Direction::Right => self.focus(Target::TvSettings, controls),
+                    Direction::Up => {}
+                    Direction::Down => self.focus(self.first_content(), controls),
+                }
+                return vec![];
             }
             let setting_rows: Option<&[Target]> = match self.subpage {
                 Some(Subpage::Greeting) => Some(&[
@@ -1194,6 +1267,21 @@ impl State {
                 }
                 return vec![];
             }
+            if self.focus == Target::InputInMenu {
+                match direction {
+                    Direction::Left => self.close_subpage(),
+                    Direction::Up => self.focus(
+                        if controls.iter().any(|c| c.target == Target::InputNameReset) {
+                            Target::InputNameReset
+                        } else {
+                            Target::InputRename
+                        },
+                        controls,
+                    ),
+                    _ => {}
+                }
+                return vec![];
+            }
             if matches!(self.focus, Target::InputRename | Target::InputNameReset) {
                 match direction {
                     Direction::Left => self.close_subpage(),
@@ -1210,6 +1298,9 @@ impl State {
                             && controls.iter().any(|c| c.target == Target::InputNameReset) =>
                     {
                         self.focus(Target::InputNameReset, controls)
+                    }
+                    Direction::Down if controls.iter().any(|c| c.target == Target::InputInMenu) => {
+                        self.focus(Target::InputInMenu, controls)
                     }
                     _ => {}
                 }
@@ -1249,7 +1340,8 @@ impl State {
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
                     | Target::Widget(_)
-            ) || (self.focus == Target::Setting(3) && self.subpage == Some(Subpage::Inputs)))
+            ) || (matches!(self.focus, Target::Setting(3) | Target::InputsMenu)
+                && self.subpage == Some(Subpage::Inputs)))
                 && matches!(direction, Direction::Left)
             {
                 self.close_subpage();
@@ -1961,6 +2053,26 @@ impl State {
                 self.pressed = None;
             }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
+            Target::InputsButton => {
+                if let Some(first) = self.input_choices().into_iter().next() {
+                    self.overlay = Some(Overlay::Inputs);
+                    self.focus = Target::InputPick(first);
+                    self.pressed = None;
+                    if !self.preferences.reduced_motion {
+                        self.panel_started = Some(Instant::now());
+                    }
+                }
+            }
+            Target::InputPick(id) if !self.launching => {
+                self.overlay = None;
+                self.panel_started = None;
+                self.focus = Target::InputsButton;
+                return vec![Effect::Launch(id)];
+            }
+            Target::InputsMenu => {
+                self.preferences.inputs_menu = !self.preferences.inputs_menu;
+                return vec![Effect::Save];
+            }
             Target::App(_) if self.page == Page::Apps && !self.launching => self.options(),
             Target::App(id) | Target::Input(id) if !self.launching => {
                 return vec![Effect::Launch(id)];
@@ -2128,6 +2240,17 @@ impl State {
                     self.scroll = 0.;
                     self.sync_custom_tiles();
                     self.focus = Target::TileEditor;
+                    return vec![Effect::Save];
+                }
+            }
+            Target::InputInMenu => {
+                if let Some(Subpage::Input(id)) = &self.subpage {
+                    let hidden = &mut self.preferences.inputs_menu_hidden;
+                    if let Some(index) = hidden.iter().position(|item| item == id) {
+                        hidden.remove(index);
+                    } else {
+                        hidden.push(id.clone());
+                    }
                     return vec![Effect::Save];
                 }
             }
@@ -2506,6 +2629,11 @@ impl State {
                     self.recents.visibility = 0.;
                     self.recents.closing_focus = None;
                 }
+            }
+            if matches!(overlay, Overlay::Inputs) {
+                self.focus = Target::InputsButton;
+                self.pressed = None;
+                return vec![];
             }
             if let Overlay::Options { restore, .. } | Overlay::Recents { restore } = overlay {
                 self.focus = restore;
