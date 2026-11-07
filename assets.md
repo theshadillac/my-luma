@@ -107,9 +107,9 @@ to compiled `.lvec` derivatives.
 
 ### Live TV and browser cards
 
-`live-tv.svg` and `browser.svg` are original Luma artwork, MIT. Both share a blue/cyan material
-with a light rim and white details. Live TV uses a rounded display, play symbol and live
-indicator. Browser uses a globe with a navigation pointer. The gradients and highlights are vector
+`live-tv.svg` and `browser.svg` are original Luma artwork, MIT. Live TV is a red on-air badge
+(dot and LIVE lettering) beside a white TV wordmark on a near-black card. Browser uses a blue/cyan
+material with a light rim and white details: a globe with a navigation pointer. The gradients and highlights are vector
 geometry, with no embedded images, runtime fonts, filters or raster effects. Each utility card
 uses its native app's exact ID.
 

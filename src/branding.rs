@@ -30,7 +30,8 @@ impl Brand {
             "hbo-max" | "bbc-iplayer" | "crunchyroll" | "twitch" | "dazn" | "paramount-plus"
             | "channel-4" | "wavve" => (0.70, 64.),
             "now-tv" => (0.70, 52.),
-            "live-tv" | "browser" => (0.62, 68.),
+            "live-tv" => (0.66, 60.),
+            "browser" => (0.62, 68.),
             _ => (0.70, 56.),
         }
     }
