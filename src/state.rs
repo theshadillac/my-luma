@@ -307,6 +307,9 @@ pub struct State {
     pub last_input: Instant,
     /// When the ambient screen started, while it shows.
     pub ambient: Option<Instant>,
+    /// The ambient transition last drawn (fades, tour stop and glide), so each changed
+    /// frame is redrawn and a still one is not.
+    ambient_drawn: Option<(f32, f32, usize, f32)>,
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     pub deleting_wallpaper: Option<String>,
@@ -329,6 +332,7 @@ impl State {
             landing: (landing, landing, Instant::now()),
             last_input: Instant::now(),
             ambient: None,
+            ambient_drawn: None,
             page: Page::Home,
             focus: Target::Nav(0),
             inventory: Inventory::default(),
@@ -447,6 +451,17 @@ impl State {
     }
 
     pub fn tick(&mut self) {
+        // The ambient screen's fades and glides change every frame without input: redraw
+        // whenever the drawn transition differs, including its last frame.
+        let ambient = self.ambient_elapsed().map(|elapsed| {
+            let (ui, dim) = self.ambient_progress();
+            let (_, _, glide) = self.ambient_stops();
+            (ui, dim, (elapsed / AMBIENT_DRIFT_EVERY) as usize, glide)
+        });
+        if ambient != self.ambient_drawn {
+            self.ambient_drawn = ambient;
+            self.dirty = true;
+        }
         let target = self.landing_target();
         if target != self.landing.1 {
             self.landing = (self.landing(), target, Instant::now());

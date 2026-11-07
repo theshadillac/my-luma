@@ -1500,7 +1500,8 @@ fn ambient(
     let (ui, dim) = state.ambient_progress();
     out.fade(content_start, 1. - ui, 1.);
     out.controls.clear();
-    out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x000000, 0.8 * dim));
+    // Dim enough to rest the panel while keeping a hint of the wallpaper.
+    out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x000000, 0.62 * dim));
     let prominence = 1. + 0.4 * dim;
     // The glass clock is already Home's own; otherwise it fades in with the change.
     let shown = if state.preferences.glass_clock {

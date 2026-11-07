@@ -4108,3 +4108,32 @@ fn ambient_screen_fades_home_then_tours_the_corners() {
     let mid = clock_rect(&state);
     assert!(mid.x < home.x && mid.x > lower_left.x);
 }
+
+#[test]
+fn ambient_fades_and_glides_redraw_every_changed_frame() {
+    use crate::state::AMBIENT_DRIFT_EVERY;
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    state.preferences.ambient_minutes = 2;
+    let frame = |state: &mut State, seconds: f32| {
+        state.ambient = Some(Instant::now() - Duration::from_secs_f32(seconds));
+        state.dirty = false;
+        state.tick();
+        state.dirty
+    };
+    // Each step of the fade and of a glide asks for a frame.
+    for seconds in [0.2, 0.6, 1.4, 2.4, 3.3, 4.2] {
+        assert!(frame(&mut state, seconds), "fade frame at {seconds} s");
+    }
+    // Settled: the same still frame is not redrawn again.
+    assert!(frame(&mut state, 30.));
+    assert!(!frame(&mut state, 31.));
+    for offset in [0.5, 1.5, 2.5, 3.5] {
+        assert!(
+            frame(&mut state, AMBIENT_DRIFT_EVERY + offset),
+            "glide frame at +{offset} s"
+        );
+    }
+    assert!(frame(&mut state, AMBIENT_DRIFT_EVERY + 10.));
+    assert!(!frame(&mut state, AMBIENT_DRIFT_EVERY + 20.));
+}
