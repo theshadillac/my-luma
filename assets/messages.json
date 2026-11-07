@@ -3973,5 +3973,35 @@
     "vi": "T2,T3,T4,T5,T6,T7,CN",
     "nl": "ma,di,wo,do,vr,za,zo",
     "sv": "mån,tis,ons,tor,fre,lör,sön"
+  },
+  "ambientScreen": {
+    "en": "Ambient screen",
+    "de": "Ambient-Bildschirm",
+    "es": "Pantalla ambiente",
+    "zh": "环境屏幕",
+    "zh-tw": "環境螢幕",
+    "pt": "Ecrã ambiente",
+    "it": "Schermo ambiente",
+    "ru": "Фоновый экран",
+    "pl": "Ekran otoczenia",
+    "fr": "Écran d’ambiance",
+    "vi": "Màn hình chờ",
+    "nl": "Sfeerscherm",
+    "sv": "Ambientskärm"
+  },
+  "minutesShort": {
+    "en": "{minutes} min",
+    "de": "{minutes} Min.",
+    "es": "{minutes} min",
+    "zh": "{minutes} 分钟",
+    "zh-tw": "{minutes} 分鐘",
+    "pt": "{minutes} min",
+    "it": "{minutes} min",
+    "ru": "{minutes} мин",
+    "pl": "{minutes} min",
+    "fr": "{minutes} min",
+    "vi": "{minutes} phút",
+    "nl": "{minutes} min",
+    "sv": "{minutes} min"
   }
 }

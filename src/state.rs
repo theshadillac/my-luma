@@ -19,6 +19,14 @@ pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
 pub const LANDING_ROW: usize = 11;
 /// General settings row: the glass clock on Home.
 pub const GLASS_CLOCK_ROW: usize = 15;
+/// General settings row: the ambient screen's delay.
+pub const AMBIENT_ROW: usize = 16;
+/// The ambient screen's delay choices, in minutes; 0 is off.
+pub const AMBIENT_CHOICES: [u8; 4] = [0, 2, 5, 10];
+/// After this long, the ambient screen lets LG's own screen saver take over.
+pub const AMBIENT_HANDOFF: Duration = Duration::from_secs(60 * 60);
+/// The ambient screen's fade-in.
+pub const AMBIENT_FADE: Duration = Duration::from_millis(1500);
 /// How far the favourites and inputs sit lower in the wallpaper-first Home.
 pub const LANDING_DROP: f32 = 280.;
 const LANDING_SECONDS: f32 = 0.35;
@@ -270,6 +278,10 @@ pub struct State {
     pub previous_background: Option<(String, Instant)>,
     /// Wallpaper-first Home: from, to (1 = lowered) and start of the current slide.
     landing: (f32, f32, Instant),
+    /// The last remote, pointer or keyboard input, for the ambient screen.
+    pub last_input: Instant,
+    /// When the ambient screen started, while it shows.
+    pub ambient: Option<Instant>,
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     pub deleting_wallpaper: Option<String>,
@@ -290,6 +302,8 @@ impl State {
         let landing = if preferences.landing_layout { 1. } else { 0. };
         Self {
             landing: (landing, landing, Instant::now()),
+            last_input: Instant::now(),
+            ambient: None,
             page: Page::Home,
             focus: Target::Nav(0),
             inventory: Inventory::default(),
@@ -474,11 +488,77 @@ impl State {
             || self.previous_background.is_some()
             || self.landing() != self.landing.1
             || self.panel_started.is_some()
+            || self.ambient_fading()
             || (!self.preferences.reduced_motion
                 && self
                     .notice
                     .as_ref()
                     .is_some_and(|(_, start)| start.elapsed() < Duration::from_millis(120)))
+    }
+
+    /// Records input. Returns true when it woke the ambient screen: that input only wakes.
+    pub fn note_input(&mut self) -> bool {
+        self.last_input = Instant::now();
+        if self.ambient.take().is_some() {
+            self.dirty = true;
+            return true;
+        }
+        false
+    }
+
+    /// How long until the ambient screen may start, when it can start at all.
+    pub fn ambient_due(&self) -> Option<Duration> {
+        let minutes = self.preferences.ambient_minutes;
+        if minutes == 0
+            || self.ambient.is_some()
+            || self.page != Page::Home
+            || self.overlay.is_some()
+            || self.moving.is_some()
+            || self.recents_open()
+            || self.loading
+        {
+            return None;
+        }
+        Some(Duration::from_secs(u64::from(minutes) * 60).saturating_sub(self.last_input.elapsed()))
+    }
+
+    /// Starts the ambient screen once Home has been idle long enough; only while Luma is seen.
+    pub fn ambient_tick(&mut self, shown: bool) {
+        if self.ambient.is_some()
+            && (self.preferences.ambient_minutes == 0 || self.page != Page::Home)
+        {
+            self.ambient = None;
+            self.dirty = true;
+        }
+        if shown && self.ambient_due() == Some(Duration::ZERO) {
+            self.ambient = Some(Instant::now());
+            self.pointer = false;
+            self.dirty = true;
+        }
+    }
+
+    /// The ambient screen's opacity: 0 when off, rising to 1 over its fade.
+    pub fn ambient_opacity(&self) -> f32 {
+        self.ambient.map_or(0., |since| {
+            if self.preferences.reduced_motion {
+                1.
+            } else {
+                (since.elapsed().as_secs_f32() / AMBIENT_FADE.as_secs_f32()).min(1.)
+            }
+        })
+    }
+
+    fn ambient_fading(&self) -> bool {
+        self.ambient.is_some() && self.ambient_opacity() < 1.
+    }
+
+    /// Whether Luma should keep LG's screen saver away: the ambient screen is on and has not
+    /// yet run for its hand-off time.
+    pub fn ambient_holds_screen_saver(&self) -> bool {
+        self.preferences.ambient_minutes > 0
+            && self
+                .ambient
+                .is_none_or(|since| since.elapsed() < AMBIENT_HANDOFF)
     }
 
     /// Home's lifecycle relaunch returns directly to Home, even from an overlay.
@@ -2434,6 +2514,14 @@ impl State {
                         self.preferences.landing_layout = !self.preferences.landing_layout
                     }
                     GLASS_CLOCK_ROW => self.preferences.glass_clock = !self.preferences.glass_clock,
+                    AMBIENT_ROW => {
+                        let current = AMBIENT_CHOICES
+                            .iter()
+                            .position(|&m| m == self.preferences.ambient_minutes)
+                            .unwrap_or(0);
+                        self.preferences.ambient_minutes =
+                            AMBIENT_CHOICES[(current + 1) % AMBIENT_CHOICES.len()];
+                    }
                     4 => {
                         self.subpage = Some(Subpage::Language);
                         self.focus = Target::Choice(self.preferences.language.index());

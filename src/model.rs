@@ -314,6 +314,8 @@ pub struct Preferences {
     pub glass_clock: bool,
     /// Home shows the next five days under the weather (fork option).
     pub show_forecast: bool,
+    /// Minutes without input on Home before the ambient screen; 0 is off (fork option).
+    pub ambient_minutes: u8,
 }
 
 impl Default for Preferences {
@@ -351,6 +353,7 @@ impl Default for Preferences {
             clock_size: ClockSize::Medium,
             glass_clock: false,
             show_forecast: false,
+            ambient_minutes: 0,
         }
     }
 }

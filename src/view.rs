@@ -4,10 +4,10 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        APPS_COLUMNS, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT,
-        HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
-        LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target, TextField,
-        WIDGETS_SECTION,
+        AMBIENT_ROW, APPS_COLUMNS, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW, HOME_FADE_LEFT,
+        HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS,
+        LANDING_DROP, LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target,
+        TextField, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -534,6 +534,10 @@ pub fn scene_with_pill(
         );
     }
     let content_start = out.draw.len();
+    if state.ambient.is_some() {
+        ambient(&mut out, state, assets, now);
+        return out;
+    }
     if recents_replaces_page(state) {
         out.shape(
             Rect::new(0., 0., 1920., 1080.),
@@ -1290,6 +1294,7 @@ fn forecast_row(
     days: [weather::Day; 5],
     x: f32,
     y: f32,
+    opacity: f32,
 ) {
     let language = state.preferences.language;
     let names: Vec<&str> = language.t("weekdaysShort").split(',').collect();
@@ -1309,7 +1314,7 @@ fn forecast_row(
             name,
             Rect::new(centre - width / 2., y, width, 24.),
             label,
-            c(0xf5f5f5, 0.8),
+            c(0xf5f5f5, 0.8 * opacity),
             false,
         );
         let condition = weather::day_condition(day);
@@ -1317,7 +1322,7 @@ fn forecast_row(
             assets,
             &format!("weather-{}", condition.icon),
             Rect::new(centre - 18., y + 31., 36., 36.),
-            c(0xf0f0f0, 0.92),
+            c(0xf0f0f0, 0.92 * opacity),
         );
         let high = degrees(day.high);
         let low = degrees(day.low);
@@ -1330,14 +1335,14 @@ fn forecast_row(
             high,
             Rect::new(start, y + 74., high_width, 26.),
             high_style,
-            c(0xf5f5f5, 0.95),
+            c(0xf5f5f5, 0.95 * opacity),
             false,
         );
         out.text(
             low,
             Rect::new(start + high_width + 8., y + 74., low_width, 26.),
             low_style,
-            c(0xf5f5f5, 0.6),
+            c(0xf5f5f5, 0.6 * opacity),
             false,
         );
     }
@@ -1386,28 +1391,7 @@ fn glass_clock(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateT
     }
     let width = assets.width(&clock, fitted) + 2.;
     let rect = Rect::new(960. - width / 2., y, width, clock_height);
-    // Frosted glass: a faint drop shadow, a translucent body that lets the wallpaper
-    // through, and a sheen that fades from the top of the digits (stacked clipped
-    // passes, since text takes a single colour).
-    out.text(
-        clock.clone(),
-        Rect::new(rect.x, rect.y + 4., rect.w, rect.h),
-        fitted,
-        c(0x000000, 0.10),
-        false,
-    );
-    out.text(clock.clone(), rect, fitted, c(0xffffff, 0.44), false);
-    for band in 0..8 {
-        let depth = 0.12 + band as f32 * 0.06;
-        out.draw.push(Draw::Clip(Some(Rect::new(
-            rect.x - 4.,
-            rect.y,
-            rect.w + 8.,
-            rect.h * depth,
-        ))));
-        out.text(clock.clone(), rect, fitted, c(0xffffff, 0.045), false);
-    }
-    out.draw.push(Draw::Clip(None));
+    glass_text(out, &clock, rect, fitted, 1.);
     y += clock_height;
     if let Some(days) = days {
         forecast_row(
@@ -1417,6 +1401,107 @@ fn glass_clock(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateT
             days,
             960. - FORECAST_WIDTH / 2.,
             y + 22.,
+            1.,
+        );
+    }
+}
+
+/// Frosted-glass digits: a faint drop shadow, a translucent body that lets the wallpaper
+/// through, and a sheen that fades from the top (stacked clipped passes, since text takes a
+/// single colour). `opacity` scales all of it.
+fn glass_text(out: &mut Scene, value: &str, rect: Rect, style: TextStyle, opacity: f32) {
+    out.text(
+        value.to_owned(),
+        Rect::new(rect.x, rect.y + 4., rect.w, rect.h),
+        style,
+        c(0x000000, 0.10 * opacity),
+        false,
+    );
+    out.text(
+        value.to_owned(),
+        rect,
+        style,
+        c(0xffffff, 0.44 * opacity),
+        false,
+    );
+    for band in 0..8 {
+        let depth = 0.12 + band as f32 * 0.06;
+        out.draw.push(Draw::Clip(Some(Rect::new(
+            rect.x - 4.,
+            rect.y,
+            rect.w + 8.,
+            rect.h * depth,
+        ))));
+        out.text(
+            value.to_owned(),
+            rect,
+            style,
+            c(0xffffff, 0.045 * opacity),
+            false,
+        );
+    }
+    out.draw.push(Draw::Clip(None));
+}
+
+/// The ambient screen: the wallpaper dimmed far down, with the time, date and forecast
+/// drifting a little each minute so nothing stays put on an OLED panel.
+fn ambient(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
+    let fade = state.ambient_opacity();
+    out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x000000, 0.8 * fade));
+    let opacity = 0.85 * fade;
+    let language = state.preferences.language;
+    let clock = language.clock(now, state.preferences.hour_24, false);
+    let clock = clock
+        .split_whitespace()
+        .find(|part| part.contains(':'))
+        .unwrap_or(&clock)
+        .to_owned();
+    let minute = (now.unix_timestamp() / 60) as f32;
+    let (dx, dy) = (
+        140. * (minute * 0.61).sin(),
+        80. * (minute * 0.37 + 1.3).sin(),
+    );
+    let days = forecast_days(state);
+    let date_height = if state.preferences.show_date { 44. } else { 0. };
+    let forecast_height = if days.is_some() {
+        FORECAST_HEIGHT + 22.
+    } else {
+        0.
+    };
+    let style = text(250., 600, -0.045).leading(1.0);
+    let clock_height = 250. * 1.02;
+    let mut y = 540. + dy - (date_height + clock_height + forecast_height) / 2.;
+    if state.preferences.show_date {
+        let date = state.preferences.date_format.format(language, now);
+        let date_style = text(20.8, 600, 0.14);
+        let width = assets.width(&date, date_style) + 1.;
+        out.text(
+            date,
+            Rect::new(960. + dx - width / 2., y, width, 28.),
+            date_style,
+            c(0xf5f5f5, 0.82 * opacity),
+            false,
+        );
+        y += date_height;
+    }
+    let width = assets.width(&clock, style) + 2.;
+    glass_text(
+        out,
+        &clock,
+        Rect::new(960. + dx - width / 2., y, width, clock_height),
+        style,
+        opacity,
+    );
+    y += clock_height;
+    if let Some(days) = days {
+        forecast_row(
+            out,
+            state,
+            assets,
+            days,
+            960. + dx - FORECAST_WIDTH / 2.,
+            y + 22.,
+            opacity,
         );
     }
 }
@@ -1489,6 +1574,7 @@ fn home_heading(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDate
                 days,
                 84.,
                 top + date_height + greeting_height + summary_height + 20.,
+                1.,
             );
         }
     }
@@ -2749,6 +2835,10 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
         }
         return;
     }
+    let ambient_value = match state.preferences.ambient_minutes {
+        0 => language.t("stateOff").to_owned(),
+        minutes => language.format("minutesShort", &[("minutes", &minutes.to_string())]),
+    };
     match state.section {
         0 => {
             for (position, (index, key, icon, value, chevron)) in [
@@ -2786,6 +2876,13 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     } else {
                         language.t("stateOff")
                     }),
+                    false,
+                ),
+                (
+                    AMBIENT_ROW,
+                    "ambientScreen",
+                    "clock",
+                    Some(ambient_value.as_str()),
                     false,
                 ),
                 (

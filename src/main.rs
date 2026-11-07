@@ -937,6 +937,11 @@ fn run() -> Result<(), String> {
     // Whether a staged Home's relaunch reached the front; see platform::ForegroundCheck.
     let mut foreground = platform::ForegroundCheck::default();
     let mut focused = true;
+    // Whether SDL currently declines LG's screen saver (the ambient screen holds it).
+    let mut holding_screen_saver = false;
+    // A key that woke the ambient screen: its release is swallowed too.
+    let mut wake_key: Option<sdl2::keyboard::Scancode> = None;
+    let mut wake_button = false;
     let mut press: Option<Press> = None;
     let mut back_button = BackButton::default();
     let initial_nav = view::navigation(&assets, state.preferences.language);
@@ -1202,6 +1207,18 @@ fn run() -> Result<(), String> {
             state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
         weather_tick(&mut state, &weather_service, visible);
+        state.ambient_tick(visible && focused);
+        let hold = state.ambient_holds_screen_saver();
+        if hold != holding_screen_saver {
+            // SDL-webOS answers tvpower's screen saver requests from this: disabled keeps
+            // LG's screen saver away while the ambient screen stands in for it.
+            if hold {
+                video.disable_screen_saver();
+            } else {
+                video.enable_screen_saver();
+            }
+            holding_screen_saver = hold;
+        }
         if std::mem::take(&mut state.update_check_requested) {
             if let Some(version) = &options.test_update_version {
                 state.update_response(Ok(
@@ -1244,6 +1261,38 @@ fn run() -> Result<(), String> {
             };
             if script_owns_input && external_input {
                 continue;
+            }
+            // Any input resets the ambient screen's timer; the input that wakes it does
+            // nothing else, release included (a pointer move only shows the pointer again).
+            match &event {
+                Event::KeyUp { scancode, .. } if wake_key.is_some() && *scancode == wake_key => {
+                    wake_key = None;
+                    continue;
+                }
+                Event::KeyDown {
+                    scancode, repeat, ..
+                } => {
+                    if state.note_input() {
+                        wake_key = *scancode;
+                        continue;
+                    }
+                    if *repeat && wake_key.is_some() && *scancode == wake_key {
+                        continue;
+                    }
+                }
+                Event::MouseButtonUp { .. } if external_input && wake_button => {
+                    wake_button = false;
+                    continue;
+                }
+                Event::MouseButtonDown { .. } if external_input && state.note_input() => {
+                    wake_button = true;
+                    continue;
+                }
+                Event::MouseWheel { .. } if external_input && state.note_input() => continue,
+                Event::MouseMotion { .. } | Event::TextInput { .. } if external_input => {
+                    state.note_input();
+                }
+                _ => {}
             }
             // Remote keys only reach the focused surface.
             if matches!(event, Event::KeyDown { .. } | Event::KeyUp { .. }) {

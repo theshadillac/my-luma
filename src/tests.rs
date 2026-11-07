@@ -3969,3 +3969,65 @@ fn pointer_click_on_the_home_tab_lowers_the_wallpaper_first_rows() {
         "Home opens lowered, as with the remote"
     );
 }
+
+#[test]
+fn ambient_screen_starts_after_idle_home_and_the_waking_input_only_wakes() {
+    use crate::state::AMBIENT_ROW;
+    use std::time::Duration;
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    // Off by default.
+    state.last_input = std::time::Instant::now() - Duration::from_secs(3600);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+    assert!(!state.ambient_holds_screen_saver());
+    // General → Ambient screen cycles Off → 2 → 5 → 10 → Off.
+    state.open(2);
+    state.focus = Target::Setting(AMBIENT_ROW);
+    for expected in [2, 5, 10, 0, 2] {
+        assert_eq!(state.activate(), vec![Effect::Save]);
+        assert_eq!(state.preferences.ambient_minutes, expected);
+    }
+    assert!(
+        drawn_texts(&state)
+            .iter()
+            .any(|(value, _)| value == "2 min")
+    );
+    // Not on Settings, only on Home.
+    state.last_input = std::time::Instant::now() - Duration::from_secs(600);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+    state.open(0);
+    // Not before the delay, and not while Luma is hidden.
+    state.last_input = std::time::Instant::now() - Duration::from_secs(60);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+    state.last_input = std::time::Instant::now() - Duration::from_secs(121);
+    state.ambient_tick(false);
+    assert!(state.ambient.is_none());
+    state.ambient_tick(true);
+    assert!(state.ambient.is_some());
+    assert!(state.ambient_holds_screen_saver());
+    // The ambient scene: no controls, one large time, no greeting or favourites.
+    let scene = scene(&state);
+    assert!(scene.controls.is_empty());
+    assert!(
+        drawn_texts(&state)
+            .iter()
+            .any(|(value, size)| value.contains(':') && *size > 200.)
+    );
+    // The waking input is consumed; the next one acts normally.
+    let focus = state.focus.clone();
+    assert!(state.note_input());
+    assert!(state.ambient.is_none());
+    assert_eq!(state.focus, focus);
+    assert!(!state.note_input());
+    // After its hand-off time, LG's own screen saver may take over.
+    state.ambient = Some(std::time::Instant::now() - crate::state::AMBIENT_HANDOFF);
+    assert!(!state.ambient_holds_screen_saver());
+    // Leaving Home or switching it off ends it.
+    state.ambient = Some(std::time::Instant::now());
+    state.preferences.ambient_minutes = 0;
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+}
