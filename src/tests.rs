@@ -3945,3 +3945,27 @@ fn glass_clock_replaces_the_greeting_and_header_clock_on_home() {
         }
     }
 }
+
+#[test]
+fn pointer_click_on_the_home_tab_lowers_the_wallpaper_first_rows() {
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.set_inventory(demo_inventory(), None);
+    state.open(2);
+    state.tick();
+    assert_eq!(state.landing(), 0., "other pages keep the usual layout");
+    // The Magic Remote pointer hovers and clicks the Home tab.
+    state.pointer_focus(Target::Nav(0));
+    assert!(state.pointer);
+    state.activate();
+    assert_eq!(state.page, crate::state::Page::Home);
+    state.tick();
+    assert_eq!(
+        state.landing(),
+        1.,
+        "Home opens lowered, as with the remote"
+    );
+}

@@ -515,6 +515,13 @@ impl State {
         self.moving = None;
         self.subpage = None;
         self.panel_started = None;
+        // Arriving on Home settles the wallpaper-first rows where Home's focus wants them,
+        // even when the pointer clicked the tab: its freeze applies only to rows already on
+        // Home, so it must not carry the raised layout over from another page.
+        let target = self.landing_resting_target();
+        if target != self.landing.1 {
+            self.landing = (self.landing(), target, Instant::now());
+        }
         self.dirty = true;
     }
 
@@ -595,6 +602,11 @@ impl State {
         {
             return self.landing.1;
         }
+        self.landing_resting_target()
+    }
+
+    /// Where the rows rest for the current page and focus, ignoring the pointer freeze.
+    fn landing_resting_target(&self) -> f32 {
         // With no input cards below the favourites there is nothing to make room for, so the
         // row stays lowered when focus moves into it.
         let lowered = self.preferences.landing_layout
