@@ -1306,18 +1306,43 @@ fn forecast_row(
             .trim_end_matches(['C', 'F'])
             .to_owned()
     };
+    let halo = opacity.min(1.);
+    // A dark translucent panel, like the top bar's, and a faint shadow under each label
+    // keep the small text readable over bright, busy wallpapers.
+    out.shape(
+        Rect::new(
+            x - 22.,
+            y - 14.,
+            FORECAST_WIDTH + 44.,
+            FORECAST_HEIGHT + 22.,
+        ),
+        30.,
+        c(0x14171d, 0.42 * halo),
+    );
+    let shaded = |out: &mut Scene, value: &str, rect: Rect, style: TextStyle, color: Color| {
+        for (dx, dy, alpha) in [(0., 2., 0.45), (1., 1., 0.3), (-1., 1., 0.3)] {
+            out.text(
+                value.to_owned(),
+                Rect::new(rect.x + dx, rect.y + dy, rect.w, rect.h),
+                style,
+                c(0x000000, alpha * halo),
+                false,
+            );
+        }
+        out.text(value.to_owned(), rect, style, color, false);
+    };
     for (index, day) in days.into_iter().enumerate() {
         let left = x + index as f32 * (FORECAST_COLUMN + FORECAST_GAP);
         let centre = left + FORECAST_COLUMN / 2.;
         let name = names.get(day.weekday as usize).copied().unwrap_or("");
         let label = text(18.4, 600, 0.02);
         let width = assets.width(name, label) + 1.;
-        out.text(
+        shaded(
+            out,
             name,
             Rect::new(centre - width / 2., y, width, 24.),
             label,
-            c(0xf5f5f5, 0.8 * opacity),
-            false,
+            c(0xf5f5f5, (0.88 * opacity).min(1.)),
         );
         let condition = weather::day_condition(day);
         out.icon(
@@ -1333,19 +1358,19 @@ fn forecast_row(
         let high_width = assets.width(&high, high_style) + 1.;
         let low_width = assets.width(&low, low_style) + 1.;
         let start = centre - (high_width + 8. + low_width) / 2.;
-        out.text(
-            high,
+        shaded(
+            out,
+            &high,
             Rect::new(start, y + 74., high_width, 26.),
             high_style,
-            c(0xf5f5f5, 0.95 * opacity),
-            false,
+            c(0xf5f5f5, (0.98 * opacity).min(1.)),
         );
-        out.text(
-            low,
+        shaded(
+            out,
+            &low,
             Rect::new(start + high_width + 8., y + 74., low_width, 26.),
             low_style,
-            c(0xf5f5f5, 0.6 * opacity),
-            false,
+            c(0xf5f5f5, (0.72 * opacity).min(1.)),
         );
     }
 }
@@ -1420,6 +1445,21 @@ fn glass_clock(
         (a.0 + (b.0 - a.0) * glide, a.1 + (b.1 - a.1) * glide)
     });
     let mut y = home_y + dy;
+    // A soft dark halo behind the date and time keeps them readable on bright wallpapers;
+    // on dark ones it disappears into the picture.
+    let halo = opacity.min(1.);
+    out.shadow(
+        Rect::new(
+            960. + dx - block_width / 2. + 40.,
+            y + 20.,
+            block_width - 80.,
+            date_height + clock_height - 40.,
+        ),
+        160.,
+        170.,
+        0.,
+        0.42 * halo,
+    );
     if state.preferences.show_date {
         let date = state.preferences.date_format.format(language, now);
         let date_style = text(20.8, 600, 0.14);
@@ -1465,7 +1505,7 @@ fn glass_text(out: &mut Scene, value: &str, rect: Rect, style: TextStyle, opacit
         value.to_owned(),
         rect,
         style,
-        c(0xffffff, 0.44 * opacity),
+        c(0xffffff, 0.5 * opacity),
         false,
     );
     for band in 0..8 {
