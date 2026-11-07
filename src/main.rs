@@ -942,6 +942,7 @@ fn run() -> Result<(), String> {
     // A key that woke the ambient screen: its release is swallowed too.
     let mut wake_key: Option<sdl2::keyboard::Scancode> = None;
     let mut wake_button = false;
+    let mut was_in_backgrounds = false;
     let mut press: Option<Press> = None;
     let mut back_button = BackButton::default();
     let initial_nav = view::navigation(&assets, state.preferences.language);
@@ -984,6 +985,12 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         state.tick();
+        // Opening Settings → Background imports any images waiting in the import folder.
+        let in_backgrounds = state.page == state::Page::Settings && state.section == 1;
+        if in_backgrounds && !was_in_backgrounds {
+            wallpaper_service.refresh();
+        }
+        was_in_backgrounds = in_backgrounds;
         wallpaper_service.set_active(wallpaper_upload_active(&state, webos, focused, visible));
         while let Ok(event) = wallpaper_service.receiver.try_recv() {
             match event {

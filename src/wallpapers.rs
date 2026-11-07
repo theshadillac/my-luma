@@ -21,7 +21,13 @@ use std::{
 };
 
 const MAX_BODY: usize = 12 * 1024 * 1024;
-const MAX_WALLPAPERS: usize = 20;
+const MAX_WALLPAPERS: usize = 60;
+/// Images dropped here (e.g. with webOS Dev Manager's file browser) are imported into the
+/// gallery at start and whenever the gallery is opened, then removed (fork option).
+pub const IMPORT_FOLDER: &str = "import";
+/// Import accepts full-size photos: up to 40 MiB and 48 megapixels each.
+const MAX_IMPORT_FILE: u64 = 40 * 1024 * 1024;
+const MAX_IMPORT_PIXELS: u64 = 48_000_000;
 const SESSION_TIME: Duration = Duration::from_secs(600);
 const SESSION_REQUEST_LIMIT: usize = 64;
 const REQUEST_TIME: Duration = Duration::from_secs(20);
@@ -134,6 +140,11 @@ impl Service {
 
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Looks for new images in the import folder.
+    pub fn refresh(&self) {
+        let _ = self.wake.send(Command::Wake);
     }
 
     pub fn delete(&self, id: String, selected: String) {
@@ -329,6 +340,119 @@ fn decode(bytes: &[u8]) -> Result<image::RgbImage, String> {
     }))
 }
 
+/// Decodes a full-size photo of any shape, applies its orientation, and fills 1920 × 1080:
+/// centre-cropped to 16:9, then resized. Transparency is composited like uploads.
+fn decode_import(bytes: &[u8]) -> Result<image::RgbImage, String> {
+    let format = image::guess_format(bytes).map_err(|_| "Not a JPEG, PNG or WebP image")?;
+    if !matches!(
+        format,
+        image::ImageFormat::Jpeg | image::ImageFormat::Png | image::ImageFormat::WebP
+    ) {
+        return Err("Not a JPEG, PNG or WebP image".into());
+    }
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(12_000);
+    limits.max_image_height = Some(12_000);
+    limits.max_alloc = Some(MAX_IMPORT_PIXELS * 4 + 16 * 1024 * 1024);
+    reader.limits(limits);
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|e| format!("Invalid image: {e}"))?;
+    use image::ImageDecoder;
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > MAX_IMPORT_PIXELS {
+        return Err("Image is larger than 48 megapixels".into());
+    }
+    if width < 640 || height < 360 {
+        return Err("Image is smaller than 640 × 360".into());
+    }
+    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    image.apply_orientation(orientation);
+    let (width, height) = (image.width(), image.height());
+    // The largest centred 16:9 region.
+    let (crop_w, crop_h) = if u64::from(width) * 9 > u64::from(height) * 16 {
+        ((u64::from(height) * 16 / 9) as u32, height)
+    } else {
+        (width, (u64::from(width) * 9 / 16) as u32)
+    };
+    let cropped = image.crop_imm((width - crop_w) / 2, (height - crop_h) / 2, crop_w, crop_h);
+    let rgba = cropped
+        .resize_exact(1920, 1080, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    Ok(image::RgbImage::from_fn(1920, 1080, |x, y| {
+        let p = rgba.get_pixel(x, y).0;
+        let alpha = p[3] as f32 / 255.;
+        image::Rgb(std::array::from_fn(|i| {
+            (p[i] as f32 * alpha + [23., 25., 28.][i] * (1. - alpha)).round() as u8
+        }))
+    }))
+}
+
+/// Imports the images waiting in the import folder, oldest name first, until the gallery is
+/// full. Each imported file is removed; one that cannot be read is renamed `*.failed` so it
+/// is not retried. Returns how many were added.
+fn import_folder(directory: &Path, mut added: impl FnMut()) -> usize {
+    let folder = directory.join(IMPORT_FOLDER);
+    if !folder.exists() {
+        // Create it, so the folder is there to drop images into.
+        if create_directory(directory).is_ok() {
+            let _ = create_directory(&folder);
+        }
+        return 0;
+    }
+    if !real_directory(&folder) {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(&folder) else {
+        return 0;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .take(512)
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                ["jpg", "jpeg", "png", "webp"].contains(&e.to_ascii_lowercase().as_str())
+            }) && fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+        })
+        .collect();
+    files.sort();
+    let mut count = 0;
+    for path in files {
+        if catalog(directory).len() >= MAX_WALLPAPERS {
+            eprintln!("Luma wallpaper import: the gallery is full ({MAX_WALLPAPERS} images)");
+            break;
+        }
+        let result = fs::symlink_metadata(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|m| {
+                if m.len() > MAX_IMPORT_FILE {
+                    Err("Image exceeds 40 MiB".into())
+                } else {
+                    fs::read(&path).map_err(|e| e.to_string())
+                }
+            })
+            .and_then(|bytes| decode_import(&bytes))
+            .and_then(|image| store_image(directory, image, || true));
+        match result {
+            Ok(_) => {
+                let _ = fs::remove_file(&path);
+                count += 1;
+                added();
+            }
+            Err(error) => {
+                eprintln!("Luma wallpaper import: {}: {error}", path.display());
+                let mut failed = path.clone().into_os_string();
+                failed.push(".failed");
+                let _ = fs::rename(&path, failed);
+            }
+        }
+    }
+    count
+}
+
 fn shade(image: &mut image::RgbImage) {
     // Same base, image opacity and gradients as tools/assets.mjs. Only source-specific
     // saturation adjustments are omitted for owner-supplied photographs.
@@ -366,9 +490,23 @@ fn jpeg(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>, String> {
 
 fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wallpaper, String> {
     if catalog(directory).len() >= MAX_WALLPAPERS {
-        return Err("The wallpaper gallery is full (20 images)".into());
+        return Err(format!(
+            "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
+        ));
     }
-    let mut image = decode(bytes)?;
+    store_image(directory, decode(bytes)?, valid)
+}
+
+fn store_image(
+    directory: &Path,
+    mut image: image::RgbImage,
+    valid: impl Fn() -> bool,
+) -> Result<Wallpaper, String> {
+    if catalog(directory).len() >= MAX_WALLPAPERS {
+        return Err(format!(
+            "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
+        ));
+    }
     let original = jpeg(&image, 94)?;
     let thumbnail =
         image::imageops::resize(&image, 480, 270, image::imageops::FilterType::Triangle);
@@ -434,8 +572,18 @@ fn worker(
     if sender.send(Event::Catalog(catalog(directory))).is_err() {
         return;
     }
+    // Each imported image shows in the gallery as soon as it is ready.
+    let import = || {
+        import_folder(directory, || {
+            let _ = sender.send(Event::Catalog(catalog(directory)));
+        });
+    };
+    import();
     let update = |command| match command {
-        Command::Wake => true,
+        Command::Wake => {
+            import();
+            true
+        }
         Command::Delete { id, selected } => {
             let result = delete_wallpaper(directory, &id, &selected);
             sender.send(Event::Deleted(id, result)).is_ok()
