@@ -25,8 +25,33 @@ pub const AMBIENT_ROW: usize = 16;
 pub const AMBIENT_CHOICES: [u8; 4] = [0, 2, 5, 10];
 /// After this long, the ambient screen lets LG's own screen saver take over.
 pub const AMBIENT_HANDOFF: Duration = Duration::from_secs(60 * 60);
-/// The ambient screen's fade-in.
-pub const AMBIENT_FADE: Duration = Duration::from_millis(1500);
+/// The ambient screen's timeline, in seconds: Home fades out, then the wallpaper dims;
+/// the clock stays put until the first drift a minute in, and each drift glides.
+pub const AMBIENT_UI_FADE: f32 = 2.5;
+pub const AMBIENT_DIM_START: f32 = 2.;
+pub const AMBIENT_DIM_FADE: f32 = 2.5;
+pub const AMBIENT_DRIFT_EVERY: f32 = 60.;
+pub const AMBIENT_DRIFT_GLIDE: f32 = 4.;
+
+/// A stop on the ambient clock block's tour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AmbientSpot {
+    /// Where Home shows it, for the first minute.
+    Home,
+    /// The middle of the screen.
+    Center,
+    LowerLeft,
+    UpperLeft,
+    UpperRight,
+    LowerRight,
+}
+pub const AMBIENT_TOUR: [AmbientSpot; 5] = [
+    AmbientSpot::LowerLeft,
+    AmbientSpot::UpperLeft,
+    AmbientSpot::UpperRight,
+    AmbientSpot::LowerRight,
+    AmbientSpot::Center,
+];
 /// How far the favourites and inputs sit lower in the wallpaper-first Home.
 pub const LANDING_DROP: f32 = 280.;
 const LANDING_SECONDS: f32 = 0.35;
@@ -537,19 +562,62 @@ impl State {
         }
     }
 
-    /// The ambient screen's opacity: 0 when off, rising to 1 over its fade.
-    pub fn ambient_opacity(&self) -> f32 {
-        self.ambient.map_or(0., |since| {
-            if self.preferences.reduced_motion {
-                1.
+    /// Seconds since the ambient screen started, while it shows.
+    pub fn ambient_elapsed(&self) -> Option<f32> {
+        self.ambient.map(|since| since.elapsed().as_secs_f32())
+    }
+
+    /// The ambient screen's transition: how far Home has faded out and how far the
+    /// wallpaper has dimmed, each 0 to 1. Reduced motion skips straight to the end.
+    pub fn ambient_progress(&self) -> (f32, f32) {
+        let Some(elapsed) = self.ambient_elapsed() else {
+            return (0., 0.);
+        };
+        if self.preferences.reduced_motion {
+            return (1., 1.);
+        }
+        let ui = (elapsed / AMBIENT_UI_FADE).clamp(0., 1.);
+        let dim = ((elapsed - AMBIENT_DIM_START) / AMBIENT_DIM_FADE).clamp(0., 1.);
+        (ease(ui), ease(dim))
+    }
+
+    /// The ambient clock block's tour: where it is coming from, where it is going and how far
+    /// along the glide it is. It holds its Home position for the first minute, then visits
+    /// each corner (lower left, upper left, upper right, lower right) and the centre, one
+    /// stop a minute, round and round.
+    pub fn ambient_stops(&self) -> (AmbientSpot, AmbientSpot, f32) {
+        let Some(elapsed) = self.ambient_elapsed() else {
+            return (AmbientSpot::Home, AmbientSpot::Home, 1.);
+        };
+        let step = (elapsed / AMBIENT_DRIFT_EVERY) as usize;
+        if step == 0 {
+            return (AmbientSpot::Home, AmbientSpot::Home, 1.);
+        }
+        let stop = |step: usize| {
+            if step == 0 {
+                AmbientSpot::Home
             } else {
-                (since.elapsed().as_secs_f32() / AMBIENT_FADE.as_secs_f32()).min(1.)
+                AMBIENT_TOUR[(step - 1) % AMBIENT_TOUR.len()]
             }
-        })
+        };
+        let glide = if self.preferences.reduced_motion {
+            1.
+        } else {
+            ease(
+                ((elapsed - step as f32 * AMBIENT_DRIFT_EVERY) / AMBIENT_DRIFT_GLIDE).clamp(0., 1.),
+            )
+        };
+        (stop(step - 1), stop(step), glide)
     }
 
     fn ambient_fading(&self) -> bool {
-        self.ambient.is_some() && self.ambient_opacity() < 1.
+        let Some(elapsed) = self.ambient_elapsed() else {
+            return false;
+        };
+        !self.preferences.reduced_motion
+            && (elapsed < AMBIENT_DIM_START + AMBIENT_DIM_FADE
+                || (elapsed >= AMBIENT_DRIFT_EVERY
+                    && elapsed % AMBIENT_DRIFT_EVERY < AMBIENT_DRIFT_GLIDE))
     }
 
     /// Whether Luma should keep LG's screen saver away: the ambient screen is on and has not
@@ -2896,4 +2964,9 @@ impl State {
             vec![]
         }
     }
+}
+
+/// Smooth start and finish for a 0–1 progress.
+fn ease(t: f32) -> f32 {
+    t * t * (3. - 2. * t)
 }

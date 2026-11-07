@@ -4,10 +4,10 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        AMBIENT_ROW, APPS_COLUMNS, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW, HOME_FADE_LEFT,
-        HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS,
-        LANDING_DROP, LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target,
-        TextField, WIDGETS_SECTION,
+        AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW,
+        HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
+        HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION,
+        State, Subpage, Target, TextField, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -534,10 +534,6 @@ pub fn scene_with_pill(
         );
     }
     let content_start = out.draw.len();
-    if state.ambient.is_some() {
-        ambient(&mut out, state, assets, now);
-        return out;
-    }
     if recents_replaces_page(state) {
         out.shape(
             Rect::new(0., 0., 1920., 1080.),
@@ -706,6 +702,9 @@ pub fn scene_with_pill(
     }
     if let Some((notice, _)) = &state.notice {
         toast(&mut out, state, assets, notice);
+    }
+    if state.ambient.is_some() {
+        ambient(&mut out, state, assets, now, content_start);
     }
     out
 }
@@ -1265,7 +1264,10 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
 
 fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     if state.preferences.glass_clock {
-        glass_clock(out, state, assets, now);
+        // While the ambient screen shows, it draws the clock block itself.
+        if state.ambient.is_none() {
+            glass_clock(out, state, assets, now, None, 1.);
+        }
     } else {
         home_heading(out, state, assets, now);
     }
@@ -1350,7 +1352,14 @@ fn forecast_row(
 
 /// The glass clock: date above a large frosted time, and the forecast under it when on.
 /// It fits between the header and the favourites, shrinking as the favourites rise.
-fn glass_clock(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
+fn glass_clock(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    now: OffsetDateTime,
+    stops: Option<(AmbientSpot, AmbientSpot, f32)>,
+    opacity: f32,
+) {
     let language = state.preferences.language;
     let clock = language.clock(now, state.preferences.hour_24, false);
     // "3:41 PM" → "3:41": the period would crowd the glass digits.
@@ -1375,23 +1384,58 @@ fn glass_clock(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateT
     let fitted = assets.fit_text(&clock, style, 1500.);
     let clock_height = fitted.size * 1.02;
     let block = date_height + clock_height + forecast_height;
-    let mut y = top + (bottom - top - block).max(0.) / 2.;
+    let home_y = top + (bottom - top - block).max(0.) / 2.;
+    // The block's width: the widest of date, time and forecast.
+    let date_width = if state.preferences.show_date {
+        assets.width(
+            &state.preferences.date_format.format(language, now),
+            text(20.8, 600, 0.14),
+        )
+    } else {
+        0.
+    };
+    let block_width = assets
+        .width(&clock, fitted)
+        .max(date_width)
+        .max(if days.is_some() { FORECAST_WIDTH } else { 0. });
+    // Each stop as an offset from Home's position, with comfortable padding in the corners.
+    let offset = |spot: AmbientSpot| {
+        const PAD_X: f32 = 120.;
+        const PAD_Y: f32 = 96.;
+        let left = PAD_X - (960. - block_width / 2.);
+        let right = 1920. - PAD_X - block_width - (960. - block_width / 2.);
+        let up = PAD_Y - home_y;
+        let down = 1080. - PAD_Y - block - home_y;
+        match spot {
+            AmbientSpot::Home => (0., 0.),
+            AmbientSpot::Center => (0., 540. - block / 2. - home_y),
+            AmbientSpot::LowerLeft => (left, down),
+            AmbientSpot::UpperLeft => (left, up),
+            AmbientSpot::UpperRight => (right, up),
+            AmbientSpot::LowerRight => (right, down),
+        }
+    };
+    let (dx, dy) = stops.map_or((0., 0.), |(from, to, glide)| {
+        let (a, b) = (offset(from), offset(to));
+        (a.0 + (b.0 - a.0) * glide, a.1 + (b.1 - a.1) * glide)
+    });
+    let mut y = home_y + dy;
     if state.preferences.show_date {
         let date = state.preferences.date_format.format(language, now);
         let date_style = text(20.8, 600, 0.14);
         let width = assets.width(&date, date_style) + 1.;
         out.text(
             date,
-            Rect::new(960. - width / 2., y, width, 28.),
+            Rect::new(960. + dx - width / 2., y, width, 28.),
             date_style,
-            c(0xf5f5f5, 0.82),
+            c(0xf5f5f5, (0.82 * opacity).min(1.)),
             false,
         );
         y += date_height;
     }
     let width = assets.width(&clock, fitted) + 2.;
-    let rect = Rect::new(960. - width / 2., y, width, clock_height);
-    glass_text(out, &clock, rect, fitted, 1.);
+    let rect = Rect::new(960. + dx - width / 2., y, width, clock_height);
+    glass_text(out, &clock, rect, fitted, opacity);
     y += clock_height;
     if let Some(days) = days {
         forecast_row(
@@ -1399,9 +1443,9 @@ fn glass_clock(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateT
             state,
             assets,
             days,
-            960. - FORECAST_WIDTH / 2.,
+            960. + dx - FORECAST_WIDTH / 2.,
             y + 22.,
-            1.,
+            opacity,
         );
     }
 }
@@ -1443,67 +1487,35 @@ fn glass_text(out: &mut Scene, value: &str, rect: Rect, style: TextStyle, opacit
     out.draw.push(Draw::Clip(None));
 }
 
-/// The ambient screen: the wallpaper dimmed far down, with the time, date and forecast
-/// drifting a little each minute so nothing stays put on an OLED panel.
-fn ambient(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
-    let fade = state.ambient_opacity();
-    out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x000000, 0.8 * fade));
-    let opacity = 0.85 * fade;
-    let language = state.preferences.language;
-    let clock = language.clock(now, state.preferences.hour_24, false);
-    let clock = clock
-        .split_whitespace()
-        .find(|part| part.contains(':'))
-        .unwrap_or(&clock)
-        .to_owned();
-    let minute = (now.unix_timestamp() / 60) as f32;
-    let (dx, dy) = (
-        140. * (minute * 0.61).sin(),
-        80. * (minute * 0.37 + 1.3).sin(),
-    );
-    let days = forecast_days(state);
-    let date_height = if state.preferences.show_date { 44. } else { 0. };
-    let forecast_height = if days.is_some() {
-        FORECAST_HEIGHT + 22.
+/// The ambient screen, layered over the page drawn as usual: Home fades out, the
+/// wallpaper dims, and the clock block stays where Home shows it, growing a little more
+/// prominent, until it starts gliding to a new spot each minute.
+fn ambient(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    now: OffsetDateTime,
+    content_start: usize,
+) {
+    let (ui, dim) = state.ambient_progress();
+    out.fade(content_start, 1. - ui, 1.);
+    out.controls.clear();
+    out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x000000, 0.8 * dim));
+    let prominence = 1. + 0.4 * dim;
+    // The glass clock is already Home's own; otherwise it fades in with the change.
+    let shown = if state.preferences.glass_clock {
+        1.
     } else {
-        0.
+        ui
     };
-    let style = text(250., 600, -0.045).leading(1.0);
-    let clock_height = 250. * 1.02;
-    let mut y = 540. + dy - (date_height + clock_height + forecast_height) / 2.;
-    if state.preferences.show_date {
-        let date = state.preferences.date_format.format(language, now);
-        let date_style = text(20.8, 600, 0.14);
-        let width = assets.width(&date, date_style) + 1.;
-        out.text(
-            date,
-            Rect::new(960. + dx - width / 2., y, width, 28.),
-            date_style,
-            c(0xf5f5f5, 0.82 * opacity),
-            false,
-        );
-        y += date_height;
-    }
-    let width = assets.width(&clock, style) + 2.;
-    glass_text(
+    glass_clock(
         out,
-        &clock,
-        Rect::new(960. + dx - width / 2., y, width, clock_height),
-        style,
-        opacity,
+        state,
+        assets,
+        now,
+        Some(state.ambient_stops()),
+        prominence * shown,
     );
-    y += clock_height;
-    if let Some(days) = days {
-        forecast_row(
-            out,
-            state,
-            assets,
-            days,
-            960. + dx - FORECAST_WIDTH / 2.,
-            y + 22.,
-            opacity,
-        );
-    }
 }
 
 /// The usual Home heading: date, greeting, weather and, when on, the 5-day forecast.

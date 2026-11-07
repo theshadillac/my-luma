@@ -4031,3 +4031,80 @@ fn ambient_screen_starts_after_idle_home_and_the_waking_input_only_wakes() {
     state.ambient_tick(true);
     assert!(state.ambient.is_none());
 }
+
+#[test]
+fn ambient_screen_fades_home_then_tours_the_corners() {
+    use crate::state::{AMBIENT_DRIFT_EVERY, AmbientSpot};
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    with_forecast(&mut state);
+    state.preferences.glass_clock = true;
+    state.preferences.show_forecast = true;
+    state.preferences.ambient_minutes = 2;
+    let at = |state: &mut State, seconds: f32| {
+        state.ambient = Some(Instant::now() - Duration::from_secs_f32(seconds));
+    };
+    let clock_rect = |state: &State| {
+        scene(state)
+            .draw
+            .iter()
+            .find_map(|draw| match draw {
+                crate::renderer::Draw::Text(value, rect, style, color, _)
+                    if value.contains(':') && style.size > 80. && color[0] > 0.5 =>
+                {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let home = clock_rect(&state);
+    // Starting: Home is still fully drawn and the clock is exactly where Home has it.
+    at(&mut state, 0.);
+    let (ui, dim) = state.ambient_progress();
+    assert!(ui < 0.01 && dim == 0.);
+    assert_eq!(
+        (clock_rect(&state).x, clock_rect(&state).y),
+        (home.x, home.y)
+    );
+    // Home fades, then the wallpaper dims; the clock stays put for the first minute.
+    at(&mut state, 3.);
+    let (ui, dim) = state.ambient_progress();
+    assert_eq!(ui, 1.);
+    assert!(dim > 0. && dim < 1.);
+    at(&mut state, 59.);
+    assert_eq!(state.ambient_progress(), (1., 1.));
+    assert_eq!(
+        (clock_rect(&state).x, clock_rect(&state).y),
+        (home.x, home.y)
+    );
+    // Then one stop a minute: lower left, upper left, upper right, lower right, centre.
+    let mut corners = vec![];
+    for (minute, expected) in [
+        (1., AmbientSpot::LowerLeft),
+        (2., AmbientSpot::UpperLeft),
+        (3., AmbientSpot::UpperRight),
+        (4., AmbientSpot::LowerRight),
+        (5., AmbientSpot::Center),
+        (6., AmbientSpot::LowerLeft),
+    ] {
+        at(&mut state, minute * AMBIENT_DRIFT_EVERY + 30.);
+        let (_, to, glide) = state.ambient_stops();
+        assert_eq!((to, glide), (expected, 1.));
+        corners.push(clock_rect(&state));
+    }
+    let (lower_left, upper_left, upper_right, lower_right, centre) =
+        (corners[0], corners[1], corners[2], corners[3], corners[4]);
+    assert!(lower_left.x < 400. && lower_left.y > upper_left.y);
+    assert_eq!(lower_left.x, upper_left.x);
+    assert!(upper_right.x > 960. && upper_right.y == upper_left.y);
+    assert_eq!(lower_right.y, lower_left.y);
+    assert!((centre.x + centre.w / 2. - 960.).abs() < 2.);
+    // Padding keeps the block clear of the edges.
+    assert!(upper_left.x >= 100. && upper_right.x + upper_right.w <= 1820.);
+    assert_eq!((corners[5].x, corners[5].y), (lower_left.x, lower_left.y));
+    // Mid-glide it is between its stops.
+    at(&mut state, AMBIENT_DRIFT_EVERY + 2.);
+    let mid = clock_rect(&state);
+    assert!(mid.x < home.x && mid.x > lower_left.x);
+}
