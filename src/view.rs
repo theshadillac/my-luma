@@ -7,7 +7,7 @@ use crate::{
         AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW,
         HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
         HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION,
-        State, Subpage, Target, TextField, WIDGETS_SECTION,
+        State, Subpage, TILE_LIFT_ROW, Target, TextField, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -209,6 +209,13 @@ impl Scene {
             rect,
             scrollable,
         });
+    }
+    /// The app tile's focus ring: a dark gap inside a white ring, so it stands out on
+    /// light tiles as well as dark ones.
+    fn tile_ring(&mut self, rect: Rect, radius: f32) {
+        self.border(rect.inset(-11.), radius + 11., 3.5, c(0xffffff, 0.12));
+        self.border(rect.inset(-4.), radius + 4., 4., c(0x0b0d12, 0.92));
+        self.border(rect.inset(-8.), radius + 8., 4., c(0xf5f5f5, 1.));
     }
     fn ring(&mut self, rect: Rect, radius: f32) {
         self.border(rect.inset(-6.9), radius + 6.9, 3.7, c(0xffffff, 0.10));
@@ -989,12 +996,27 @@ fn tile(
     }
     let start = out.draw.len();
     let focused = state.focus == Target::App(app.id.clone());
+    // The selected tile grows 7% and rises 8 px; its hit area stays put for the pointer.
+    let lift = state.tile_lift(&Target::App(app.id.clone()));
+    let rect = if lift > 0. {
+        let grow = 1. + 0.07 * lift;
+        let (w, h) = (rect.w * grow, rect.h * grow);
+        Rect::new(
+            rect.x - (w - rect.w) / 2.,
+            rect.y - (h - rect.h) / 2. - 8. * lift,
+            w,
+            h,
+        )
+    } else {
+        rect
+    };
+    let depth = if focused { lift.max(0.5) } else { lift };
     out.shadow(
         rect,
         19.2,
-        if focused { 34. } else { 22. },
-        if focused { 14. } else { 9. },
-        if focused { 0.4 } else { 0.165 },
+        22. + 22. * depth,
+        9. + 12. * depth,
+        0.165 + 0.36 * depth,
     );
     let favorite_color = app_face(out, assets, app, rect, state.preferences.language, 19.2);
     if pinned {
@@ -1022,7 +1044,7 @@ fn tile(
         );
     }
     if focused {
-        out.ring(rect, 19.2);
+        out.tile_ring(rect, 19.2);
     }
     if state.page == Page::Apps && state.filter == 5 {
         out.fade(start, 0.45, 1.);
@@ -2925,6 +2947,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     "landingLayout",
                     "eye",
                     Some(if state.preferences.landing_layout {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
+                    false,
+                ),
+                (
+                    TILE_LIFT_ROW,
+                    "tileLift",
+                    "eye",
+                    Some(if state.preferences.tile_lift {
                         language.t("stateOn")
                     } else {
                         language.t("stateOff")

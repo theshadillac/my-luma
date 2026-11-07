@@ -4137,3 +4137,70 @@ fn ambient_fades_and_glides_redraw_every_changed_frame() {
     assert!(frame(&mut state, AMBIENT_DRIFT_EVERY + 10.));
     assert!(!frame(&mut state, AMBIENT_DRIFT_EVERY + 20.));
 }
+
+#[test]
+fn selected_tile_lifts_with_a_two_tone_ring_and_the_setting_turns_the_lift_off() {
+    use crate::state::TILE_LIFT_ROW;
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    let first = state.first_content();
+    let Target::App(id) = first.clone() else {
+        panic!("Home starts on a favourite");
+    };
+    let second = Target::App(state.apps()[1].id.clone());
+    state.focus = first.clone();
+    state.tick();
+    let shadow_of = |state: &State, target: &Target| {
+        let hit = controls(state)
+            .into_iter()
+            .find(|control| control.target == *target)
+            .unwrap()
+            .rect;
+        let scene = scene(state);
+        let shadow = scene
+            .draw
+            .iter()
+            .find_map(|draw| match draw {
+                crate::renderer::Draw::Shadow(rect, ..)
+                    if (rect.x - hit.x).abs() < 20. && (rect.y - hit.y).abs() < 20. =>
+                {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .unwrap();
+        (hit, shadow)
+    };
+    // Lifted: larger and higher than its unchanged hit area.
+    let (hit, drawn) = shadow_of(&state, &first);
+    assert!(drawn.w > hit.w * 1.06 && drawn.x < hit.x - 8.);
+    // Its neighbour is not.
+    let (hit2, drawn2) = shadow_of(&state, &second);
+    assert_eq!((drawn2.w, drawn2.h), (hit2.w, hit2.h));
+    // The ring has a dark band inside the white one.
+    let borders: Vec<[f32; 4]> = scene(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Shape(_, _, stroke, color) if *stroke > 0. => Some(*color),
+            _ => None,
+        })
+        .collect();
+    assert!(borders.iter().any(|color| color[0] < 0.1 && color[3] > 0.9));
+    assert!(borders.iter().any(|color| color[0] > 0.9 && color[3] == 1.));
+    // Moving on: the new tile rises and the old one settles.
+    state.focus = second.clone();
+    state.tick();
+    assert_eq!(state.tile_lift(&second), 1.);
+    assert_eq!(state.tile_lift(&first), 0.);
+    // General → Lift selected tile turns it off; the ring stays.
+    state.open(2);
+    state.focus = Target::Setting(TILE_LIFT_ROW);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(!state.preferences.tile_lift);
+    state.open(0);
+    state.focus = Target::App(id);
+    state.tick();
+    let (hit, drawn) = shadow_of(&state, &first);
+    assert_eq!((drawn.w, drawn.h), (hit.w, hit.h));
+}

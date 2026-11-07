@@ -316,6 +316,8 @@ pub struct Preferences {
     pub show_forecast: bool,
     /// Minutes without input on Home before the ambient screen; 0 is off (fork option).
     pub ambient_minutes: u8,
+    /// The selected app tile grows and lifts a little (fork option, on by default).
+    pub tile_lift: bool,
 }
 
 impl Default for Preferences {
@@ -354,6 +356,7 @@ impl Default for Preferences {
             glass_clock: false,
             show_forecast: false,
             ambient_minutes: 0,
+            tile_lift: true,
         }
     }
 }

@@ -4003,5 +4003,20 @@
     "vi": "{minutes} phút",
     "nl": "{minutes} min",
     "sv": "{minutes} min"
+  },
+  "tileLift": {
+    "en": "Lift selected tile",
+    "de": "Ausgewählte Kachel anheben",
+    "es": "Elevar el mosaico seleccionado",
+    "zh": "抬起所选磁贴",
+    "zh-tw": "抬起所選磚塊",
+    "pt": "Elevar o mosaico selecionado",
+    "it": "Solleva il riquadro selezionato",
+    "ru": "Приподнимать выбранную плитку",
+    "pl": "Unieś wybrany kafelek",
+    "fr": "Soulever la vignette sélectionnée",
+    "vi": "Nâng ô đã chọn",
+    "nl": "Geselecteerde tegel optillen",
+    "sv": "Lyft markerad ruta"
   }
 }

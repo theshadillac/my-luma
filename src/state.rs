@@ -21,6 +21,10 @@ pub const LANDING_ROW: usize = 11;
 pub const GLASS_CLOCK_ROW: usize = 15;
 /// General settings row: the ambient screen's delay.
 pub const AMBIENT_ROW: usize = 16;
+/// General settings row: the selected tile's lift.
+pub const TILE_LIFT_ROW: usize = 17;
+/// How long the selected tile takes to grow and lift (and the previous one to settle).
+pub const TILE_LIFT_TIME: f32 = 0.18;
 /// The ambient screen's delay choices, in minutes; 0 is off.
 pub const AMBIENT_CHOICES: [u8; 4] = [0, 2, 5, 10];
 /// After this long, the ambient screen lets LG's own screen saver take over.
@@ -310,6 +314,8 @@ pub struct State {
     /// The ambient transition last drawn (fades, tour stop and glide), so each changed
     /// frame is redrawn and a still one is not.
     ambient_drawn: Option<(f32, f32, usize, f32)>,
+    /// The focus the tile lift last saw, the one before it, and when it changed.
+    lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     pub deleting_wallpaper: Option<String>,
@@ -333,6 +339,13 @@ impl State {
             last_input: Instant::now(),
             ambient: None,
             ambient_drawn: None,
+            lift_focus: (
+                Target::Nav(0),
+                None,
+                Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now),
+            ),
             page: Page::Home,
             focus: Target::Nav(0),
             inventory: Inventory::default(),
@@ -451,6 +464,23 @@ impl State {
     }
 
     pub fn tick(&mut self) {
+        if self.focus != self.lift_focus.0 {
+            let previous = std::mem::replace(&mut self.lift_focus.0, self.focus.clone());
+            // Only app tiles lift; other focus moves leave nothing to animate.
+            let tiles = matches!(previous, Target::App(_)) || matches!(self.focus, Target::App(_));
+            let since = if tiles {
+                Instant::now()
+            } else {
+                Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now)
+            };
+            self.lift_focus = (self.focus.clone(), Some(previous), since);
+            self.dirty = true;
+        }
+        if self.lift_moving() {
+            self.dirty = true;
+        }
         // The ambient screen's fades and glides change every frame without input: redraw
         // whenever the drawn transition differs, including its last frame.
         let ambient = self.ambient_elapsed().map(|elapsed| {
@@ -529,6 +559,7 @@ impl State {
             || self.landing() != self.landing.1
             || self.panel_started.is_some()
             || self.ambient_fading()
+            || self.lift_moving()
             || (!self.preferences.reduced_motion
                 && self
                     .notice
@@ -575,6 +606,35 @@ impl State {
             self.pointer = false;
             self.dirty = true;
         }
+    }
+
+    /// How far a tile is lifted, 0 to 1: the selected tile rises, the one just left settles.
+    pub fn tile_lift(&self, target: &Target) -> f32 {
+        if !self.preferences.tile_lift || self.pointer && self.focus != *target {
+            return 0.;
+        }
+        let progress = if self.preferences.reduced_motion {
+            1.
+        } else {
+            ease((self.lift_focus.2.elapsed().as_secs_f32() / TILE_LIFT_TIME).clamp(0., 1.))
+        };
+        if *target == self.focus {
+            if self.lift_focus.0 == *target {
+                progress
+            } else {
+                0.
+            }
+        } else if self.lift_focus.1.as_ref() == Some(target) {
+            1. - progress
+        } else {
+            0.
+        }
+    }
+
+    fn lift_moving(&self) -> bool {
+        self.preferences.tile_lift
+            && !self.preferences.reduced_motion
+            && self.lift_focus.2.elapsed().as_secs_f32() < TILE_LIFT_TIME
     }
 
     /// Seconds since the ambient screen started, while it shows.
@@ -2597,6 +2657,7 @@ impl State {
                         self.preferences.landing_layout = !self.preferences.landing_layout
                     }
                     GLASS_CLOCK_ROW => self.preferences.glass_clock = !self.preferences.glass_clock,
+                    TILE_LIFT_ROW => self.preferences.tile_lift = !self.preferences.tile_lift,
                     AMBIENT_ROW => {
                         let current = AMBIENT_CHOICES
                             .iter()
