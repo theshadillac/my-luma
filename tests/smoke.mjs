@@ -74,7 +74,7 @@ try {
     }
     return state;
   };
-  const home = await scenario('home', 'down');
+  const home = await scenario('home', 'wait');
   assert.deepEqual(home.focus, { App: 'netflix' });
   const recents = await scenario('recents', 'recents,await-recents');
   assert.equal(recents.modal, true);
@@ -169,7 +169,7 @@ try {
   }
   const settings = await scenario('settings', 'settings,down,down,enter,down,enter,enter');
   assert.equal(settings.preferences.background, 'forest');
-  const saved = await scenario('saved', 'down,hold,right,back');
+  const saved = await scenario('saved', 'hold,right,back');
   assert.equal(saved.preferences.background, 'forest');
   assert.deepEqual(saved.preferences.favorites.slice(0, 2), ['youtube.leanback.v4', 'netflix']);
   const upload = await scenario(
@@ -360,15 +360,41 @@ try {
   const clockFocus = await scenario('clock-format-focus', `${clockEditor},enter,down`);
   assert.equal(clockFocus.subpage, 'ClockFormat');
   assert.deepEqual(clockFocus.focus, { Choice: 1 });
+  // #180: Size offers four steps and an extra-large clock still fits beside the navigation.
+  const clockSizes = await scenario('clock-size', `${clockEditor},down,down,enter`);
+  assert.equal(clockSizes.subpage, 'ClockSize');
+  assert.deepEqual(clockSizes.focus, { Choice: 1 });
+  for (const label of ['Small', 'Medium', 'Large', 'Extra large']) {
+    assert.ok(clockSizes.ui_text.includes(label), label);
+  }
+  const clockLarge = await scenario(
+    'clock-size-saved',
+    `${clockEditor},down,down,enter,down,down,enter`,
+  );
+  assert.equal(clockLarge.preferences.clock_size, 'extra-large');
+  assert.equal(clockLarge.subpage, 'Clock');
+  await scenario('clock-size-home', 'home');
+  const clockMedium = await scenario(
+    'clock-size-reset',
+    `${clockEditor},down,down,enter,up,up,enter`,
+  );
+  assert.equal(clockMedium.preferences.clock_size, 'medium');
   const system = await scenario(
     'system-settings',
-    'settings,down,down,down,down,right,down,down,down',
+    'settings,down,down,down,down,right,down,down,down,down',
   );
   assert.deepEqual(system.focus, { Setting: 5 });
   assert.ok(system.ui_text.includes('Refresh apps & inputs'));
   assert.ok(!system.ui_text.includes('Luma update'));
   assert.ok(system.ui_text.includes('Quit app'));
   assert.ok(system.ui_text.includes('Text rendering'));
+  assert.ok(system.ui_text.includes('Reset icon cache'));
+  const resetIcons = await scenario(
+    'reset-icon-cache',
+    'settings,down,down,down,down,right,down,down,down,enter',
+  );
+  assert.deepEqual(resetIcons.focus, { Setting: 9 });
+  assert.deepEqual(resetIcons.preferences, system.preferences);
   const updatePreview = await scenario('update-preview', 'settings,down,down,down,down,right', [
     '--test-update-version',
     '99.0.0',
@@ -398,7 +424,11 @@ try {
   assert.ok(latestPreview.ui_text.includes('Check again'));
   assert.ok(latestPreview.ui_text.includes(`Current version: ${currentVersion}`));
   assert.ok(!latestPreview.ui_text.some((label) => label.startsWith('Luma v')));
-  const textOptions = 'settings,down,down,down,down,right,down,down,enter';
+  const textRenderingRow = 'settings,down,down,down,down,right,down';
+  const textRenderingFocus = await scenario('text-rendering-focus', textRenderingRow);
+  assert.deepEqual(textRenderingFocus.focus, { Setting: 7 });
+  assert.equal(textRenderingFocus.subpage, null);
+  const textOptions = `${textRenderingRow},enter`;
   const textRendering = await scenario('text-rendering-options', textOptions);
   assert.equal(textRendering.subpage, 'TextRendering');
   assert.deepEqual(textRendering.focus, { Choice: 0 });
@@ -507,6 +537,18 @@ try {
     'Pointer focus preserves strip position',
   );
   await fs.writeFile(preferences, JSON.stringify({ show_weather: false }));
+  // #175: with the Back shortcut off, a held Back no longer opens Recent apps.
+  const backRecentsPath = 'settings,down,enter,down,down,down,down,enter';
+  const backRecentsOff = await scenario('back-recents-off', backRecentsPath);
+  assert.deepEqual(backRecentsOff.focus, { Setting: 14 });
+  assert.equal(backRecentsOff.preferences.back_recents, false);
+  assert.ok(backRecentsOff.ui_text.includes('Back button opens Recent apps'));
+  const heldWithoutRecents = await scenario('back-recents-held', 'hold-back');
+  assert.equal(heldWithoutRecents.modal, false);
+  const backRecentsOn = await scenario('back-recents-on', backRecentsPath);
+  assert.equal(backRecentsOn.preferences.back_recents, true);
+  const heldWithRecents = await scenario('back-recents-held-on', 'hold-back,await-recents');
+  assert.equal(heldWithRecents.modal, true);
   const gradientDisabled = await scenario(
     'wallpaper-gradient-disabled',
     'settings,down,down,enter,up,up,right,enter',
@@ -541,6 +583,29 @@ try {
   );
   assert.equal(cycleDisabled.preferences.wallpaper_cycle, false);
   assert.ok(cycleDisabled.ui_text.includes('Rotation'));
+  await fs.writeFile(preferences, JSON.stringify({ show_weather: false }));
+  const landingSetting = await scenario(
+    'landing-setting',
+    'settings,down,enter,down,down,down,down,down,enter',
+  );
+  assert.deepEqual(landingSetting.focus, { Setting: 11 });
+  assert.equal(landingSetting.preferences.landing_layout, true);
+  assert.ok(landingSetting.ui_text.includes('Wallpaper-first Home'));
+  const landing = await scenario('landing', 'home');
+  assert.deepEqual(landing.focus, { Nav: 0 }, 'The wallpaper-first Home starts in the header');
+  const landingDown = await scenario('landing-down', 'home,down');
+  assert.deepEqual(landingDown.focus, { App: 'netflix' });
+  assert.equal(landingDown.scroll, 0);
+  for (const reducedMotion of [false, true]) {
+    await fs.writeFile(
+      preferences,
+      JSON.stringify({ show_weather: false, landing_layout: true, reduced_motion: reducedMotion }),
+    );
+    const clicked = await scenario(`landing-pointer-${reducedMotion}`, 'home,click:220:880');
+    assert.deepEqual(clicked.focus, { App: 'netflix' });
+    assert.ok(clicked.ui_text.includes('Desktop preview · Netflix will open on your TV'));
+    assert.equal(clicked.scroll, 0);
+  }
   console.log(
     'Native smoke checks passed: rendering/alpha, navigation, persistence, SDL pointer input, DPI-aware glyphs, 4K capture and presentation profiling.',
   );

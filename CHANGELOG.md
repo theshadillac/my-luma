@@ -1,5 +1,36 @@
 # lg-luma
 
+## 2.19.0
+
+### Minor Changes
+
+- 02c5bf7: Consolidate the unpublished changes into the 2.19.0 minor release, using the last published IPK version, 2.18.1, as the release baseline.
+
+  Include the per-input SVG icon picker, Catalan localization, grouped System maintenance actions, and earlier cold-boot Home integration on webOS 5 and 6. Existing input icon choices default to Automatic and remain configurable under Settings → Widgets → Inputs → select input → Icon. The early Home helper is registered by `home.sh enable`, removed by `home.sh disable`, and retains the Homebrew cold-boot fallback.
+
+  Complete the Catalan input-icon translations and align both the unit and desktop smoke navigation tests with Text rendering appearing before Refresh apps & inputs. The smoke test verifies focus on Text rendering before opening its options and exercising mode persistence across restarts.
+
+## 2.18.1
+
+### Patch Changes
+
+- 6dbc626: Publish a standalone application manifest with release assets for central webOS Homebrew repository submissions, while preserving the existing custom repository feed.
+
+## 2.18.0
+
+### Minor Changes
+
+- 2bc5d0a: App icons that can only be read through Homebrew Channel are now kept on disk, so they appear at once after a restart instead of seconds later.
+
+  Add Reset icon cache in Settings → System to clear persisted and decoded icons and reload artwork without changing preferences.
+
+### Patch Changes
+
+- 0504a6f: Show up to four HDMI inputs on one Home row, matching the most ports any LG TV has. Cards keep their size when Auto shows or hides an input. Long names and statuses shrink to fit, and names too long even at a readable size end with an ellipsis instead of being cut off.
+- 622f7de: Highlight the Home, Apps and Settings tab under the Magic Remote pointer with a faint pill that never looks like the active page, and clear it when the pointer moves away.
+- 73e799f: Recognize PlayStation input logos when TV labels include a category, such as "PS5 Game Console".
+- 59f3520: Fix a crash on webOS 4 when some remote keys were pressed: text input now stays off until the on-screen keyboard opens.
+
 ## 2.17.0
 
 ### Minor Changes

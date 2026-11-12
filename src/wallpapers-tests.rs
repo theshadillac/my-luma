@@ -547,3 +547,66 @@ fn cancelling_a_slow_request_releases_the_worker_without_waiting_for_the_body() 
     ));
     assert!(catalog(&fixture.wallpapers()).is_empty());
 }
+
+#[test]
+fn import_folder_adds_full_size_photos_and_sets_aside_unreadable_files() {
+    let fixture = Fixture::new();
+    let directory = fixture.wallpapers();
+    // First run creates the folder to drop images into.
+    assert_eq!(import_folder(&directory, || {}), 0);
+    let folder = directory.join(IMPORT_FOLDER);
+    assert!(folder.is_dir());
+    // A wide 4:3 photo (cropped top and bottom), a portrait PNG (cropped left and right),
+    // a broken file and something that is not an image.
+    fs::write(folder.join("a-landscape.jpg"), image(4000, 3000)).unwrap();
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(1200, 2000, image::Rgb([30, 60, 90]))
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    fs::write(folder.join("b-portrait.PNG"), png).unwrap();
+    fs::write(folder.join("c-broken.jpg"), b"not really a jpeg").unwrap();
+    fs::write(folder.join("notes.txt"), b"ignored").unwrap();
+    let mut added = 0;
+    assert_eq!(import_folder(&directory, || added += 1), 2);
+    assert_eq!(added, 2);
+    let items = catalog(&directory);
+    assert_eq!(items.len(), 2);
+    for item in &items {
+        let shaded = image::open(item.directory.join("wallpaper.jpg")).unwrap();
+        assert_eq!((shaded.width(), shaded.height()), (1920, 1080));
+        let original = image::open(item.directory.join("original.jpg")).unwrap();
+        assert_eq!((original.width(), original.height()), (1920, 1080));
+        let thumbnail = image::open(item.directory.join("thumbnail.jpg")).unwrap();
+        assert_eq!((thumbnail.width(), thumbnail.height()), (480, 270));
+    }
+    // Imported files are gone; the broken one is set aside, the text file left alone.
+    assert!(!folder.join("a-landscape.jpg").exists());
+    assert!(!folder.join("b-portrait.PNG").exists());
+    assert!(folder.join("c-broken.jpg.failed").exists());
+    assert!(folder.join("notes.txt").exists());
+    // Nothing new: nothing happens.
+    assert_eq!(import_folder(&directory, || {}), 0);
+}
+
+#[test]
+fn import_stops_when_the_gallery_is_full() {
+    let fixture = Fixture::new();
+    let directory = fixture.wallpapers();
+    import_folder(&directory, || {});
+    let folder = directory.join(IMPORT_FOLDER);
+    for index in 0..MAX_WALLPAPERS + 2 {
+        fs::write(
+            folder.join(format!("photo-{index:03}.jpg")),
+            image(1920, 1080),
+        )
+        .unwrap();
+    }
+    assert_eq!(import_folder(&directory, || {}), MAX_WALLPAPERS);
+    assert_eq!(catalog(&directory).len(), MAX_WALLPAPERS);
+    // The rest wait for space.
+    assert!(
+        folder
+            .join(format!("photo-{:03}.jpg", MAX_WALLPAPERS))
+            .exists()
+    );
+}

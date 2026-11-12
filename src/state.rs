@@ -11,8 +11,69 @@ use std::time::{Duration, Instant};
 pub const WIDGETS_SECTION: usize = 2;
 pub const SYSTEM_SECTION: usize = 3;
 pub const SECTION_COUNT: usize = 4;
+/// General settings row: whether the Back button opens Recent apps.
+pub const BACK_RECENTS_ROW: usize = 14;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
+/// General settings row: the wallpaper-first Home.
+pub const LANDING_ROW: usize = 11;
+/// General settings row: the glass clock on Home.
+pub const GLASS_CLOCK_ROW: usize = 15;
+/// General settings row: the ambient screen's delay.
+pub const AMBIENT_ROW: usize = 16;
+/// General settings row: the selected tile's lift.
+pub const TILE_LIFT_ROW: usize = 17;
+/// How long the selected tile takes to grow and lift (and the previous one to settle).
+pub const TILE_LIFT_TIME: f32 = 0.18;
+/// The ambient screen's delay choices, in minutes; 0 is off.
+pub const AMBIENT_CHOICES: [u8; 4] = [0, 2, 5, 10];
+/// After this long, the ambient screen lets LG's own screen saver take over.
+pub const AMBIENT_HANDOFF: Duration = Duration::from_secs(60 * 60);
+/// The ambient screen's timeline, in seconds: Home fades out, then the wallpaper dims;
+/// the clock stays put until the first drift a minute in, and each drift glides.
+pub const AMBIENT_UI_FADE: f32 = 2.5;
+pub const AMBIENT_DIM_START: f32 = 2.;
+pub const AMBIENT_DIM_FADE: f32 = 2.5;
+pub const AMBIENT_DRIFT_EVERY: f32 = 60.;
+pub const AMBIENT_DRIFT_GLIDE: f32 = 4.;
+/// Waking from the ambient screen, in seconds: the wallpaper brightens, the clock block glides
+/// home, then the top bar and the favourites settle back in. Reduced motion just crossfades.
+pub const AMBIENT_WAKE: f32 = 0.8;
+pub const AMBIENT_WAKE_REDUCED: f32 = 0.4;
+
+/// The ambient screen as it was when woken, so the wake can run its transition in reverse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Waking {
+    pub since: Instant,
+    /// How far Home had faded out and the wallpaper had dimmed, each 0 to 1.
+    pub ui: f32,
+    pub dim: f32,
+    /// Where the clock block was on its tour.
+    pub stops: (AmbientSpot, AmbientSpot, f32),
+}
+
+/// A stop on the ambient clock block's tour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AmbientSpot {
+    /// Where Home shows it, for the first minute.
+    Home,
+    /// The middle of the screen.
+    Center,
+    LowerLeft,
+    UpperLeft,
+    UpperRight,
+    LowerRight,
+}
+pub const AMBIENT_TOUR: [AmbientSpot; 5] = [
+    AmbientSpot::LowerLeft,
+    AmbientSpot::UpperLeft,
+    AmbientSpot::UpperRight,
+    AmbientSpot::LowerRight,
+    AmbientSpot::Center,
+];
+/// How far the favourites and inputs sit lower in the wallpaper-first Home.
+pub const LANDING_DROP: f32 = 280.;
+const LANDING_SECONDS: f32 = 0.35;
 pub const APPS_COLUMNS: usize = 6;
 /// Automatic inventory retries before the error shows: with the 6.5 s Luna timeout about 50 s.
 pub const INVENTORY_RETRIES: u32 = 5;
@@ -46,6 +107,11 @@ pub enum Page {
 pub enum Target {
     Nav(usize),
     TvSettings,
+    /// The top bar's Inputs button (Settings → Widgets → Inputs) and its menu's rows.
+    InputsButton,
+    InputPick(String),
+    InputsMenu,
+    InputInMenu,
     InstallUpdate,
     CheckUpdates,
     Recent(String),
@@ -70,6 +136,7 @@ pub enum Target {
     AppNamesApps,
     ClockFormat,
     ClockTimeFormat,
+    ClockSize,
     Background(usize),
     UploadWallpaper,
     WallpaperCycle,
@@ -78,6 +145,7 @@ pub enum Target {
     DeleteBackground,
     InputMode(String),
     InputRename,
+    InputIcon,
     InputNameReset,
     Choice(usize),
     CloseDialog,
@@ -92,6 +160,7 @@ pub enum Target {
     WeatherToggle,
     WeatherLocation,
     WeatherTemperature,
+    WeatherForecast,
     WeatherQuery,
     WeatherSearch,
     WeatherClear,
@@ -133,15 +202,31 @@ pub struct Control {
 
 #[derive(Clone, Debug)]
 pub enum Overlay {
-    Options { id: String, restore: Target },
-    Delete { id: String, restore: Target },
-    Recents { restore: Target },
+    Options {
+        id: String,
+        restore: Target,
+    },
+    Delete {
+        id: String,
+        restore: Target,
+    },
+    Recents {
+        restore: Target,
+    },
     Keyboard,
     SystemKeyboard,
+    /// The top bar's Inputs menu.
+    Inputs,
     WallpaperUpload,
     TileEditor,
-    BackgroundOptions { id: String, restore: Target },
-    BackgroundDelete { id: String, restore: Target },
+    BackgroundOptions {
+        id: String,
+        restore: Target,
+    },
+    BackgroundDelete {
+        id: String,
+        restore: Target,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -156,7 +241,9 @@ pub enum Subpage {
     Clock,
     ClockFormat,
     TimeFormat,
+    ClockSize,
     Input(String),
+    InputIcons(String),
     WeatherLocation,
     Temperature,
     Language,
@@ -222,6 +309,8 @@ pub struct State {
     pub loading: bool,
     /// Set by Refresh apps: the next inventory also reloads every app icon.
     pub reload_artwork: bool,
+    /// System action consumed by the SDL loop, with disk work delegated to artwork's worker.
+    pub reset_icon_cache: bool,
     pub launching: bool,
     pub uninstalling: Option<String>,
     pub notice: Option<(String, Instant)>,
@@ -233,8 +322,26 @@ pub struct State {
     pub inventory_failures: u32,
     pub dirty: bool,
     pub pointer: bool,
+    /// The control under the pointer right now; unlike focus, cleared when it leaves.
+    pub hover: Option<Target>,
     pub pressed: Option<Target>,
     pub previous_background: Option<(String, Instant)>,
+    /// Wallpaper-first Home: from, to (1 = lowered) and start of the current slide.
+    landing: (f32, f32, Instant),
+    /// The last remote, pointer or keyboard input, for the ambient screen.
+    pub last_input: Instant,
+    /// When the ambient screen started, while it shows.
+    pub ambient: Option<Instant>,
+    /// The ambient transition last drawn (fades, tour stop and glide), so each changed
+    /// frame is redrawn and a still one is not.
+    ambient_drawn: Option<(f32, f32, usize, f32)>,
+    /// The wake-up transition back to Home, while it runs.
+    pub waking: Option<Waking>,
+    /// Until the first app list arrives (or the user presses something), Home's focus belongs on
+    /// the first app, not the tab bar it starts on while nothing is loaded yet.
+    settle_focus: bool,
+    /// The focus the tile lift last saw, the one before it, and when it changed.
+    lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     pub deleting_wallpaper: Option<String>,
@@ -252,7 +359,21 @@ pub struct State {
 
 impl State {
     pub fn new(preferences: Preferences) -> Self {
+        let landing = if preferences.landing_layout { 1. } else { 0. };
         Self {
+            landing: (landing, landing, Instant::now()),
+            last_input: Instant::now(),
+            ambient: None,
+            ambient_drawn: None,
+            waking: None,
+            settle_focus: true,
+            lift_focus: (
+                Target::Nav(0),
+                None,
+                Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now),
+            ),
             page: Page::Home,
             focus: Target::Nav(0),
             inventory: Inventory::default(),
@@ -267,6 +388,7 @@ impl State {
             moving: None,
             loading: false,
             reload_artwork: false,
+            reset_icon_cache: false,
             launching: false,
             uninstalling: None,
             notice: None,
@@ -277,6 +399,7 @@ impl State {
             inventory_failures: 0,
             dirty: true,
             pointer: false,
+            hover: None,
             pressed: None,
             previous_background: None,
             background_fade: BACKGROUND_FADE,
@@ -371,6 +494,50 @@ impl State {
     }
 
     pub fn tick(&mut self) {
+        if self.focus != self.lift_focus.0 {
+            let previous = std::mem::replace(&mut self.lift_focus.0, self.focus.clone());
+            // Only app tiles lift; other focus moves leave nothing to animate.
+            let tiles = matches!(previous, Target::App(_)) || matches!(self.focus, Target::App(_));
+            let since = if tiles {
+                Instant::now()
+            } else {
+                Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now)
+            };
+            self.lift_focus = (self.focus.clone(), Some(previous), since);
+            self.dirty = true;
+        }
+        if self.lift_moving() {
+            self.dirty = true;
+        }
+        // The ambient screen's fades and glides change every frame without input: redraw
+        // whenever the drawn transition differs, including its last frame.
+        let ambient = self.ambient_elapsed().map(|elapsed| {
+            let (ui, dim) = self.ambient_progress();
+            let (_, _, glide) = self.ambient_stops();
+            (ui, dim, (elapsed / AMBIENT_DRIFT_EVERY) as usize, glide)
+        });
+        if ambient != self.ambient_drawn {
+            self.ambient_drawn = ambient;
+            self.dirty = true;
+        }
+        if let Some(progress) = self.wake_progress() {
+            self.dirty = true;
+            if progress >= 1. {
+                // Home is back: the selected tile lifts in as the last beat.
+                self.waking = None;
+                self.lift_focus = (self.focus.clone(), None, Instant::now());
+            }
+        }
+        let target = self.landing_target();
+        if target != self.landing.1 {
+            self.landing = (self.landing(), target, Instant::now());
+            self.dirty = true;
+        }
+        if self.landing() != self.landing.1 {
+            self.dirty = true;
+        }
         let recents_open = self.recents_open();
         if recents_open || self.recents.visibility > 0. {
             self.dirty |= self.recents.animate(
@@ -427,12 +594,186 @@ impl State {
             && (self.recents.visibility != if self.recents_open() { 1. } else { 0. }
                 || self.recents.cards_animating(self.pointer)))
             || self.previous_background.is_some()
+            || self.landing() != self.landing.1
             || self.panel_started.is_some()
+            || self.ambient_fading()
+            || self.waking.is_some()
+            || self.lift_moving()
             || (!self.preferences.reduced_motion
                 && self
                     .notice
                     .as_ref()
                     .is_some_and(|(_, start)| start.elapsed() < Duration::from_millis(120)))
+    }
+
+    /// Records input. Returns true when it woke the ambient screen: that input only wakes.
+    pub fn note_input(&mut self) -> bool {
+        self.last_input = Instant::now();
+        self.settle_focus = false;
+        if self.ambient.is_some() {
+            let (ui, dim) = self.ambient_progress();
+            let stops = self.ambient_stops();
+            self.ambient = None;
+            self.waking = Some(Waking {
+                since: Instant::now(),
+                ui,
+                dim,
+                stops,
+            });
+            self.dirty = true;
+            return true;
+        }
+        false
+    }
+
+    /// A press during the wake-up skips to its end, so the press acts at once.
+    pub fn finish_wake(&mut self) {
+        if self.waking.take().is_some() {
+            self.lift_focus = (self.focus.clone(), None, Instant::now());
+            self.dirty = true;
+        }
+    }
+
+    /// How far the wake-up has run, 0 to 1, while it runs.
+    pub fn wake_progress(&self) -> Option<f32> {
+        let length = if self.preferences.reduced_motion {
+            AMBIENT_WAKE_REDUCED
+        } else {
+            AMBIENT_WAKE
+        };
+        self.waking
+            .map(|waking| (waking.since.elapsed().as_secs_f32() / length).min(1.))
+    }
+
+    /// How long until the ambient screen may start, when it can start at all.
+    pub fn ambient_due(&self) -> Option<Duration> {
+        let minutes = self.preferences.ambient_minutes;
+        if minutes == 0
+            || self.ambient.is_some()
+            || self.page != Page::Home
+            || self.overlay.is_some()
+            || self.moving.is_some()
+            || self.recents_open()
+            || self.loading
+        {
+            return None;
+        }
+        Some(Duration::from_secs(u64::from(minutes) * 60).saturating_sub(self.last_input.elapsed()))
+    }
+
+    /// Starts the ambient screen once Home has been idle long enough; only while Luma is seen.
+    pub fn ambient_tick(&mut self, shown: bool) {
+        if self.ambient.is_some()
+            && (self.preferences.ambient_minutes == 0 || self.page != Page::Home)
+        {
+            self.ambient = None;
+            self.dirty = true;
+        }
+        if self.waking.is_some() && self.page != Page::Home {
+            self.waking = None;
+            self.dirty = true;
+        }
+        if shown && self.ambient_due() == Some(Duration::ZERO) {
+            self.ambient = Some(Instant::now());
+            self.pointer = false;
+            self.dirty = true;
+        }
+    }
+
+    /// How far a tile is lifted, 0 to 1: the selected tile rises, the one just left settles.
+    pub fn tile_lift(&self, target: &Target) -> f32 {
+        if !self.preferences.tile_lift || self.pointer && self.focus != *target {
+            return 0.;
+        }
+        let progress = if self.preferences.reduced_motion {
+            1.
+        } else {
+            ease((self.lift_focus.2.elapsed().as_secs_f32() / TILE_LIFT_TIME).clamp(0., 1.))
+        };
+        if *target == self.focus {
+            if self.lift_focus.0 == *target {
+                progress
+            } else {
+                0.
+            }
+        } else if self.lift_focus.1.as_ref() == Some(target) {
+            1. - progress
+        } else {
+            0.
+        }
+    }
+
+    fn lift_moving(&self) -> bool {
+        self.preferences.tile_lift
+            && !self.preferences.reduced_motion
+            && self.lift_focus.2.elapsed().as_secs_f32() < TILE_LIFT_TIME
+    }
+
+    /// Seconds since the ambient screen started, while it shows.
+    pub fn ambient_elapsed(&self) -> Option<f32> {
+        self.ambient.map(|since| since.elapsed().as_secs_f32())
+    }
+
+    /// The ambient screen's transition: how far Home has faded out and how far the
+    /// wallpaper has dimmed, each 0 to 1. Reduced motion skips straight to the end.
+    pub fn ambient_progress(&self) -> (f32, f32) {
+        let Some(elapsed) = self.ambient_elapsed() else {
+            return (0., 0.);
+        };
+        if self.preferences.reduced_motion {
+            return (1., 1.);
+        }
+        let ui = (elapsed / AMBIENT_UI_FADE).clamp(0., 1.);
+        let dim = ((elapsed - AMBIENT_DIM_START) / AMBIENT_DIM_FADE).clamp(0., 1.);
+        (ease(ui), ease(dim))
+    }
+
+    /// The ambient clock block's tour: where it is coming from, where it is going and how far
+    /// along the glide it is. It holds its Home position for the first minute, then visits
+    /// each corner (lower left, upper left, upper right, lower right) and the centre, one
+    /// stop a minute, round and round.
+    pub fn ambient_stops(&self) -> (AmbientSpot, AmbientSpot, f32) {
+        let Some(elapsed) = self.ambient_elapsed() else {
+            return (AmbientSpot::Home, AmbientSpot::Home, 1.);
+        };
+        let step = (elapsed / AMBIENT_DRIFT_EVERY) as usize;
+        if step == 0 {
+            return (AmbientSpot::Home, AmbientSpot::Home, 1.);
+        }
+        let stop = |step: usize| {
+            if step == 0 {
+                AmbientSpot::Home
+            } else {
+                AMBIENT_TOUR[(step - 1) % AMBIENT_TOUR.len()]
+            }
+        };
+        let glide = if self.preferences.reduced_motion {
+            1.
+        } else {
+            ease(
+                ((elapsed - step as f32 * AMBIENT_DRIFT_EVERY) / AMBIENT_DRIFT_GLIDE).clamp(0., 1.),
+            )
+        };
+        (stop(step - 1), stop(step), glide)
+    }
+
+    fn ambient_fading(&self) -> bool {
+        let Some(elapsed) = self.ambient_elapsed() else {
+            return false;
+        };
+        !self.preferences.reduced_motion
+            && (elapsed < AMBIENT_DIM_START + AMBIENT_DIM_FADE
+                || (elapsed >= AMBIENT_DRIFT_EVERY
+                    && elapsed % AMBIENT_DRIFT_EVERY < AMBIENT_DRIFT_GLIDE))
+    }
+
+    /// Whether Luma should keep LG's screen saver away: the ambient screen is on and has not
+    /// yet run for its hand-off time.
+    pub fn ambient_holds_screen_saver(&self) -> bool {
+        self.preferences.ambient_minutes > 0
+            && self
+                .ambient
+                .is_none_or(|since| since.elapsed() < AMBIENT_HANDOFF)
     }
 
     /// Home's lifecycle relaunch returns directly to Home, even from an overlay.
@@ -446,6 +787,9 @@ impl State {
         self.pointer = false;
         self.pressed = None;
         self.open(0);
+        self.home_scroll = 0.;
+        self.focus = self.first_content();
+        self.settle_focus = !matches!(self.focus, Target::App(_));
         pending
     }
 
@@ -467,7 +811,43 @@ impl State {
         self.moving = None;
         self.subpage = None;
         self.panel_started = None;
+        // Arriving on Home settles the wallpaper-first rows where Home's focus wants them,
+        // even when the pointer clicked the tab: its freeze applies only to rows already on
+        // Home, so it must not carry the raised layout over from another page.
+        let target = self.landing_resting_target();
+        if target != self.landing.1 {
+            self.landing = (self.landing(), target, Instant::now());
+        }
         self.dirty = true;
+    }
+
+    /// What the top bar's Inputs menu lists, by app ID: Live TV, then the inputs not hidden from
+    /// it (whatever their Home card mode), plugged-in ones first (port order kept within each).
+    pub fn input_choices(&self) -> Vec<String> {
+        let live = self
+            .inventory
+            .apps
+            .iter()
+            .filter(|app| app.id == "com.webos.app.livetv")
+            .map(|app| app.id.clone());
+        let (plugged, rest): (Vec<_>, Vec<_>) = self
+            .inventory
+            .inputs
+            .iter()
+            .filter(|input| !self.preferences.inputs_menu_hidden.contains(&input.id))
+            .partition(|input| input.connected == Some(true));
+        live.chain(
+            plugged
+                .into_iter()
+                .chain(rest)
+                .map(|input| input.id.clone()),
+        )
+        .collect()
+    }
+
+    /// Whether the top bar shows the Inputs button.
+    pub fn inputs_button(&self) -> bool {
+        self.preferences.inputs_menu && !self.input_choices().is_empty()
     }
 
     pub fn apps(&self) -> Vec<&App> {
@@ -503,6 +883,55 @@ impl State {
                 .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
         });
         apps
+    }
+
+    /// With the wallpaper-first Home on, the favourites sit lower while focus is in the header
+    /// of Home; moving down into them slides them up to their usual place.
+    fn landing_target(&self) -> f32 {
+        // Pointer focus must not slide its hit target away. Remote navigation resumes the
+        // focus-led transition; overlays and move mode still use the normal layout.
+        if self.preferences.landing_layout
+            && self.page == Page::Home
+            && self.overlay.is_none()
+            && self.moving.is_none()
+            && self.pointer
+        {
+            return self.landing.1;
+        }
+        self.landing_resting_target()
+    }
+
+    /// Where the rows rest for the current page and focus, ignoring the pointer freeze.
+    fn landing_resting_target(&self) -> f32 {
+        // With no input cards below the favourites there is nothing to make room for, so the
+        // row stays lowered when focus moves into it.
+        let lowered = self.preferences.landing_layout
+            && self.page == Page::Home
+            && self.overlay.is_none()
+            && self.moving.is_none()
+            && (matches!(
+                self.focus,
+                Target::Nav(_) | Target::TvSettings | Target::InputsButton
+            ) || !self.home_inputs_shown());
+        if lowered { 1. } else { 0. }
+    }
+
+    /// Whether Home shows any input cards below the favourites.
+    fn home_inputs_shown(&self) -> bool {
+        self.inventory
+            .inputs
+            .iter()
+            .any(|input| self.preferences.input_visible(input))
+    }
+
+    /// 0 in the usual layout, 1 fully lowered; eased while it slides.
+    pub fn landing(&self) -> f32 {
+        let (from, to, start) = self.landing;
+        if self.preferences.reduced_motion {
+            return to;
+        }
+        let t = (start.elapsed().as_secs_f32() / LANDING_SECONDS).min(1.);
+        from + (to - from) * (1. - (1. - t).powi(3))
     }
 
     pub fn content_viewport(&self) -> Rect {
@@ -641,6 +1070,24 @@ impl State {
         self.inventory_failures = 0;
         self.dirty = true;
         self.reconcile_focus();
+        self.settle_home_focus();
+    }
+
+    /// Moves a cold start's tab-bar focus onto the first app once apps exist. Pressing anything
+    /// first, or being anywhere but Home without an overlay, leaves focus alone.
+    fn settle_home_focus(&mut self) {
+        if !self.settle_focus || self.page != Page::Home || self.overlay.is_some() {
+            return;
+        }
+        if !matches!(self.focus, Target::Nav(0) | Target::Browse | Target::Retry) {
+            self.settle_focus = false;
+            return;
+        }
+        self.home_scroll = 0.;
+        if let first @ Target::App(_) = self.first_content() {
+            self.focus = first;
+            self.settle_focus = false;
+        }
     }
 
     /// Replace only input status; leave installed apps, artwork and saved preferences alone.
@@ -653,7 +1100,7 @@ impl State {
         self.reconcile_focus();
         let missing = |id: &str| !self.inventory.inputs.iter().any(|input| input.id == id);
         if self.page == Page::Settings
-            && (matches!(&self.subpage, Some(Subpage::Input(id)) if missing(id))
+            && (matches!(&self.subpage, Some(Subpage::Input(id) | Subpage::InputIcons(id)) if missing(id))
                 || matches!(&self.focus, Target::InputMode(id) if missing(id)))
         {
             self.subpage = Some(Subpage::Inputs);
@@ -786,12 +1233,18 @@ impl State {
                 } else {
                     120.8
                 };
-                if control.rect.y < top {
-                    self.scroll = (self.scroll + control.rect.y - top).max(0.);
+                // Where the control ends up once the wallpaper-first Home finished sliding.
+                let y = if self.page == Page::Home {
+                    control.rect.y - (self.landing() - self.landing_target()) * LANDING_DROP
+                } else {
+                    control.rect.y
+                };
+                if y < top {
+                    self.scroll = (self.scroll + y - top).max(0.);
                 }
                 let bottom = self.scroll_bottom();
-                if control.rect.y + control.rect.h > bottom {
-                    self.scroll += control.rect.y + control.rect.h - bottom;
+                if y + control.rect.h > bottom {
+                    self.scroll += y + control.rect.h - bottom;
                 }
             }
         }
@@ -806,6 +1259,10 @@ impl State {
 
     /// Hover and pointer-down must not move the control before pointer-up.
     pub fn pointer_focus(&mut self, target: Target) {
+        // Stop an in-flight landing slide at the geometry used for this pointer event,
+        // before changing focus. Keep that geometry for hover, down and release.
+        let landing = self.landing();
+        self.landing = (landing, landing, Instant::now());
         if !self.pointer {
             self.dirty = true;
         }
@@ -1008,6 +1465,14 @@ impl State {
                 self.subpage = Some(Subpage::Clock);
                 Target::ClockTimeFormat
             }
+            Some(Subpage::ClockSize) => {
+                self.subpage = Some(Subpage::Clock);
+                Target::ClockSize
+            }
+            Some(Subpage::InputIcons(id)) => {
+                self.subpage = Some(Subpage::Input(id));
+                Target::InputIcon
+            }
             Some(Subpage::Input(id)) => {
                 self.subpage = Some(Subpage::Inputs);
                 Target::InputMode(id)
@@ -1086,7 +1551,21 @@ impl State {
                             let id = apps[next].id.clone();
                             self.focus(Target::App(id), controls);
                         }
-                        Direction::Up => self.focus(Target::Nav(0), controls),
+                        Direction::Up => {
+                            // The top bar's button above the right half of the screen, if shown.
+                            let right = controls
+                                .iter()
+                                .find(|control| control.target == self.focus)
+                                .is_some_and(|control| control.rect.center().0 >= 960.);
+                            self.focus(
+                                if right && self.inputs_button() {
+                                    Target::InputsButton
+                                } else {
+                                    Target::Nav(0)
+                                },
+                                controls,
+                            )
+                        }
                         Direction::Down => {
                             let x = controls
                                 .iter()
@@ -1117,6 +1596,15 @@ impl State {
                     return vec![];
                 }
             }
+            if self.focus == Target::InputsButton {
+                match direction {
+                    Direction::Left => self.focus(Target::Nav(self.page_index()), controls),
+                    Direction::Right => self.focus(Target::TvSettings, controls),
+                    Direction::Up => {}
+                    Direction::Down => self.focus(self.first_content(), controls),
+                }
+                return vec![];
+            }
             let setting_rows: Option<&[Target]> = match self.subpage {
                 Some(Subpage::Greeting) => Some(&[
                     Target::GreetingToggle,
@@ -1125,7 +1613,11 @@ impl State {
                 ]),
                 Some(Subpage::AppNames) => Some(&[Target::AppNamesHome, Target::AppNamesApps]),
                 Some(Subpage::Date) => Some(&[Target::DateToggle, Target::DateFormat]),
-                Some(Subpage::Clock) => Some(&[Target::ClockFormat, Target::ClockTimeFormat]),
+                Some(Subpage::Clock) => Some(&[
+                    Target::ClockFormat,
+                    Target::ClockTimeFormat,
+                    Target::ClockSize,
+                ]),
                 _ => None,
             };
             if let Some(rows) = setting_rows
@@ -1150,6 +1642,7 @@ impl State {
                             Target::GreetingName
                                 | Target::ClockFormat
                                 | Target::ClockTimeFormat
+                                | Target::ClockSize
                                 | Target::DateFormat
                         ) =>
                     {
@@ -1167,7 +1660,9 @@ impl State {
                         | Subpage::Temperature
                         | Subpage::TextRendering,
                     ) => 2,
+                    Some(Subpage::InputIcons(_)) => crate::model::INPUT_ICONS.len() + 1,
                     Some(Subpage::Language) => Language::ALL.len(),
+                    Some(Subpage::ClockSize) => crate::model::ClockSize::ALL.len(),
                     Some(Subpage::DateFormat) => crate::model::DateFormat::ALL.len(),
                     _ => 3,
                 };
@@ -1192,23 +1687,39 @@ impl State {
                 }
                 return vec![];
             }
-            if matches!(self.focus, Target::InputRename | Target::InputNameReset) {
+            if matches!(
+                self.focus,
+                Target::InputRename
+                    | Target::InputNameReset
+                    | Target::InputIcon
+                    | Target::InputInMenu
+            ) {
+                let mut rows = vec![Target::InputRename];
+                if controls.iter().any(|c| c.target == Target::InputNameReset) {
+                    rows.push(Target::InputNameReset);
+                }
+                rows.push(Target::InputIcon);
+                if controls.iter().any(|c| c.target == Target::InputInMenu) {
+                    rows.push(Target::InputInMenu);
+                }
+                let index = rows
+                    .iter()
+                    .position(|target| *target == self.focus)
+                    .unwrap_or(0);
                 match direction {
                     Direction::Left => self.close_subpage(),
                     Direction::Up => self.focus(
-                        if self.focus == Target::InputNameReset {
-                            Target::InputRename
-                        } else {
+                        if index == 0 {
                             Target::Choice(2)
+                        } else {
+                            rows[index - 1].clone()
                         },
                         controls,
                     ),
-                    Direction::Down
-                        if self.focus == Target::InputRename
-                            && controls.iter().any(|c| c.target == Target::InputNameReset) =>
-                    {
-                        self.focus(Target::InputNameReset, controls)
+                    Direction::Down if index + 1 < rows.len() => {
+                        self.focus(rows[index + 1].clone(), controls)
                     }
+                    Direction::Right if self.focus == Target::InputIcon => return self.activate(),
                     _ => {}
                 }
                 return vec![];
@@ -1246,8 +1757,10 @@ impl State {
                     | Target::WeatherToggle
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
+                    | Target::WeatherForecast
                     | Target::Widget(_)
-            ) || (self.focus == Target::Setting(3) && self.subpage == Some(Subpage::Inputs)))
+            ) || (matches!(self.focus, Target::Setting(3) | Target::InputsMenu)
+                && self.subpage == Some(Subpage::Inputs)))
                 && matches!(direction, Direction::Left)
             {
                 self.close_subpage();
@@ -1264,8 +1777,10 @@ impl State {
             {
                 return self.activate();
             }
-            if matches!(self.focus, Target::Setting(_) | Target::WeatherToggle)
-                && matches!(direction, Direction::Right)
+            if matches!(
+                self.focus,
+                Target::Setting(_) | Target::WeatherToggle | Target::WeatherForecast
+            ) && matches!(direction, Direction::Right)
             {
                 return vec![];
             }
@@ -1959,6 +2474,26 @@ impl State {
                 self.pressed = None;
             }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
+            Target::InputsButton => {
+                if let Some(first) = self.input_choices().into_iter().next() {
+                    self.overlay = Some(Overlay::Inputs);
+                    self.focus = Target::InputPick(first);
+                    self.pressed = None;
+                    if !self.preferences.reduced_motion {
+                        self.panel_started = Some(Instant::now());
+                    }
+                }
+            }
+            Target::InputPick(id) if !self.launching => {
+                self.overlay = None;
+                self.panel_started = None;
+                self.focus = Target::InputsButton;
+                return vec![Effect::Launch(id)];
+            }
+            Target::InputsMenu => {
+                self.preferences.inputs_menu = !self.preferences.inputs_menu;
+                return vec![Effect::Save];
+            }
             Target::App(_) if self.page == Page::Apps && !self.launching => self.options(),
             Target::App(id) | Target::Input(id) if !self.launching => {
                 return vec![Effect::Launch(id)];
@@ -2001,6 +2536,10 @@ impl State {
             Target::WeatherToggle => {
                 self.preferences.show_weather = !self.preferences.show_weather;
                 self.weather.invalidate_forecast();
+                return vec![Effect::Save];
+            }
+            Target::WeatherForecast => {
+                self.preferences.show_forecast = !self.preferences.show_forecast;
                 return vec![Effect::Save];
             }
             Target::WeatherLocation => self.open_location(),
@@ -2059,6 +2598,33 @@ impl State {
                 self.scroll = 0.;
                 if !self.preferences.reduced_motion {
                     self.panel_started = Some(Instant::now());
+                }
+            }
+            Target::ClockSize => {
+                self.subpage = Some(Subpage::ClockSize);
+                self.focus = Target::Choice(self.preferences.clock_size.index());
+                self.scroll = 0.;
+                if !self.preferences.reduced_motion {
+                    self.panel_started = Some(Instant::now());
+                }
+            }
+            Target::InputIcon => {
+                if let Some(Subpage::Input(id)) = self.subpage.clone() {
+                    let selected = self
+                        .preferences
+                        .input_icon(&id)
+                        .and_then(|saved| {
+                            crate::model::INPUT_ICONS
+                                .iter()
+                                .position(|(icon, _)| *icon == saved)
+                        })
+                        .map_or(0, |index| index + 1);
+                    self.subpage = Some(Subpage::InputIcons(id));
+                    self.focus = Target::Choice(selected);
+                    self.scroll = 0.;
+                    if !self.preferences.reduced_motion {
+                        self.panel_started = Some(Instant::now());
+                    }
                 }
             }
             Target::InputRename => self.open_keyboard(TextField::InputName),
@@ -2129,6 +2695,17 @@ impl State {
                     return vec![Effect::Save];
                 }
             }
+            Target::InputInMenu => {
+                if let Some(Subpage::Input(id)) = &self.subpage {
+                    let hidden = &mut self.preferences.inputs_menu_hidden;
+                    if let Some(index) = hidden.iter().position(|item| item == id) {
+                        hidden.remove(index);
+                    } else {
+                        hidden.push(id.clone());
+                    }
+                    return vec![Effect::Save];
+                }
+            }
             Target::InputNameReset => {
                 if let Some(Subpage::Input(id)) = &self.subpage
                     && self.preferences.input_names.remove(id).is_some()
@@ -2186,6 +2763,22 @@ impl State {
                         return vec![];
                     }
                     2 => self.preferences.reduced_motion = !self.preferences.reduced_motion,
+                    BACK_RECENTS_ROW => {
+                        self.preferences.back_recents = !self.preferences.back_recents
+                    }
+                    LANDING_ROW => {
+                        self.preferences.landing_layout = !self.preferences.landing_layout
+                    }
+                    GLASS_CLOCK_ROW => self.preferences.glass_clock = !self.preferences.glass_clock,
+                    TILE_LIFT_ROW => self.preferences.tile_lift = !self.preferences.tile_lift,
+                    AMBIENT_ROW => {
+                        let current = AMBIENT_CHOICES
+                            .iter()
+                            .position(|&m| m == self.preferences.ambient_minutes)
+                            .unwrap_or(0);
+                        self.preferences.ambient_minutes =
+                            AMBIENT_CHOICES[(current + 1) % AMBIENT_CHOICES.len()];
+                    }
                     4 => {
                         self.subpage = Some(Subpage::Language);
                         self.focus = Target::Choice(self.preferences.language.index());
@@ -2195,6 +2788,10 @@ impl State {
                         return vec![];
                     }
                     5 => return vec![Effect::Quit],
+                    9 => {
+                        self.reset_icon_cache = true;
+                        return vec![];
+                    }
                     7 => {
                         self.subpage = Some(Subpage::TextRendering);
                         self.focus = Target::Choice(self.preferences.text_rendering.index());
@@ -2278,8 +2875,23 @@ impl State {
                 match self.subpage.clone() {
                     Some(Subpage::ClockFormat) => self.preferences.hour_24 = index == 1,
                     Some(Subpage::TimeFormat) => self.preferences.show_seconds = index == 1,
+                    Some(Subpage::ClockSize) => {
+                        self.preferences.clock_size = crate::model::ClockSize::ALL[index.min(3)];
+                    }
                     Some(Subpage::DateFormat) => {
                         self.preferences.date_format = crate::model::DateFormat::ALL[index.min(3)];
+                    }
+                    Some(Subpage::InputIcons(id)) => {
+                        let icon = if index == 0 {
+                            ""
+                        } else if let Some((icon, _)) = crate::model::INPUT_ICONS.get(index - 1) {
+                            *icon
+                        } else {
+                            return vec![];
+                        };
+                        let changed = self.preferences.set_input_icon(&id, icon);
+                        self.close_subpage();
+                        return if changed { vec![Effect::Save] } else { vec![] };
                     }
                     Some(Subpage::Input(id)) => {
                         self.preferences.input_modes.insert(
@@ -2502,6 +3114,11 @@ impl State {
                     self.recents.closing_focus = None;
                 }
             }
+            if matches!(overlay, Overlay::Inputs) {
+                self.focus = Target::InputsButton;
+                self.pressed = None;
+                return vec![];
+            }
             if let Overlay::Options { restore, .. } | Overlay::Recents { restore } = overlay {
                 self.focus = restore;
                 self.recents.pending = None;
@@ -2531,10 +3148,30 @@ impl State {
             return vec![];
         }
         if self.page != Page::Home {
-            self.open(0);
-            vec![]
-        } else {
+            self.return_home()
+        } else if self.preferences.back_recents {
             self.open_recents()
+        } else {
+            // With the Recent apps shortcut off, Back on Home returns to the first favourite,
+            // scrolling the strip back to its beginning.
+            self.home_scroll = 0.;
+            self.focus = self.first_content();
+            vec![]
         }
     }
+
+    /// The Back-button shortcut to Recent apps (Back on Home, or held anywhere), unless the owner
+    /// turned it off in Settings → General.
+    pub fn back_recents(&mut self) -> Vec<Effect> {
+        if self.preferences.back_recents {
+            self.open_recents()
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// Smooth start and finish for a 0–1 progress.
+pub(crate) fn ease(t: f32) -> f32 {
+    t * t * (3. - 2. * t)
 }

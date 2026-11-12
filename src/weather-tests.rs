@@ -15,6 +15,7 @@ fn reading() -> Reading {
         temperature: 14.2,
         code: 2,
         is_day: true,
+        daily: None,
     }
 }
 fn preferences() -> Preferences {
@@ -233,4 +234,42 @@ fn malformed_weather_preferences_do_not_lose_existing_favorites() {
     let old: Preferences = serde_json::from_value(json!({"background":"forest"})).unwrap();
     assert!(old.show_weather);
     assert!(old.weather_location.is_none());
+}
+
+#[test]
+fn daily_forecast_is_read_with_local_weekdays_or_not_at_all() {
+    use crate::weather::parse_daily;
+    // 2026-11-06 00:00 in Denver (UTC-7) is a Friday.
+    let start = 1_793_948_400_i64;
+    let value = serde_json::json!({
+        "utc_offset_seconds": -25200,
+        "daily": {
+            "time": [start, start + 86400, start + 2 * 86400, start + 3 * 86400, start + 4 * 86400],
+            "weather_code": [2, 0, 0, 3, 73],
+            "temperature_2m_max": [9.0, 12.5, 10.6, 5.5, 3.3],
+            "temperature_2m_min": [-2.8, -1.1, -1.7, -4.4, -6.6]
+        }
+    });
+    let days = parse_daily(&value).unwrap();
+    assert_eq!(days.map(|d| d.weekday), [4, 5, 6, 0, 1]);
+    assert_eq!(days[4].code, 73);
+    assert_eq!(days[1].high, 12.5);
+    // A short, malformed or impossible block gives no forecast.
+    let mut short = value.clone();
+    short["daily"]["time"] = serde_json::json!([start]);
+    assert!(parse_daily(&short).is_none());
+    let mut inverted = value.clone();
+    inverted["daily"]["temperature_2m_min"][0] = serde_json::json!(20.0);
+    assert!(parse_daily(&inverted).is_none());
+    assert!(parse_daily(&serde_json::json!({})).is_none());
+    // The current reading still parses without it.
+    let current = serde_json::json!({
+        "current": { "temperature_2m": 8.0, "weather_code": 2, "is_day": 1 }
+    });
+    assert!(
+        crate::weather::parse_reading(&current)
+            .unwrap()
+            .daily
+            .is_none()
+    );
 }

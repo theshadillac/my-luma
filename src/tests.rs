@@ -16,8 +16,13 @@ mod wallpaper_tests;
 #[path = "input-refresh-tests.rs"]
 mod input_refresh_tests;
 
+#[path = "input-icon-tests.rs"]
+mod input_icon_tests;
+
 fn ready() -> State {
     let mut state = State::new(Preferences::default());
+    // Most fixtures start from the tab bar, as if a key had been pressed before apps loaded.
+    state.note_input();
     state.set_inventory(demo_inventory(), None);
     state
 }
@@ -37,7 +42,7 @@ fn home_relaunch_returns_from_apps_and_settings() {
 
         assert!(state.return_home().is_empty());
         assert_eq!(state.page, Page::Home);
-        assert_eq!(state.focus, Target::Nav(0));
+        assert_eq!(state.focus, Target::App("netflix".into()));
         assert!(state.query.is_empty());
         assert_eq!(state.filter, 0);
         assert_eq!(state.scroll, 0.);
@@ -113,7 +118,7 @@ fn home_relaunch_commits_keyboard_edits_before_clearing_the_subpage() {
             Some("Console")
         );
         assert_eq!(state.page, Page::Home);
-        assert_eq!(state.focus, Target::Nav(0));
+        assert_eq!(state.focus, Target::App("netflix".into()));
         assert!(!state.text_input_active());
         assert!(state.subpage.is_none());
     }
@@ -141,8 +146,93 @@ fn home_relaunch_dismisses_recents_and_ignores_its_pending_reply() {
             .recent_response(generation, command, Ok(Some(vec![])))
             .is_empty()
     );
-    assert_eq!(state.focus, Target::Nav(0));
+    assert_eq!(state.focus, Target::App("netflix".into()));
     assert!(state.overlay.is_none());
+}
+
+#[test]
+fn home_relaunch_focuses_first_visible_favorite_in_saved_order() {
+    let mut state = ready();
+    state.preferences.favorites = Some(vec![
+        "missing.app".into(),
+        "netflix".into(),
+        "youtube.leanback.v4".into(),
+    ]);
+    state.preferences.hidden.push("netflix".into());
+    state.home_scroll = crate::state::HOME_TILE_PITCH;
+    state.focus = Target::Input("HDMI_1".into());
+
+    state.return_home();
+    assert_eq!(state.focus, Target::App("youtube.leanback.v4".into()));
+    assert_eq!(state.home_scroll, 0.);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch("youtube.leanback.v4".into())]
+    );
+}
+
+#[test]
+fn home_relaunch_resets_scrolled_favorites_and_keeps_remote_routes() {
+    let mut state = ready();
+    state.preferences.favorites = Some(
+        state
+            .inventory
+            .apps
+            .iter()
+            .take(9)
+            .map(|app| app.id.clone())
+            .collect(),
+    );
+    let favorites = state.preferences.favorites.clone().unwrap();
+    state.home_scroll = crate::state::HOME_TILE_PITCH * 2.;
+
+    state.return_home();
+    assert_eq!(state.home_scroll, 0.);
+    assert_eq!(state.focus, Target::App(favorites[0].clone()));
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::App(favorites[1].clone()));
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::App(favorites[0].clone()));
+    state.direction(Direction::Down, &controls(&state));
+    assert!(matches!(state.focus, Target::Input(_)));
+
+    state.return_home();
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Nav(0));
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.page, Page::Apps);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.page, Page::Home);
+    assert_eq!(
+        state.focus,
+        Target::Nav(0),
+        "Tab browsing stays in the header"
+    );
+}
+
+#[test]
+fn home_relaunch_without_favorites_uses_existing_empty_and_error_actions() {
+    let mut state = ready();
+    state.preferences.favorites = Some(vec![]);
+    state.return_home();
+    assert_eq!(state.focus, Target::Browse);
+
+    state.error = Some("Inventory unavailable".into());
+    state.return_home();
+    assert_eq!(state.focus, Target::Retry);
+}
+
+#[test]
+fn back_to_home_focuses_first_favorite() {
+    for page in [1, 2] {
+        let mut state = ready();
+        state.open(page);
+        state.home_scroll = crate::state::HOME_TILE_PITCH;
+        assert!(state.back().is_empty());
+        assert_eq!(state.page, Page::Home);
+        assert_eq!(state.focus, Target::App("netflix".into()));
+        assert_eq!(state.home_scroll, 0.);
+    }
 }
 
 fn scene(state: &State) -> view::Scene {
@@ -909,7 +999,7 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     assert!(
         !controls(&state)
             .iter()
-            .any(|c| matches!(c.target, Target::Setting(3 | 5)))
+            .any(|c| matches!(c.target, Target::Setting(3 | 5 | 9)))
     );
     assert!(
         controls(&state)
@@ -923,10 +1013,19 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::CheckUpdates);
     state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Setting(7));
+    state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Setting(3));
     assert_eq!(state.activate(), vec![Effect::Reload]);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Setting(7));
+    assert_eq!(state.focus, Target::Setting(9));
+    let preferences = serde_json::to_value(&state.preferences).unwrap();
+    assert!(state.activate().is_empty());
+    assert!(state.reset_icon_cache);
+    assert_eq!(
+        serde_json::to_value(&state.preferences).unwrap(),
+        preferences
+    );
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Setting(5));
     assert_eq!(state.activate(), vec![Effect::Quit]);
@@ -935,6 +1034,43 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(0));
     assert_eq!(state.section, 0);
+}
+
+#[test]
+fn system_maintenance_actions_share_an_icon_and_group_below_text_rendering() {
+    let mut state = ready();
+    state.open(2);
+    state.section = crate::state::SYSTEM_SECTION;
+    state.panel_started = None;
+    let system = scene(&state);
+    let rect = |index| {
+        system
+            .controls
+            .iter()
+            .find(|control| control.target == Target::Setting(index))
+            .unwrap()
+            .rect
+    };
+    let text = rect(7);
+    let refresh = rect(3);
+    let reset = rect(9);
+    let quit = rect(5);
+    let gap = |above: crate::state::Rect, below: crate::state::Rect| below.y - above.y - above.h;
+    assert!(gap(text, refresh) > gap(refresh, reset));
+    assert!(gap(reset, quit) > gap(refresh, reset));
+    assert!((gap(refresh, reset) - 12.).abs() < 0.01);
+    for action in [refresh, reset] {
+        assert!(system.draw.iter().any(|draw| matches!(draw,
+            crate::renderer::Draw::TintedImage(path, icon, ..)
+                if path.ends_with("ui-icons/refresh.lvec")
+                    && icon.y >= action.y && icon.y + icon.h <= action.y + action.h
+        )));
+    }
+    state.focus = Target::Setting(9);
+    state.direction(Direction::Up, &system.controls);
+    assert_eq!(state.focus, Target::Setting(3));
+    state.direction(Direction::Up, &system.controls);
+    assert_eq!(state.focus, Target::Setting(7));
 }
 
 #[test]
@@ -1562,6 +1698,7 @@ fn weather_units_save_without_replacing_celsius_cache_and_hide_keeps_city() {
             temperature: 14.2,
             code: 2,
             is_day: true,
+            daily: None,
         },
     });
     state.focus = Target::WeatherTemperature;
@@ -3018,7 +3155,9 @@ fn update_card_shows_both_versions_and_explicitly_starts_installation() {
             Some(Target::InstallUpdate)
         );
         state.direction(Direction::Down, &rendered.controls);
-        assert_eq!(state.focus, Target::Setting(3));
+        assert_eq!(state.focus, Target::Setting(7)); // Text rendering precedes maintenance actions.
+        state.direction(Direction::Down, &rendered.controls);
+        assert_eq!(state.focus, Target::Setting(3)); // Refresh apps & inputs.
         state.focus = Target::InstallUpdate;
         state.direction(Direction::Left, &rendered.controls);
         assert_eq!(state.focus, Target::Sidebar(crate::state::SYSTEM_SECTION));
@@ -3268,4 +3407,948 @@ fn update_card_shows_progress_restores_retry_and_ignores_presses_while_busy() {
     assert_eq!(state.update, InstallStatus::Idle);
     state.install_response(Response::Finished(Ok(())));
     assert_eq!(state.update_status, Status::Unchecked);
+}
+
+#[test]
+fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
+    let mut state = ready();
+    let has_button = |state: &State| {
+        controls(state)
+            .iter()
+            .any(|control| control.target == Target::InputsButton)
+    };
+    // Off by default: no button, and Up from a favorite on the right still goes to the tabs.
+    assert!(!state.preferences.inputs_menu);
+    assert!(!has_button(&state));
+    let right = state.apps()[5].id.clone();
+    state.focus = Target::App(right.clone());
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Nav(0));
+
+    // Settings → Widgets → Inputs switches it on; Left leaves the page as from its other rows.
+    state.open(2);
+    state.subpage = Some(crate::state::Subpage::Inputs);
+    state.focus = Target::InputsMenu;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.inputs_menu);
+    state.direction(Direction::Left, &controls(&state));
+    assert!(state.subpage.is_none());
+
+    // Home's cards and the menu are separate: every card switched Off still leaves the menu
+    // listing Live TV, then plugged-in inputs, then the rest.
+    for input in [
+        "com.webos.app.hdmi1",
+        "com.webos.app.hdmi2",
+        "com.webos.app.hdmi3",
+    ] {
+        state
+            .preferences
+            .input_modes
+            .insert(input.into(), InputMode::Off);
+    }
+    assert_eq!(
+        state.input_choices(),
+        vec![
+            "com.webos.app.livetv",
+            "com.webos.app.hdmi1",
+            "com.webos.app.hdmi2",
+            "com.webos.app.hdmi3"
+        ]
+    );
+    // Each input's page has its own menu switch, below Rename and Icon, while the menu is on.
+    state.subpage = Some(crate::state::Subpage::Input("com.webos.app.hdmi2".into()));
+    state.focus = Target::InputRename;
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::InputIcon);
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::InputInMenu);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(
+        state.input_choices(),
+        vec![
+            "com.webos.app.livetv",
+            "com.webos.app.hdmi1",
+            "com.webos.app.hdmi3"
+        ]
+    );
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Inputs));
+    state.preferences.inputs_menu = false;
+    state.subpage = Some(crate::state::Subpage::Input("com.webos.app.hdmi2".into()));
+    assert!(
+        !controls(&state)
+            .iter()
+            .any(|control| control.target == Target::InputInMenu),
+        "the switch only shows while the menu is on"
+    );
+    state.preferences.inputs_menu = true;
+
+    state.open(0);
+    assert!(has_button(&state));
+    // Up from the right half of Home reaches the button; Left goes to the tabs, Right to TV
+    // settings.
+    state.focus = Target::App(right);
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::InputsButton);
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::TvSettings);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::InputsButton);
+
+    // OK opens the menu on its first row; Down moves through it; Back returns to the button.
+    assert!(state.activate().is_empty());
+    assert!(matches!(state.overlay, Some(Overlay::Inputs)));
+    assert_eq!(
+        state.focus,
+        Target::InputPick("com.webos.app.livetv".into())
+    );
+    let menu = controls(&state);
+    assert!(
+        menu.iter()
+            .all(|control| matches!(control.target, Target::InputPick(_))),
+        "only the menu takes input while it is open"
+    );
+    state.direction(Direction::Down, &menu);
+    assert_eq!(state.focus, Target::InputPick("com.webos.app.hdmi1".into()));
+    assert!(state.back().is_empty());
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::InputsButton);
+
+    // OK on a row switches to it and closes the menu.
+    state.activate();
+    state.direction(Direction::Down, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch("com.webos.app.hdmi3".into())]
+    );
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::InputsButton);
+}
+
+#[test]
+fn the_wallpaper_first_home_lowers_the_rows_until_focus_moves_into_them() {
+    use crate::state::{LANDING_DROP, LANDING_ROW};
+    let tile_y = |state: &State| {
+        controls(state)
+            .iter()
+            .find(|control| matches!(control.target, Target::App(_)))
+            .map(|control| control.rect.y)
+            .unwrap()
+    };
+    let mut usual = ready();
+    usual.preferences.reduced_motion = true;
+    let usual_y = tile_y(&usual);
+
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.note_input();
+    state.set_inventory(demo_inventory(), None);
+    assert_eq!(state.focus, Target::Nav(0));
+    assert_eq!(state.landing(), 1.);
+    assert_eq!(tile_y(&state), usual_y + LANDING_DROP);
+    state.direction(Direction::Down, &controls(&state));
+    assert!(matches!(state.focus, Target::App(_)));
+    state.tick();
+    assert_eq!(state.landing(), 0.);
+    assert_eq!(
+        state.scroll, 0.,
+        "the lowered position never scrolls the page"
+    );
+    assert_eq!(tile_y(&state), usual_y);
+    state.direction(Direction::Up, &controls(&state));
+    state.tick();
+    assert_eq!(
+        state.landing(),
+        1.,
+        "back in the header the rows lower again"
+    );
+
+    // It slides when motion is allowed, and stays put on other pages.
+    state.preferences.reduced_motion = false;
+    state.direction(Direction::Down, &controls(&state));
+    state.tick();
+    assert!(state.animating());
+    state.preferences.reduced_motion = true;
+    state.open(2);
+    state.tick();
+    assert_eq!(state.focus, Target::Nav(2));
+    assert_eq!(
+        state.landing(),
+        0.,
+        "the header of another page keeps the usual layout"
+    );
+
+    // General → Wallpaper-first Home switches it.
+    let mut settings = ready();
+    settings.open(2);
+    settings.focus = Target::Setting(LANDING_ROW);
+    assert!(scene(&settings).draw.iter().any(|draw| matches!(draw,
+        crate::renderer::Draw::Text(value, ..) if value == "Wallpaper-first Home")));
+    assert_eq!(settings.activate(), vec![Effect::Save]);
+    assert!(settings.preferences.landing_layout);
+    let saved = serde_json::to_value(&settings.preferences).unwrap();
+    assert_eq!(saved["landing_layout"], true);
+    assert!(!Preferences::default().landing_layout);
+}
+
+#[test]
+fn back_on_home_returns_to_the_first_favourite_when_the_recents_shortcut_is_off() {
+    let mut state = ready();
+    state.preferences.back_recents = false;
+    let first = state.first_content();
+    assert!(matches!(first, Target::App(_)));
+    // Scrolled along the strip.
+    let far = state.apps()[5].id.clone();
+    state.focus = Target::App(far);
+    state.home_scroll = 400.;
+    assert!(state.back().is_empty());
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, first);
+    assert_eq!(state.home_scroll, 0.);
+    // From the header too.
+    state.focus = Target::Nav(0);
+    state.back();
+    assert_eq!(state.focus, first);
+    // With the shortcut on, Back on Home still opens Recent apps.
+    state.preferences.back_recents = true;
+    state.back();
+    assert!(matches!(state.overlay, Some(Overlay::Recents { .. })));
+}
+
+#[test]
+fn wallpaper_first_home_stays_lowered_without_input_cards() {
+    use crate::state::LANDING_DROP;
+    let tile_y = |state: &State| {
+        controls(state)
+            .iter()
+            .find(|control| matches!(control.target, Target::App(_)))
+            .map(|control| control.rect.y)
+            .unwrap()
+    };
+    let mut usual = ready();
+    usual.preferences.reduced_motion = true;
+    let usual_y = tile_y(&usual);
+
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.set_inventory(demo_inventory(), None);
+    let inputs: Vec<String> = state
+        .inventory
+        .inputs
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    assert!(!inputs.is_empty());
+    for id in inputs {
+        state.preferences.input_modes.insert(id, InputMode::Off);
+    }
+    state.tick();
+    assert_eq!(state.landing(), 1.);
+    // Down into the favourites keeps them where they are: there is nothing below to reveal.
+    state.direction(Direction::Down, &controls(&state));
+    assert!(matches!(state.focus, Target::App(_)));
+    state.tick();
+    assert_eq!(state.landing(), 1.);
+    assert_eq!(tile_y(&state), usual_y + LANDING_DROP);
+    assert_eq!(state.scroll, 0.);
+}
+
+#[test]
+fn wallpaper_first_home_treats_the_inputs_button_as_header() {
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        inputs_menu: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.set_inventory(demo_inventory(), None);
+    state.focus = Target::InputsButton;
+    state.tick();
+    assert_eq!(
+        state.landing(),
+        1.,
+        "the top-bar Inputs button keeps the row lowered"
+    );
+}
+
+#[test]
+fn wallpaper_first_pointer_hover_and_press_preserve_card_geometry() {
+    for reduced_motion in [false, true] {
+        let mut state = State::new(Preferences {
+            landing_layout: true,
+            reduced_motion,
+            ..Preferences::default()
+        });
+        state.set_inventory(demo_inventory(), None);
+        let card = controls(&state)
+            .into_iter()
+            .find(|control| matches!(control.target, Target::App(_)))
+            .unwrap();
+        let (x, y) = (
+            card.rect.x + card.rect.w / 2.,
+            card.rect.y + card.rect.h / 2.,
+        );
+        for target in [card.target.clone(), Target::Nav(0), card.target.clone()] {
+            state.pointer_focus(target);
+            state.tick();
+            let current = controls(&state);
+            let hovered = current
+                .iter()
+                .find(|control| control.target == card.target)
+                .unwrap();
+            assert_eq!(hovered.rect.y, card.rect.y);
+            assert_eq!(state.hit_test(&current, x, y), Some(card.target.clone()));
+        }
+        state.pressed = Some(card.target.clone());
+        state.pointer_focus(card.target.clone());
+        state.tick();
+        assert_eq!(state.hit_test(&controls(&state), x, y), state.pressed);
+        state.pressed = None;
+        assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
+        state.tick();
+        assert_eq!(state.landing(), 1.);
+        // Switching back to the remote resumes expansion, with no page scroll.
+        state.direction(Direction::Right, &controls(&state));
+        state.tick();
+        state.preferences.reduced_motion = true;
+        assert_eq!(state.landing(), 0.);
+        assert_eq!(state.scroll, 0.);
+    }
+}
+
+#[test]
+fn pointer_interrupts_a_landing_slide_until_remote_navigation_resumes() {
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        ..Preferences::default()
+    });
+    state.note_input();
+    state.set_inventory(demo_inventory(), None);
+    state.direction(Direction::Down, &controls(&state));
+    state.tick();
+    assert!(state.animating());
+    let target = state.focus.clone();
+    state.pointer_focus(target);
+    let frozen = state.landing();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    state.tick();
+    assert_eq!(state.landing(), frozen);
+    state.direction(Direction::Up, &controls(&state));
+    state.tick();
+    state.preferences.reduced_motion = true;
+    assert_eq!(state.landing(), 1.);
+}
+
+#[test]
+fn clock_size_is_chosen_in_clock_settings_and_keeps_the_clock_centred_on_the_navigation() {
+    use crate::model::ClockSize;
+    let clock = |state: &State| {
+        let label = state.preferences.language.clock(
+            time::OffsetDateTime::UNIX_EPOCH,
+            state.preferences.hour_24,
+            state.preferences.show_seconds,
+        );
+        scene(state)
+            .draw
+            .into_iter()
+            .find_map(|draw| match draw {
+                crate::renderer::Draw::Text(text, rect, style, ..) if text == label => {
+                    Some((rect, style.size))
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let mut state = ready();
+    assert_eq!(state.preferences.clock_size, ClockSize::Medium);
+    // Medium is the original header clock: 24 px in a 28.8 px line at y 62.4.
+    let (rect, size) = clock(&state);
+    assert_eq!((rect.x, rect.y, rect.h, size), (84., 62.4, 28.8, 24.));
+    let nav = view::navigation(
+        &view::Assets {
+            root: PathBuf::new(),
+            version: "test".into(),
+            metrics: BTreeMap::new(),
+            artwork: crate::app_artwork::Service::new(false),
+        },
+        state.preferences.language,
+    )
+    .surface;
+    assert!(rect.x + rect.w <= nav.x);
+    // Settings → General → Clock → Size → Extra large.
+    state.open(2);
+    state.focus = Target::Setting(1);
+    state.direction(Direction::Right, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::ClockSize);
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.subpage, Some(crate::state::Subpage::ClockSize));
+    assert_eq!(state.focus, Target::Choice(1));
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Choice(3))
+    );
+    for _ in 0..2 {
+        state.direction(Direction::Down, &controls(&state));
+    }
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.preferences.clock_size, ClockSize::ExtraLarge);
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Clock));
+    assert_eq!(state.focus, Target::ClockSize);
+    for size in ClockSize::ALL {
+        state.preferences.clock_size = size;
+        let (rect, font) = clock(&state);
+        assert_eq!(font, size.font_size());
+        assert!(
+            (rect.y + rect.h / 2. - 76.8).abs() < 0.01,
+            "{size:?} centred on the nav bar"
+        );
+        assert!(
+            rect.x + rect.w <= nav.x,
+            "{size:?} stays left of the navigation"
+        );
+    }
+    // Back leaves the clock page for General, like the other clock settings.
+    state.back();
+    assert_eq!(state.focus, Target::Setting(1));
+    assert!(state.subpage.is_none());
+}
+
+#[test]
+fn clock_size_preferences_round_trip_and_tolerate_unknown_values() {
+    use crate::model::{ClockSize, Preferences};
+    let saved = serde_json::to_value(Preferences {
+        clock_size: ClockSize::ExtraLarge,
+        ..Preferences::default()
+    })
+    .unwrap();
+    assert_eq!(saved["clock_size"], "extra-large");
+    let loaded: Preferences = serde_json::from_value(saved).unwrap();
+    assert_eq!(loaded.clock_size, ClockSize::ExtraLarge);
+    for (value, size) in [
+        (serde_json::json!("small"), ClockSize::Small),
+        (serde_json::json!("huge"), ClockSize::Medium),
+        (serde_json::json!(3), ClockSize::Medium),
+    ] {
+        let loaded: Preferences =
+            serde_json::from_value(serde_json::json!({ "clock_size": value })).unwrap();
+        assert_eq!(loaded.clock_size, size);
+    }
+    let older: Preferences =
+        serde_json::from_value(serde_json::json!({ "hour_24": true })).unwrap();
+    assert_eq!(older.clock_size, ClockSize::Medium);
+}
+
+#[test]
+fn five_day_forecast_appears_under_the_weather_only_when_switched_on() {
+    let mut state = ready();
+    with_forecast(&mut state);
+    let has_days = |state: &State| {
+        let texts = drawn_texts(state);
+        ["Fri", "Sat", "Sun", "Mon", "Tue"]
+            .iter()
+            .all(|day| texts.iter().any(|(value, _)| value == day))
+    };
+    assert!(!state.preferences.show_forecast);
+    assert!(!has_days(&state));
+    // Settings → Widgets → Weather → 5-day forecast.
+    state.open(2);
+    state.subpage = Some(crate::state::Subpage::Weather);
+    state.focus = Target::WeatherForecast;
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|control| control.target == Target::WeatherForecast)
+    );
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.show_forecast);
+    state.open(0);
+    assert!(has_days(&state));
+    // Hiding the weather widget hides the forecast too.
+    state.preferences.show_weather = false;
+    assert!(!has_days(&state));
+}
+
+#[test]
+fn glass_clock_replaces_the_greeting_and_header_clock_on_home() {
+    use crate::state::GLASS_CLOCK_ROW;
+    let mut state = ready();
+    with_forecast(&mut state);
+    state.preferences.show_forecast = true;
+    let greetings: Vec<String> = (0..24)
+        .map(|hour| state.preferences.language.greeting(hour, ""))
+        .collect();
+    let greeting_shown = |state: &State| {
+        drawn_texts(state)
+            .iter()
+            .any(|(value, _)| greetings.contains(value))
+    };
+    assert!(greeting_shown(&state));
+    // General → Glass clock on Home.
+    state.open(2);
+    state.focus = Target::Setting(GLASS_CLOCK_ROW);
+    assert!(
+        drawn_texts(&state)
+            .iter()
+            .any(|(value, _)| value == "Glass clock on Home")
+    );
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.glass_clock);
+    // Settings keeps the small clock in the header.
+    let small_clocks = drawn_texts(&state)
+        .iter()
+        .filter(|(value, size)| value.contains(':') && *size < 50.)
+        .count();
+    assert_eq!(small_clocks, 1);
+    state.open(0);
+    let texts = drawn_texts(&state);
+    assert!(!greeting_shown(&state));
+    // One large time, no small header clock, and the forecast under it.
+    assert!(
+        texts
+            .iter()
+            .any(|(value, size)| value.contains(':') && *size > 80.)
+    );
+    assert!(
+        !texts
+            .iter()
+            .any(|(value, size)| value.contains(':') && *size < 50.)
+    );
+    assert!(texts.iter().any(|(value, _)| value == "Tue"));
+    // The large time never reaches the favourites.
+    let favourites_y = scene(&state)
+        .controls
+        .iter()
+        .filter(|control| matches!(control.target, Target::App(_)))
+        .map(|control| control.rect.y)
+        .fold(f32::MAX, f32::min);
+    for draw in &scene(&state).draw {
+        if let crate::renderer::Draw::Text(value, rect, style, ..) = draw
+            && value.contains(':')
+            && style.size > 80.
+        {
+            assert!(rect.y + rect.h < favourites_y);
+        }
+    }
+}
+
+#[test]
+fn pointer_click_on_the_home_tab_lowers_the_wallpaper_first_rows() {
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        reduced_motion: true,
+        ..Preferences::default()
+    });
+    state.set_inventory(demo_inventory(), None);
+    state.open(2);
+    state.tick();
+    assert_eq!(state.landing(), 0., "other pages keep the usual layout");
+    // The Magic Remote pointer hovers and clicks the Home tab.
+    state.pointer_focus(Target::Nav(0));
+    assert!(state.pointer);
+    state.activate();
+    assert_eq!(state.page, crate::state::Page::Home);
+    state.tick();
+    assert_eq!(
+        state.landing(),
+        1.,
+        "Home opens lowered, as with the remote"
+    );
+}
+
+#[test]
+fn ambient_screen_starts_after_idle_home_and_the_waking_input_only_wakes() {
+    use crate::state::AMBIENT_ROW;
+    use std::time::Duration;
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    // Off by default.
+    state.last_input = std::time::Instant::now() - Duration::from_secs(3600);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+    assert!(!state.ambient_holds_screen_saver());
+    // General → Ambient screen cycles Off → 2 → 5 → 10 → Off.
+    state.open(2);
+    state.focus = Target::Setting(AMBIENT_ROW);
+    for expected in [2, 5, 10, 0, 2] {
+        assert_eq!(state.activate(), vec![Effect::Save]);
+        assert_eq!(state.preferences.ambient_minutes, expected);
+    }
+    assert!(
+        drawn_texts(&state)
+            .iter()
+            .any(|(value, _)| value == "2 min")
+    );
+    // Not on Settings, only on Home.
+    state.last_input = std::time::Instant::now() - Duration::from_secs(600);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+    state.open(0);
+    // Not before the delay, and not while Luma is hidden.
+    state.last_input = std::time::Instant::now() - Duration::from_secs(60);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+    state.last_input = std::time::Instant::now() - Duration::from_secs(121);
+    state.ambient_tick(false);
+    assert!(state.ambient.is_none());
+    state.ambient_tick(true);
+    assert!(state.ambient.is_some());
+    assert!(state.ambient_holds_screen_saver());
+    // The ambient scene: no controls, one large time, no greeting or favourites.
+    let scene = scene(&state);
+    assert!(scene.controls.is_empty());
+    assert!(
+        drawn_texts(&state)
+            .iter()
+            .any(|(value, size)| value.contains(':') && *size > 200.)
+    );
+    // The waking input is consumed; the next one acts normally.
+    let focus = state.focus.clone();
+    assert!(state.note_input());
+    assert!(state.ambient.is_none());
+    assert_eq!(state.focus, focus);
+    assert!(!state.note_input());
+    // After its hand-off time, LG's own screen saver may take over.
+    state.ambient = Some(std::time::Instant::now() - crate::state::AMBIENT_HANDOFF);
+    assert!(!state.ambient_holds_screen_saver());
+    // Leaving Home or switching it off ends it.
+    state.ambient = Some(std::time::Instant::now());
+    state.preferences.ambient_minutes = 0;
+    state.ambient_tick(true);
+    assert!(state.ambient.is_none());
+}
+
+#[test]
+fn ambient_screen_fades_home_then_tours_the_corners() {
+    use crate::state::{AMBIENT_DRIFT_EVERY, AmbientSpot};
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    with_forecast(&mut state);
+    state.preferences.glass_clock = true;
+    state.preferences.show_forecast = true;
+    state.preferences.ambient_minutes = 2;
+    let at = |state: &mut State, seconds: f32| {
+        state.ambient = Some(Instant::now() - Duration::from_secs_f32(seconds));
+    };
+    let clock_rect = |state: &State| {
+        scene(state)
+            .draw
+            .iter()
+            .find_map(|draw| match draw {
+                crate::renderer::Draw::Text(value, rect, style, color, _)
+                    if value.contains(':') && style.size > 80. && color[0] > 0.5 =>
+                {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let home = clock_rect(&state);
+    // Starting: Home is still fully drawn and the clock is exactly where Home has it.
+    at(&mut state, 0.);
+    let (ui, dim) = state.ambient_progress();
+    assert!(ui < 0.01 && dim == 0.);
+    assert_eq!(
+        (clock_rect(&state).x, clock_rect(&state).y),
+        (home.x, home.y)
+    );
+    // Home fades, then the wallpaper dims; the clock stays put for the first minute.
+    at(&mut state, 3.);
+    let (ui, dim) = state.ambient_progress();
+    assert_eq!(ui, 1.);
+    assert!(dim > 0. && dim < 1.);
+    at(&mut state, 59.);
+    assert_eq!(state.ambient_progress(), (1., 1.));
+    assert_eq!(
+        (clock_rect(&state).x, clock_rect(&state).y),
+        (home.x, home.y)
+    );
+    // Then one stop a minute: lower left, upper left, upper right, lower right, centre.
+    let mut corners = vec![];
+    for (minute, expected) in [
+        (1., AmbientSpot::LowerLeft),
+        (2., AmbientSpot::UpperLeft),
+        (3., AmbientSpot::UpperRight),
+        (4., AmbientSpot::LowerRight),
+        (5., AmbientSpot::Center),
+        (6., AmbientSpot::LowerLeft),
+    ] {
+        at(&mut state, minute * AMBIENT_DRIFT_EVERY + 30.);
+        let (_, to, glide) = state.ambient_stops();
+        assert_eq!((to, glide), (expected, 1.));
+        corners.push(clock_rect(&state));
+    }
+    let (lower_left, upper_left, upper_right, lower_right, centre) =
+        (corners[0], corners[1], corners[2], corners[3], corners[4]);
+    assert!(lower_left.x < 400. && lower_left.y > upper_left.y);
+    assert_eq!(lower_left.x, upper_left.x);
+    assert!(upper_right.x > 960. && upper_right.y == upper_left.y);
+    assert_eq!(lower_right.y, lower_left.y);
+    assert!((centre.x + centre.w / 2. - 960.).abs() < 2.);
+    // Padding keeps the block clear of the edges.
+    assert!(upper_left.x >= 100. && upper_right.x + upper_right.w <= 1820.);
+    assert_eq!((corners[5].x, corners[5].y), (lower_left.x, lower_left.y));
+    // Mid-glide it is between its stops.
+    at(&mut state, AMBIENT_DRIFT_EVERY + 2.);
+    let mid = clock_rect(&state);
+    assert!(mid.x < home.x && mid.x > lower_left.x);
+}
+
+#[test]
+fn ambient_fades_and_glides_redraw_every_changed_frame() {
+    use crate::state::AMBIENT_DRIFT_EVERY;
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    state.preferences.ambient_minutes = 2;
+    let frame = |state: &mut State, seconds: f32| {
+        state.ambient = Some(Instant::now() - Duration::from_secs_f32(seconds));
+        state.dirty = false;
+        state.tick();
+        state.dirty
+    };
+    // Each step of the fade and of a glide asks for a frame.
+    for seconds in [0.2, 0.6, 1.4, 2.4, 3.3, 4.2] {
+        assert!(frame(&mut state, seconds), "fade frame at {seconds} s");
+    }
+    // Settled: the same still frame is not redrawn again.
+    assert!(frame(&mut state, 30.));
+    assert!(!frame(&mut state, 31.));
+    for offset in [0.5, 1.5, 2.5, 3.5] {
+        assert!(
+            frame(&mut state, AMBIENT_DRIFT_EVERY + offset),
+            "glide frame at +{offset} s"
+        );
+    }
+    assert!(frame(&mut state, AMBIENT_DRIFT_EVERY + 10.));
+    assert!(!frame(&mut state, AMBIENT_DRIFT_EVERY + 20.));
+}
+
+#[test]
+fn selected_tile_lifts_with_a_two_tone_ring_and_the_setting_turns_the_lift_off() {
+    use crate::state::TILE_LIFT_ROW;
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    let first = state.first_content();
+    let Target::App(id) = first.clone() else {
+        panic!("Home starts on a favourite");
+    };
+    let second = Target::App(state.apps()[1].id.clone());
+    state.focus = first.clone();
+    state.tick();
+    let shadow_of = |state: &State, target: &Target| {
+        let hit = controls(state)
+            .into_iter()
+            .find(|control| control.target == *target)
+            .unwrap()
+            .rect;
+        let scene = scene(state);
+        let shadow = scene
+            .draw
+            .iter()
+            .find_map(|draw| match draw {
+                crate::renderer::Draw::Shadow(rect, ..)
+                    if (rect.x - hit.x).abs() < 20. && (rect.y - hit.y).abs() < 20. =>
+                {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .unwrap();
+        (hit, shadow)
+    };
+    // Lifted: larger and higher than its unchanged hit area.
+    let (hit, drawn) = shadow_of(&state, &first);
+    assert!(drawn.w > hit.w * 1.06 && drawn.x < hit.x - 8.);
+    // Its neighbour is not.
+    let (hit2, drawn2) = shadow_of(&state, &second);
+    assert_eq!((drawn2.w, drawn2.h), (hit2.w, hit2.h));
+    // The ring has a dark band inside the white one.
+    let borders: Vec<[f32; 4]> = scene(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Shape(_, _, stroke, color) if *stroke > 0. => Some(*color),
+            _ => None,
+        })
+        .collect();
+    assert!(borders.iter().any(|color| color[0] < 0.1 && color[3] > 0.9));
+    assert!(borders.iter().any(|color| color[0] > 0.9 && color[3] == 1.));
+    // Moving on: the new tile rises and the old one settles.
+    state.focus = second.clone();
+    state.tick();
+    assert_eq!(state.tile_lift(&second), 1.);
+    assert_eq!(state.tile_lift(&first), 0.);
+    // General → Lift selected tile turns it off; the ring stays.
+    state.open(2);
+    state.focus = Target::Setting(TILE_LIFT_ROW);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(!state.preferences.tile_lift);
+    state.open(0);
+    state.focus = Target::App(id);
+    state.tick();
+    let (hit, drawn) = shadow_of(&state, &first);
+    assert_eq!((drawn.w, drawn.h), (hit.w, hit.h));
+}
+
+fn with_forecast(state: &mut State) {
+    let place = crate::weather::Location {
+        name: "Fort Collins".into(),
+        region: "Colorado".into(),
+        country: "United States".into(),
+        latitude: 40.5853,
+        longitude: -105.0844,
+    };
+    let day = |weekday, code| crate::weather::Day {
+        weekday,
+        high: 10.,
+        low: -2.,
+        code,
+    };
+    state.preferences.weather_location = Some(place.clone());
+    state.weather.cache = Some(crate::weather::Cache {
+        key: place.key(),
+        updated_at: 1000,
+        reading: crate::weather::Reading {
+            temperature: 8.,
+            code: 2,
+            is_day: true,
+            daily: Some([day(4, 2), day(5, 0), day(6, 0), day(0, 3), day(1, 73)]),
+        },
+    });
+}
+
+fn drawn_texts(state: &State) -> Vec<(String, f32)> {
+    scene(state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(value, _, style, ..) => Some((value.clone(), style.size)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn cold_start_focus_moves_from_tab_bar_to_first_app_once_apps_load() {
+    let mut state = State::new(Preferences::default());
+    assert_eq!(state.focus, Target::Nav(0));
+    state.set_inventory(demo_inventory(), None);
+    assert!(matches!(state.focus, Target::App(_)), "{:?}", state.focus);
+}
+
+#[test]
+fn cold_start_focus_stays_put_after_the_user_presses_something() {
+    let mut state = State::new(Preferences::default());
+    state.note_input();
+    state.set_inventory(demo_inventory(), None);
+    assert_eq!(state.focus, Target::Nav(0));
+}
+
+#[test]
+fn hovering_an_inactive_nav_tab_draws_a_distinct_highlight_only_while_hovered() {
+    use crate::renderer::Draw;
+    let mut state = ready();
+    let tab = |state: &State, index| {
+        let scene = scene(state);
+        let rect = scene
+            .controls
+            .iter()
+            .find(|c| c.target == Target::Nav(index))
+            .unwrap()
+            .rect;
+        let pill = scene.draw.iter().find_map(|draw| match draw {
+            Draw::Shape(r, _, 0., color)
+                if (r.x, r.y, r.w, r.h) == (rect.x, rect.y, rect.w, rect.h) =>
+            {
+                Some(*color)
+            }
+            _ => None,
+        });
+        let label = scene.draw.iter().find_map(|draw| match draw {
+            Draw::Text(_, r, .., color, true) if r.x == rect.x && r.w == rect.w => Some(*color),
+            _ => None,
+        });
+        (pill, label.unwrap())
+    };
+    let (_, idle) = tab(&state, 1);
+    let (_, active) = tab(&state, 0);
+    assert_eq!(tab(&state, 1).0, None);
+
+    state.pointer_focus(Target::Nav(1));
+    state.hover = Some(Target::Nav(1));
+    let (pill, label) = tab(&state, 1);
+    assert!(pill.is_some());
+    assert!(
+        label != idle && label != active,
+        "hover must not look active"
+    );
+
+    // Leaving the tab clears the highlight even though focus stays on it.
+    state.hover = None;
+    assert_eq!(state.focus, Target::Nav(1));
+    assert_eq!(tab(&state, 1), (None, idle));
+
+    // The active tab never gets a hover pill on top of its own.
+    state.hover = Some(Target::Nav(0));
+    assert_eq!(tab(&state, 0), (None, active));
+}
+
+#[test]
+fn waking_glides_the_clock_home_while_home_returns_and_a_second_press_skips_ahead() {
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    state.preferences.glass_clock = true;
+    state.preferences.ambient_minutes = 2;
+    // Two minutes in, the clock block rests in the upper left corner.
+    state.ambient = Some(Instant::now() - Duration::from_secs(130));
+    let clock_x = |state: &State| {
+        scene(state)
+            .draw
+            .iter()
+            .filter_map(|draw| match draw {
+                crate::renderer::Draw::Text(value, rect, style, ..)
+                    if value.contains(':') && style.size > 150. =>
+                {
+                    Some(rect.x)
+                }
+                _ => None,
+            })
+            .fold(f32::MAX, f32::min)
+    };
+    let corner = clock_x(&state);
+    assert!(corner < 400., "{corner}");
+    // The waking press is still only a wake, but now starts a transition back to Home.
+    assert!(state.note_input());
+    assert!(state.ambient.is_none());
+    let waking = state.waking.expect("waking");
+    assert_eq!(waking.dim, 1.);
+    // It begins where the ambient screen left off, with Home already usable.
+    assert!((clock_x(&state) - corner).abs() < 2.);
+    assert!(!scene(&state).controls.is_empty());
+    // Halfway, the clock block is on its way home.
+    state.waking.as_mut().unwrap().since = Instant::now() - Duration::from_millis(400);
+    let halfway = clock_x(&state);
+    assert!(halfway > corner + 50., "{halfway}");
+    // At the end it rests exactly where Home draws it, and the wake clears itself.
+    state.waking.as_mut().unwrap().since = Instant::now() - Duration::from_secs(1);
+    let landed = clock_x(&state);
+    state.tick();
+    assert!(state.waking.is_none());
+    assert!((clock_x(&state) - landed).abs() < 1.);
+    // A second press mid-wake skips straight to Home and acts.
+    state.ambient = Some(Instant::now() - Duration::from_secs(130));
+    assert!(state.note_input());
+    assert!(!state.note_input());
+    state.finish_wake();
+    assert!(state.waking.is_none());
 }

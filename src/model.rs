@@ -212,6 +212,55 @@ impl DateFormat {
     }
 }
 
+/// Size of the clock in the header (#180).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+    ExtraLarge,
+}
+
+impl ClockSize {
+    pub const ALL: [Self; 4] = [Self::Small, Self::Medium, Self::Large, Self::ExtraLarge];
+    /// Font size in 1080p units; Medium is the original 24 px clock.
+    pub fn font_size(self) -> f32 {
+        match self {
+            Self::Small => 20.,
+            Self::Medium => 24.,
+            Self::Large => 32.,
+            Self::ExtraLarge => 40.,
+        }
+    }
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Small => "clockSizeSmall",
+            Self::Medium => "clockSizeMedium",
+            Self::Large => "clockSizeLarge",
+            Self::ExtraLarge => "clockSizeExtraLarge",
+        }
+    }
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|size| *size == self).unwrap_or(1)
+    }
+}
+
+/// Unknown or missing values keep the original medium clock instead of rejecting preferences.
+fn deserialize_clock_size<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ClockSize, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("small") => ClockSize::Small,
+            Some("large") => ClockSize::Large,
+            Some("extra-large") => ClockSize::ExtraLarge,
+            _ => ClockSize::Medium,
+        },
+    )
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Preferences {
@@ -223,6 +272,10 @@ pub struct Preferences {
     pub splash_background: Option<String>,
     pub deleted_backgrounds: Vec<String>,
     pub show_home_names: bool,
+    /// An Inputs button in the top bar that opens a menu of Live TV and the inputs.
+    pub inputs_menu: bool,
+    /// Inputs left out of the Inputs menu, by app ID; separate from their Home card modes.
+    pub inputs_menu_hidden: Vec<String>,
     pub show_app_names: bool,
     pub hour_24: bool,
     pub reduced_motion: bool,
@@ -235,6 +288,8 @@ pub struct Preferences {
     pub input_modes: BTreeMap<String, InputMode>,
     /// Custom names by input app ID; the TV's port and label stay visible as detail.
     pub input_names: BTreeMap<String, String>,
+    /// Bundled input icon overrides by input app ID; absent means automatic detection.
+    pub input_icons: BTreeMap<String, String>,
     #[serde(deserialize_with = "crate::weather::deserialize_enabled")]
     pub show_weather: bool,
     #[serde(deserialize_with = "crate::weather::deserialize_location")]
@@ -246,11 +301,25 @@ pub struct Preferences {
     /// Applied at launch because MSAA is selected when SDL creates the GL window.
     #[serde(deserialize_with = "crate::text_rendering::deserialize")]
     pub text_rendering: crate::text_rendering::TextRendering,
+    /// Home opens with the favourites lowered to show more wallpaper (#85).
+    pub landing_layout: bool,
     #[serde(deserialize_with = "crate::wallpaper_cycle::deserialize")]
     pub wallpaper_cycle: bool,
     pub wallpaper_gradient: bool,
     /// Unix seconds of the last automatic or chosen wallpaper change, for the timed modes.
     pub wallpaper_changed: u64,
+    /// Back on Home, or holding Back, opens Recent apps (#175).
+    pub back_recents: bool,
+    #[serde(deserialize_with = "deserialize_clock_size")]
+    pub clock_size: ClockSize,
+    /// Home shows a large frosted-glass clock in place of the greeting (fork option).
+    pub glass_clock: bool,
+    /// Home shows the next five days under the weather (fork option).
+    pub show_forecast: bool,
+    /// Minutes without input on Home before the ambient screen; 0 is off (fork option).
+    pub ambient_minutes: u8,
+    /// The selected app tile grows and lifts a little (fork option, on by default).
+    pub tile_lift: bool,
 }
 
 impl Default for Preferences {
@@ -263,6 +332,8 @@ impl Default for Preferences {
             splash_background: None,
             deleted_backgrounds: vec![],
             show_home_names: false,
+            inputs_menu: false,
+            inputs_menu_hidden: vec![],
             show_app_names: true,
             hour_24: false,
             reduced_motion: false,
@@ -273,14 +344,22 @@ impl Default for Preferences {
             date_format: DateFormat::default(),
             input_modes: BTreeMap::new(),
             input_names: BTreeMap::new(),
+            input_icons: BTreeMap::new(),
             show_weather: true,
             weather_location: None,
             temperature_unit: Unit::Celsius,
             language: Language::En,
             text_rendering: crate::text_rendering::TextRendering::default(),
+            landing_layout: false,
             wallpaper_cycle: false,
             wallpaper_gradient: true,
             wallpaper_changed: 0,
+            back_recents: true,
+            clock_size: ClockSize::Medium,
+            glass_clock: false,
+            show_forecast: false,
+            ambient_minutes: 0,
+            tile_lift: true,
         }
     }
 }
@@ -375,6 +454,29 @@ impl Preferences {
         }
     }
 
+    pub fn input_icon(&self, id: &str) -> Option<&'static str> {
+        self.input_icons.get(id).and_then(|saved| {
+            INPUT_ICONS
+                .iter()
+                .find(|(icon, _)| *icon == saved)
+                .map(|(icon, _)| *icon)
+        })
+    }
+
+    /// An empty icon restores automatic detection. Unknown assets are never saved.
+    pub fn set_input_icon(&mut self, id: &str, icon: &str) -> bool {
+        if !valid_app_id(id) {
+            return false;
+        }
+        if icon.is_empty() {
+            return self.input_icons.remove(id).is_some();
+        }
+        if !INPUT_ICONS.iter().any(|(known, _)| *known == icon) {
+            return false;
+        }
+        self.input_icons.insert(id.into(), icon.into()) != Some(icon.into())
+    }
+
     pub fn sanitize(&mut self) {
         if self.splash_background.as_ref().is_some_and(|id| {
             !BACKGROUNDS.iter().any(|(known, _)| *known == id) && !crate::wallpapers::valid_id(id)
@@ -419,6 +521,9 @@ impl Preferences {
             });
             self.custom_tiles.truncate(TILE_LIMIT);
         }
+        self.input_icons.retain(|id, icon| {
+            valid_app_id(id) && INPUT_ICONS.iter().any(|(known, _)| *known == icon)
+        });
         self.input_modes.retain(|id, _| valid_app_id(id));
         self.input_names = std::mem::take(&mut self.input_names)
             .into_iter()
@@ -429,6 +534,21 @@ impl Preferences {
             .collect();
     }
 }
+
+/// Every bundled device SVG offered by the native input icon picker.
+pub const INPUT_ICONS: [(&str, &str); 11] = [
+    ("hdmi", "inputIconHdmi"),
+    ("usb", "inputIconUsb"),
+    ("apple-tv", "inputIconAppleTv"),
+    ("computer", "inputIconComputer"),
+    ("console", "inputIconConsole"),
+    ("playstation", "inputIconPlaystation"),
+    ("shield", "inputIconShield"),
+    ("streamer", "inputIconStreamer"),
+    ("switch", "inputIconSwitch"),
+    ("switch2", "inputIconSwitch2"),
+    ("xbox", "inputIconXbox"),
+];
 
 pub const INPUT_NAME_LIMIT: usize = 40;
 

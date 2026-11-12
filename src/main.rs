@@ -391,7 +391,8 @@ fn script(
         "right" => state.direction(Direction::Right, controls),
         "enter" => state.activate(),
         "back" => state.back(),
-        "recents" | "hold-back" => state.open_recents(),
+        "recents" => state.open_recents(),
+        "hold-back" => state.back_recents(),
         "menu" => {
             state.options();
             vec![]
@@ -668,6 +669,9 @@ fn run() -> Result<(), String> {
         !options.script.is_empty(),
         options.test_update_version.is_some(),
     );
+    if webos && let Some(directory) = preferences_path.parent() {
+        app_artwork::set_disk_cache(directory.join("icon-cache"));
+    }
     let mut state = State::new(initial_preferences);
     if let Some(version) = &options.test_update_version {
         eprintln!(
@@ -936,6 +940,12 @@ fn run() -> Result<(), String> {
     // Whether a staged Home's relaunch reached the front; see platform::ForegroundCheck.
     let mut foreground = platform::ForegroundCheck::default();
     let mut focused = true;
+    // Whether SDL currently declines LG's screen saver (the ambient screen holds it).
+    let mut holding_screen_saver = false;
+    // A key that woke the ambient screen: its release is swallowed too.
+    let mut wake_key: Option<sdl2::keyboard::Scancode> = None;
+    let mut wake_button = false;
+    let mut was_in_backgrounds = false;
     let mut press: Option<Press> = None;
     let mut back_button = BackButton::default();
     let initial_nav = view::navigation(&assets, state.preferences.language);
@@ -947,6 +957,10 @@ fn run() -> Result<(), String> {
     let mut visible = true;
     let mut running = true;
     let mut queued_event = None;
+    // SDL starts text input during video init. Keep it off until Luma's keyboard opens: on
+    // webOS 4 some remote keys otherwise arrive as TEXTINPUT with invalid UTF-8, and sdl2
+    // panics converting them ("Invalid TextInput string") before Luma sees the event.
+    video.text_input().stop();
     let mut text_active = false;
     let mut initial_focus = options.script.is_empty();
     let mut startup_cycle_pending = state.preferences.wallpaper_cycle;
@@ -978,6 +992,12 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         state.tick();
+        // Opening Settings → Background imports any images waiting in the import folder.
+        let in_backgrounds = state.page == state::Page::Settings && state.section == 1;
+        if in_backgrounds && !was_in_backgrounds {
+            wallpaper_service.refresh();
+        }
+        was_in_backgrounds = in_backgrounds;
         wallpaper_service.set_active(wallpaper_upload_active(&state, webos, focused, visible));
         while let Ok(event) = wallpaper_service.receiver.try_recv() {
             match event {
@@ -1079,6 +1099,17 @@ fn run() -> Result<(), String> {
         while let Ok(response) = updates.receiver.try_recv() {
             state.install_response(response);
         }
+        if std::mem::take(&mut state.reset_icon_cache) {
+            assets.artwork.reset_icon_cache();
+            assets.artwork.prefetch(
+                state
+                    .inventory
+                    .apps
+                    .iter()
+                    .filter(|app| crate::branding::for_key(&app.brand).is_none())
+                    .filter_map(|app| app.icon.clone()),
+            );
+        }
         while let Ok(response) = platform.receiver.try_recv() {
             match response {
                 Response::Inventory(Ok((mut inventory, warning))) => {
@@ -1107,9 +1138,11 @@ fn run() -> Result<(), String> {
                             .filter(|app| crate::branding::for_key(&app.brand).is_none())
                             .filter_map(|app| app.icon.clone()),
                     );
+                    // The wallpaper-first Home starts in the header, with the favourites lowered.
                     if initial_focus
                         && state.focus == Target::Nav(0)
                         && state.page == state::Page::Home
+                        && !state.preferences.landing_layout
                     {
                         state.focus = state.first_content();
                     }
@@ -1199,6 +1232,18 @@ fn run() -> Result<(), String> {
             state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
         weather_tick(&mut state, &weather_service, visible);
+        state.ambient_tick(visible && focused);
+        let hold = state.ambient_holds_screen_saver();
+        if hold != holding_screen_saver {
+            // SDL-webOS answers tvpower's screen saver requests from this: disabled keeps
+            // LG's screen saver away while the ambient screen stands in for it.
+            if hold {
+                video.disable_screen_saver();
+            } else {
+                video.enable_screen_saver();
+            }
+            holding_screen_saver = hold;
+        }
         if std::mem::take(&mut state.update_check_requested) {
             if let Some(version) = &options.test_update_version {
                 state.update_response(Ok(
@@ -1241,6 +1286,43 @@ fn run() -> Result<(), String> {
             };
             if script_owns_input && external_input {
                 continue;
+            }
+            // Any input resets the ambient screen's timer; the input that wakes it does
+            // nothing else, release included (a pointer move only shows the pointer again).
+            match &event {
+                Event::KeyUp { scancode, .. } if wake_key.is_some() && *scancode == wake_key => {
+                    wake_key = None;
+                    continue;
+                }
+                Event::KeyDown {
+                    scancode, repeat, ..
+                } => {
+                    if state.note_input() {
+                        wake_key = *scancode;
+                        continue;
+                    }
+                    if *repeat && wake_key.is_some() && *scancode == wake_key {
+                        continue;
+                    }
+                    // A second press mid-wake finishes it and acts at once.
+                    state.finish_wake();
+                }
+                Event::MouseButtonUp { .. } if external_input && wake_button => {
+                    wake_button = false;
+                    continue;
+                }
+                Event::MouseButtonDown { .. } if external_input && state.note_input() => {
+                    wake_button = true;
+                    continue;
+                }
+                Event::MouseWheel { .. } if external_input && state.note_input() => continue,
+                Event::MouseButtonDown { .. } | Event::MouseWheel { .. } if external_input => {
+                    state.finish_wake();
+                }
+                Event::MouseMotion { .. } | Event::TextInput { .. } if external_input => {
+                    state.note_input();
+                }
+                _ => {}
             }
             // Remote keys only reach the focused surface.
             if matches!(event, Event::KeyDown { .. } | Event::KeyUp { .. }) {
@@ -1312,6 +1394,10 @@ fn run() -> Result<(), String> {
                         }
                         profile.pause();
                     }
+                    WindowEvent::Leave => {
+                        state.hover = None;
+                        state.dirty = true;
+                    }
                     WindowEvent::FocusLost => {
                         if webos {
                             if matches!(
@@ -1377,7 +1463,7 @@ fn run() -> Result<(), String> {
                         _ if native_hold => {
                             if !repeat && back_button.native_hold(Instant::now()) {
                                 press = None;
-                                pending = state.open_recents();
+                                pending = state.back_recents();
                             }
                         }
                         key if is_back(key, webos) => {
@@ -1441,7 +1527,7 @@ fn run() -> Result<(), String> {
                 } if is_back(key, webos) => {
                     if let Some(long) = back_button.release(key, Instant::now()) {
                         pending = if long {
-                            state.open_recents()
+                            state.back_recents()
                         } else {
                             state.back()
                         };
@@ -1466,6 +1552,10 @@ fn run() -> Result<(), String> {
                     let hovered = hit(&scene.controls, &window, x, y, &state);
                     if let Some(target) = hovered.clone() {
                         state.pointer_focus(target);
+                    }
+                    if state.hover != hovered {
+                        state.hover = hovered.clone();
+                        state.dirty = true;
                     }
                     if press
                         .as_ref()
@@ -1588,7 +1678,7 @@ fn run() -> Result<(), String> {
         }
         if back_button.held(Instant::now()) {
             press = None;
-            let pending = state.open_recents();
+            let pending = state.back_recents();
             running &= effects(
                 pending,
                 &mut state,

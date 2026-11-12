@@ -100,6 +100,9 @@ the keyboard first; Weather Location then returns to its parent Location row, HD
 that HDMI row, and the Background gallery to Background in the sidebar. Back from the sidebar
 focuses the Settings tab, then returns Home. **System** in the sidebar groups **Refresh apps & inputs**
 and the vector power-icon **Quit app** action separately from General preferences.
+**Reset icon cache** clears persisted and decoded app icons, then reloads artwork on its
+worker without changing preferences. An active icon read finishes before disk entries are
+removed, so it cannot restore stale artwork after the reset.
 On Apps, OK or a normal pointer click on an app opens its side popup, with **Open** first and focused by
 default, followed by favorite, hide/show and **Delete app** actions. A second OK launches the app.
 Home favorites, Inputs and Recent apps launch directly. Hold OK on Home still reorders favorites.
@@ -163,9 +166,21 @@ Back from Greeting restores its Widgets row; App names returns to General. Input
 also uses **Clear name**.
 Choice checkmarks identify saved values, while the bright row fill identifies only the current focus.
 
-Home favorites form one horizontal strip, never a second row. Left/Right follows saved order,
+Input icon picker: **Settings → Widgets → Inputs → select input → Icon** opens a
+native picker for bundled input SVG icons. Its choices are **Automatic** (default label detection),
+**HDMI**, **USB**, **Apple TV**, **Computer**, **Console**, **PlayStation**, **NVIDIA Shield**,
+**Streaming device**, **Nintendo Switch**, **Nintendo Switch 2**, and **Xbox**. An explicit choice
+is persisted per input across restarts; choosing **Automatic** clears only that input's
+icon override and restores label-based detection. Existing inputs without an override continue
+using Automatic. This is a backward-compatible feature and does not change input names or visibility.
+
+Home favorites form one horizontal strip, never a second row. Opening Home with the Home button
+or returning with Back focuses the first visible favorite,
+resetting the strip to its beginning. Without favorites, focus falls back to Browse apps (or Retry
+after an inventory error). Left/Right between top navigation tabs keeps focus in the header.
+Left/Right within favorites follows saved order,
 including reorder mode, and reveals complete cards. Up returns to Home navigation; Down enters
-the nearest input in the first row. The strip position survives page changes. Wheel movement over
+the nearest input in the first row. The strip position survives top-tab page changes. Wheel movement over
 favorites scrolls horizontally; elsewhere it scrolls vertically. Pointer hover/down never moves
 the clicked control. Apps Up/Down follows the six-column grid order, including offscreen rows,
 and only the first row's Up route reaches the category toolbar. Scrolling Apps content fades into
@@ -429,7 +444,8 @@ sampled card colour. Missing, corrupt or unsupported artwork uses the existing g
 Discovery, bounded file reads, decoding and colour sampling run on a dedicated worker. If the
 jailed app cannot read an asset directly, the native process calls Homebrew Channel's elevated
 `exec` service with the packaged native `luma-helper read-app-icon` command. It returns bounded
-image bytes without writing collected files or changing filesystem permissions. PNG, JPEG and WebP
+image bytes without changing filesystem permissions. Elevated icon reads are cached in
+`icon-cache` beside preferences, keyed by app ID, version and icon paths. PNG, JPEG and WebP
 are supported; runtime SVG parsing is not required. Source files are limited to 512 KiB and
 2048×2048 pixels; decoded icons are at most 256×256 with a 16 MiB/256-entry CPU cache. GPU uploads
 stay on the SDL thread and share the existing 48 MiB texture cache. Pending/unavailable icons do
@@ -438,7 +454,9 @@ not block input, and failures are cached until inventory is refreshed.
 Inventory also refreshes at startup and whenever the window becomes visible. Decoded icons are
 keyed by app ID, version and icon paths, so those refreshes keep them and retry only previous
 failures; an updated app has a new version and is read again. **Refresh apps** (or desktop F5)
-invalidates all artwork, including previous failures; request tokens discard stale replies. Check newly installed/updated apps and both normal tile and Home-takeover
+invalidates decoded artwork, including previous failures, while reusing matching disk entries.
+Use **Settings → System → Reset icon cache** to discard disk entries too. Request tokens discard
+stale replies. Check newly installed/updated apps and both normal tile and Home-takeover
 launches on a real TV to verify sandbox access. These paths are covered with mocked filesystem
 and worker tests, not live-TV calls in automated checks.
 
@@ -838,9 +856,10 @@ failure retries after five minutes. Unit changes convert unrounded cached Celsiu
 Removing a city clears its cache. The `.weather.json` sidecar uses Unix-seconds timestamps.
 Mock servers accept only literal loopback HTTP origins and are refused in TV builds.
 
-`assets/messages.json` supplies Czech, Dutch, English, French, German, Italian, Polish, Portuguese (Brazil),
-Russian, Simplified Chinese, Spanish, Swedish, Traditional Chinese and Vietnamese, including locale formatting
-and weather labels. App/device names and saved city names remain real data. No geolocation,
+`assets/messages.json` supplies Catalan, Czech, Dutch, English, French, German, Italian, Polish,
+Portuguese (Brazil), Russian, Simplified Chinese, Spanish, Swedish, Traditional Chinese and
+Vietnamese, including locale formatting and weather labels. App/device names and saved city
+names remain real data. No geolocation,
 runtime font/translation services or telemetry are used. Weather attribution: Open-Meteo,
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
@@ -1011,6 +1030,10 @@ not `manifest.appDescription`. The feed generator writes the root app metadata d
 to `dist/description.html` and sets the package's `fullDescriptionUrl` to that version's release
 asset. Homebrew Channel prefers this HTML description when the URL is present. CI uploads the
 HTML alongside the feed and IPK, so the feed and its description must be published together.
+The generator also writes `dist/com.ecklf.luma.manifest.json`, containing exactly the app manifest
+embedded in `repo.json`. CI publishes it with every release for the central webOS Homebrew repository's
+`manifestUrl`, using `https://github.com/ecklf/lg-luma/releases/latest/download/com.ecklf.luma.manifest.json`.
+This standalone manifest is not a replacement for the custom repository's `repo.json` feed.
 
 Key modules: `state.rs` focus/preferences, `view.rs` geometry, `renderer.rs` GPU caches/draws,
 `font.rs` lazy metrics/outlines, `vector.rs` GPU mesh upload, `platform.rs` worker/inventory,
@@ -1058,6 +1081,12 @@ and `fullhome` executable targets are supported; the latter requires matching na
 support from #142. Manifest takeover remains limited to webOS
 10/11. The optional `tv-input` subcommand implements the #124 registration/verification contract;
 its Settings integration is still tracked by that separate PR and requires `supportGIP`.
+
+On webOS 5/6 the helper also installs the early cold-boot start: `enable` copies `luma-early`,
+writes its four LS2 definitions, rescans, and appends `home-filter.js` (with the selected Home
+target written into the copy) to LG's key-filter chain, all best effort. The `early` path stays in
+`home.sh`, so it runs before the helper during a cold boot. `disable` removes the early start even
+when single cleanup steps fail.
 
 The former VM tests for interpreter code are replaced by filesystem and service fixtures in
 `tv-helper/src/tests.rs`. They do not call a TV, real LS2 service or network. Host helper executables
