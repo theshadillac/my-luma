@@ -74,7 +74,7 @@ try {
     }
     return state;
   };
-  const home = await scenario('home', 'down');
+  const home = await scenario('home', 'wait');
   assert.deepEqual(home.focus, { App: 'netflix' });
   const recents = await scenario('recents', 'recents,await-recents');
   assert.equal(recents.modal, true);
