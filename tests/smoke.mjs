@@ -169,7 +169,7 @@ try {
   }
   const settings = await scenario('settings', 'settings,down,down,enter,down,enter,enter');
   assert.equal(settings.preferences.background, 'forest');
-  const saved = await scenario('saved', 'down,hold,right,back');
+  const saved = await scenario('saved', 'hold,right,back');
   assert.equal(saved.preferences.background, 'forest');
   assert.deepEqual(saved.preferences.favorites.slice(0, 2), ['youtube.leanback.v4', 'netflix']);
   const upload = await scenario(
