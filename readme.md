@@ -28,6 +28,9 @@ https://github.com/user-attachments/assets/2156d640-b8fa-4ea4-a02c-0db4c93bcc5a
 
 </details>
 
+If installed app icons look stale, use **Settings → System → Reset icon cache** to
+clear cached artwork and reload it without changing your preferences.
+
 ## Compatibility
 
 > [!NOTE]
@@ -114,6 +117,8 @@ https://github.com/user-attachments/assets/2156d640-b8fa-4ea4-a02c-0db4c93bcc5a
 
 ### Homebrew Channel
 
+Add this custom repository URL to Homebrew Channel:
+
 ```text
 https://github.com/ecklf/lg-luma/releases/latest/download/repo.json
 ```
@@ -123,7 +128,7 @@ https://github.com/ecklf/lg-luma/releases/latest/download/repo.json
 On your computer, replace `TV_IP`:
 
 ```sh
-scp -O dist/com.ecklf.luma_2.17.0_arm.ipk root@TV_IP:/tmp/luma.ipk
+scp -O dist/com.ecklf.luma_2.19.0_arm.ipk root@TV_IP:/tmp/luma.ipk
 ssh root@TV_IP
 ```
 
@@ -189,6 +194,15 @@ mounted Home manifest is never reread and the manifest method fails on that miss
 Verified on an `OLED65G46LA` (2024 G4, `9.2.4-48`); other 9.x models should behave the same, but
 have not been tested yet.
 
+On webOS 5/6, a cold boot opens Luma at about 20 s instead of after the Homebrew hook (~50 s or
+later). The Homebrew hooks start late, but LG's service hub reads `/var/luna-service2` at
+`core-boot-done`. `home.sh enable` therefore also registers a small root helper there
+(`com.webos.service.lumahome`, a copy of the package's `luma-early` in `/var/lib/luma-home`) and adds
+a compositor key filter (`home-filter.js`) to LG's chain. While the TV boots, the filter asks the
+helper to mount Luma and then opens Home. If this fails, the cold-boot hook mounts Luma as before.
+Keys pass through the filter unchanged, and `home.sh disable` removes both. The early-boot timing
+has not been verified on webOS 24.
+
 </details>
 
 <details>
@@ -232,6 +246,10 @@ Test on a spare button first. Disable the mapping in Input Hook to restore norma
 
 ## Features
 
+Choose the interface language in **Settings → General → Language**. Luma supports Catalan,
+Czech, Dutch, English, French, German, Italian, Polish, Portuguese (Brazil), Russian,
+Simplified Chinese, Spanish, Swedish, Traditional Chinese and Vietnamese.
+
 ### Backgrounds
 
 Open **Settings → Background → Upload**, then scan the QR code or open the shown
@@ -247,6 +265,16 @@ LG splash unchanged.
 Toggle **Gradient** beside **Rotation** to turn background shading on or off. It defaults to On
 and remembers your choice. Older uploads without an unshaded copy keep their full-resolution
 shaded image. This does not change LG's launch splash.
+
+### Input icons
+
+Open **Settings → Widgets → Inputs**, select an input, then choose
+**Icon** to open a native picker for bundled SVG icons. Choices are **Automatic** (the default,
+using label detection), **HDMI**, **USB**, **Apple TV**, **Computer**, **Console**, **PlayStation**,
+**NVIDIA Shield**, **Streaming device**, **Nintendo Switch**, **Nintendo Switch 2**, and **Xbox**.
+
+An explicit icon choice is saved separately for each input and persists across restarts.
+Choose **Automatic** to clear that input's override and restore label-based icon detection.
 
 ### Recent app switching
 
@@ -288,7 +316,7 @@ checksum-pinned SDL-webOS library; both downloads are cached under `.build/`.
 Output:
 
 ```text
-dist/com.ecklf.luma_2.17.0_arm.ipk
+dist/com.ecklf.luma_2.19.0_arm.ipk
 dist/sha256sums
 dist/repo.json
 dist/app-icon-large.png

@@ -381,13 +381,20 @@ try {
   assert.equal(clockMedium.preferences.clock_size, 'medium');
   const system = await scenario(
     'system-settings',
-    'settings,down,down,down,down,right,down,down,down',
+    'settings,down,down,down,down,right,down,down,down,down',
   );
   assert.deepEqual(system.focus, { Setting: 5 });
   assert.ok(system.ui_text.includes('Refresh apps & inputs'));
   assert.ok(!system.ui_text.includes('Luma update'));
   assert.ok(system.ui_text.includes('Quit app'));
   assert.ok(system.ui_text.includes('Text rendering'));
+  assert.ok(system.ui_text.includes('Reset icon cache'));
+  const resetIcons = await scenario(
+    'reset-icon-cache',
+    'settings,down,down,down,down,right,down,down,down,enter',
+  );
+  assert.deepEqual(resetIcons.focus, { Setting: 9 });
+  assert.deepEqual(resetIcons.preferences, system.preferences);
   const updatePreview = await scenario('update-preview', 'settings,down,down,down,down,right', [
     '--test-update-version',
     '99.0.0',
@@ -417,7 +424,11 @@ try {
   assert.ok(latestPreview.ui_text.includes('Check again'));
   assert.ok(latestPreview.ui_text.includes(`Current version: ${currentVersion}`));
   assert.ok(!latestPreview.ui_text.some((label) => label.startsWith('Luma v')));
-  const textOptions = 'settings,down,down,down,down,right,down,down,enter';
+  const textRenderingRow = 'settings,down,down,down,down,right,down';
+  const textRenderingFocus = await scenario('text-rendering-focus', textRenderingRow);
+  assert.deepEqual(textRenderingFocus.focus, { Setting: 7 });
+  assert.equal(textRenderingFocus.subpage, null);
+  const textOptions = `${textRenderingRow},enter`;
   const textRendering = await scenario('text-rendering-options', textOptions);
   assert.equal(textRendering.subpage, 'TextRendering');
   assert.deepEqual(textRendering.focus, { Choice: 0 });

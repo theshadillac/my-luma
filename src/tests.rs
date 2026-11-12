@@ -16,6 +16,9 @@ mod wallpaper_tests;
 #[path = "input-refresh-tests.rs"]
 mod input_refresh_tests;
 
+#[path = "input-icon-tests.rs"]
+mod input_icon_tests;
+
 fn ready() -> State {
     let mut state = State::new(Preferences::default());
     // Most fixtures start from the tab bar, as if a key had been pressed before apps loaded.
@@ -996,7 +999,7 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     assert!(
         !controls(&state)
             .iter()
-            .any(|c| matches!(c.target, Target::Setting(3 | 5)))
+            .any(|c| matches!(c.target, Target::Setting(3 | 5 | 9)))
     );
     assert!(
         controls(&state)
@@ -1010,10 +1013,19 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::CheckUpdates);
     state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Setting(7));
+    state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Setting(3));
     assert_eq!(state.activate(), vec![Effect::Reload]);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Setting(7));
+    assert_eq!(state.focus, Target::Setting(9));
+    let preferences = serde_json::to_value(&state.preferences).unwrap();
+    assert!(state.activate().is_empty());
+    assert!(state.reset_icon_cache);
+    assert_eq!(
+        serde_json::to_value(&state.preferences).unwrap(),
+        preferences
+    );
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Setting(5));
     assert_eq!(state.activate(), vec![Effect::Quit]);
@@ -1022,6 +1034,43 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(0));
     assert_eq!(state.section, 0);
+}
+
+#[test]
+fn system_maintenance_actions_share_an_icon_and_group_below_text_rendering() {
+    let mut state = ready();
+    state.open(2);
+    state.section = crate::state::SYSTEM_SECTION;
+    state.panel_started = None;
+    let system = scene(&state);
+    let rect = |index| {
+        system
+            .controls
+            .iter()
+            .find(|control| control.target == Target::Setting(index))
+            .unwrap()
+            .rect
+    };
+    let text = rect(7);
+    let refresh = rect(3);
+    let reset = rect(9);
+    let quit = rect(5);
+    let gap = |above: crate::state::Rect, below: crate::state::Rect| below.y - above.y - above.h;
+    assert!(gap(text, refresh) > gap(refresh, reset));
+    assert!(gap(reset, quit) > gap(refresh, reset));
+    assert!((gap(refresh, reset) - 12.).abs() < 0.01);
+    for action in [refresh, reset] {
+        assert!(system.draw.iter().any(|draw| matches!(draw,
+            crate::renderer::Draw::TintedImage(path, icon, ..)
+                if path.ends_with("ui-icons/refresh.lvec")
+                    && icon.y >= action.y && icon.y + icon.h <= action.y + action.h
+        )));
+    }
+    state.focus = Target::Setting(9);
+    state.direction(Direction::Up, &system.controls);
+    assert_eq!(state.focus, Target::Setting(3));
+    state.direction(Direction::Up, &system.controls);
+    assert_eq!(state.focus, Target::Setting(7));
 }
 
 #[test]
@@ -3106,7 +3155,9 @@ fn update_card_shows_both_versions_and_explicitly_starts_installation() {
             Some(Target::InstallUpdate)
         );
         state.direction(Direction::Down, &rendered.controls);
-        assert_eq!(state.focus, Target::Setting(3));
+        assert_eq!(state.focus, Target::Setting(7)); // Text rendering precedes maintenance actions.
+        state.direction(Direction::Down, &rendered.controls);
+        assert_eq!(state.focus, Target::Setting(3)); // Refresh apps & inputs.
         state.focus = Target::InstallUpdate;
         state.direction(Direction::Left, &rendered.controls);
         assert_eq!(state.focus, Target::Sidebar(crate::state::SYSTEM_SECTION));
@@ -3404,9 +3455,11 @@ fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
             "com.webos.app.hdmi3"
         ]
     );
-    // Each input's page has its own menu switch, below Rename, while the menu is on.
+    // Each input's page has its own menu switch, below Rename and Icon, while the menu is on.
     state.subpage = Some(crate::state::Subpage::Input("com.webos.app.hdmi2".into()));
     state.focus = Target::InputRename;
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::InputIcon);
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::InputInMenu);
     assert_eq!(state.activate(), vec![Effect::Save]);
@@ -3796,68 +3849,6 @@ fn clock_size_preferences_round_trip_and_tolerate_unknown_values() {
 }
 
 #[test]
-fn hovering_an_inactive_nav_tab_draws_a_highlight() {
-    let mut state = ready();
-    let highlights = |state: &State| {
-        let scene = scene(state);
-        let tab = scene
-            .controls
-            .iter()
-            .find(|c| c.target == Target::Nav(1))
-            .unwrap()
-            .rect;
-        scene
-            .draw
-            .iter()
-            .filter(|draw| matches!(draw, crate::renderer::Draw::RoundedGradient(r, ..) if r.x == tab.x && r.w == tab.w))
-            .count()
-    };
-    assert_eq!(highlights(&state), 0);
-    state.pointer_focus(Target::Nav(1));
-    assert_eq!(highlights(&state), 1);
-    state.pointer_focus(Target::Nav(0));
-    assert_eq!(highlights(&state), 0);
-}
-
-fn with_forecast(state: &mut State) {
-    let place = crate::weather::Location {
-        name: "Fort Collins".into(),
-        region: "Colorado".into(),
-        country: "United States".into(),
-        latitude: 40.5853,
-        longitude: -105.0844,
-    };
-    let day = |weekday, code| crate::weather::Day {
-        weekday,
-        high: 10.,
-        low: -2.,
-        code,
-    };
-    state.preferences.weather_location = Some(place.clone());
-    state.weather.cache = Some(crate::weather::Cache {
-        key: place.key(),
-        updated_at: 1000,
-        reading: crate::weather::Reading {
-            temperature: 8.,
-            code: 2,
-            is_day: true,
-            daily: Some([day(4, 2), day(5, 0), day(6, 0), day(0, 3), day(1, 73)]),
-        },
-    });
-}
-
-fn drawn_texts(state: &State) -> Vec<(String, f32)> {
-    scene(state)
-        .draw
-        .iter()
-        .filter_map(|draw| match draw {
-            crate::renderer::Draw::Text(value, _, style, ..) => Some((value.clone(), style.size)),
-            _ => None,
-        })
-        .collect()
-}
-
-#[test]
 fn five_day_forecast_appears_under_the_weather_only_when_switched_on() {
     let mut state = ready();
     with_forecast(&mut state);
@@ -4209,6 +4200,44 @@ fn selected_tile_lifts_with_a_two_tone_ring_and_the_setting_turns_the_lift_off()
     assert_eq!((drawn.w, drawn.h), (hit.w, hit.h));
 }
 
+fn with_forecast(state: &mut State) {
+    let place = crate::weather::Location {
+        name: "Fort Collins".into(),
+        region: "Colorado".into(),
+        country: "United States".into(),
+        latitude: 40.5853,
+        longitude: -105.0844,
+    };
+    let day = |weekday, code| crate::weather::Day {
+        weekday,
+        high: 10.,
+        low: -2.,
+        code,
+    };
+    state.preferences.weather_location = Some(place.clone());
+    state.weather.cache = Some(crate::weather::Cache {
+        key: place.key(),
+        updated_at: 1000,
+        reading: crate::weather::Reading {
+            temperature: 8.,
+            code: 2,
+            is_day: true,
+            daily: Some([day(4, 2), day(5, 0), day(6, 0), day(0, 3), day(1, 73)]),
+        },
+    });
+}
+
+fn drawn_texts(state: &State) -> Vec<(String, f32)> {
+    scene(state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(value, _, style, ..) => Some((value.clone(), style.size)),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn cold_start_focus_moves_from_tab_bar_to_first_app_once_apps_load() {
     let mut state = State::new(Preferences::default());
@@ -4223,4 +4252,53 @@ fn cold_start_focus_stays_put_after_the_user_presses_something() {
     state.note_input();
     state.set_inventory(demo_inventory(), None);
     assert_eq!(state.focus, Target::Nav(0));
+}
+
+#[test]
+fn hovering_an_inactive_nav_tab_draws_a_distinct_highlight_only_while_hovered() {
+    use crate::renderer::Draw;
+    let mut state = ready();
+    let tab = |state: &State, index| {
+        let scene = scene(state);
+        let rect = scene
+            .controls
+            .iter()
+            .find(|c| c.target == Target::Nav(index))
+            .unwrap()
+            .rect;
+        let pill = scene.draw.iter().find_map(|draw| match draw {
+            Draw::Shape(r, _, 0., color)
+                if (r.x, r.y, r.w, r.h) == (rect.x, rect.y, rect.w, rect.h) =>
+            {
+                Some(*color)
+            }
+            _ => None,
+        });
+        let label = scene.draw.iter().find_map(|draw| match draw {
+            Draw::Text(_, r, .., color, true) if r.x == rect.x && r.w == rect.w => Some(*color),
+            _ => None,
+        });
+        (pill, label.unwrap())
+    };
+    let (_, idle) = tab(&state, 1);
+    let (_, active) = tab(&state, 0);
+    assert_eq!(tab(&state, 1).0, None);
+
+    state.pointer_focus(Target::Nav(1));
+    state.hover = Some(Target::Nav(1));
+    let (pill, label) = tab(&state, 1);
+    assert!(pill.is_some());
+    assert!(
+        label != idle && label != active,
+        "hover must not look active"
+    );
+
+    // Leaving the tab clears the highlight even though focus stays on it.
+    state.hover = None;
+    assert_eq!(state.focus, Target::Nav(1));
+    assert_eq!(tab(&state, 1), (None, idle));
+
+    // The active tab never gets a hover pill on top of its own.
+    state.hover = Some(Target::Nav(0));
+    assert_eq!(tab(&state, 0), (None, active));
 }
