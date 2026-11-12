@@ -314,6 +314,9 @@ pub struct State {
     /// The ambient transition last drawn (fades, tour stop and glide), so each changed
     /// frame is redrawn and a still one is not.
     ambient_drawn: Option<(f32, f32, usize, f32)>,
+    /// Until the first app list arrives (or the user presses something), Home's focus belongs on
+    /// the first app, not the tab bar it starts on while nothing is loaded yet.
+    settle_focus: bool,
     /// The focus the tile lift last saw, the one before it, and when it changed.
     lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
@@ -339,6 +342,7 @@ impl State {
             last_input: Instant::now(),
             ambient: None,
             ambient_drawn: None,
+            settle_focus: true,
             lift_focus: (
                 Target::Nav(0),
                 None,
@@ -570,6 +574,7 @@ impl State {
     /// Records input. Returns true when it woke the ambient screen: that input only wakes.
     pub fn note_input(&mut self) -> bool {
         self.last_input = Instant::now();
+        self.settle_focus = false;
         if self.ambient.take().is_some() {
             self.dirty = true;
             return true;
@@ -717,6 +722,7 @@ impl State {
         self.open(0);
         self.home_scroll = 0.;
         self.focus = self.first_content();
+        self.settle_focus = !matches!(self.focus, Target::App(_));
         pending
     }
 
@@ -997,6 +1003,24 @@ impl State {
         self.inventory_failures = 0;
         self.dirty = true;
         self.reconcile_focus();
+        self.settle_home_focus();
+    }
+
+    /// Moves a cold start's tab-bar focus onto the first app once apps exist. Pressing anything
+    /// first, or being anywhere but Home without an overlay, leaves focus alone.
+    fn settle_home_focus(&mut self) {
+        if !self.settle_focus || self.page != Page::Home || self.overlay.is_some() {
+            return;
+        }
+        if !matches!(self.focus, Target::Nav(0) | Target::Browse | Target::Retry) {
+            self.settle_focus = false;
+            return;
+        }
+        self.home_scroll = 0.;
+        if let first @ Target::App(_) = self.first_content() {
+            self.focus = first;
+            self.settle_focus = false;
+        }
     }
 
     /// Replace only input status; leave installed apps, artwork and saved preferences alone.

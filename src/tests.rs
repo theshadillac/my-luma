@@ -18,6 +18,8 @@ mod input_refresh_tests;
 
 fn ready() -> State {
     let mut state = State::new(Preferences::default());
+    // Most fixtures start from the tab bar, as if a key had been pressed before apps loaded.
+    state.note_input();
     state.set_inventory(demo_inventory(), None);
     state
 }
@@ -3490,6 +3492,7 @@ fn the_wallpaper_first_home_lowers_the_rows_until_focus_moves_into_them() {
         reduced_motion: true,
         ..Preferences::default()
     });
+    state.note_input();
     state.set_inventory(demo_inventory(), None);
     assert_eq!(state.focus, Target::Nav(0));
     assert_eq!(state.landing(), 1.);
@@ -3673,6 +3676,7 @@ fn pointer_interrupts_a_landing_slide_until_remote_navigation_resumes() {
         landing_layout: true,
         ..Preferences::default()
     });
+    state.note_input();
     state.set_inventory(demo_inventory(), None);
     state.direction(Direction::Down, &controls(&state));
     state.tick();
@@ -4203,4 +4207,20 @@ fn selected_tile_lifts_with_a_two_tone_ring_and_the_setting_turns_the_lift_off()
     state.tick();
     let (hit, drawn) = shadow_of(&state, &first);
     assert_eq!((drawn.w, drawn.h), (hit.w, hit.h));
+}
+
+#[test]
+fn cold_start_focus_moves_from_tab_bar_to_first_app_once_apps_load() {
+    let mut state = State::new(Preferences::default());
+    assert_eq!(state.focus, Target::Nav(0));
+    state.set_inventory(demo_inventory(), None);
+    assert!(matches!(state.focus, Target::App(_)), "{:?}", state.focus);
+}
+
+#[test]
+fn cold_start_focus_stays_put_after_the_user_presses_something() {
+    let mut state = State::new(Preferences::default());
+    state.note_input();
+    state.set_inventory(demo_inventory(), None);
+    assert_eq!(state.focus, Target::Nav(0));
 }
