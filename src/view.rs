@@ -268,7 +268,27 @@ impl Scene {
         }
     }
     fn fade(&mut self, from: usize, alpha: f32, brightness: f32) {
-        for draw in &mut self.draw[from..] {
+        self.fade_range(from, self.draw.len(), alpha, brightness);
+    }
+
+    /// Moves a span of draws down by `dy` (up when negative). Clips and edge fades stay put.
+    fn shift_range(&mut self, from: usize, to: usize, dy: f32) {
+        for draw in &mut self.draw[from..to] {
+            match draw {
+                Draw::Shape(rect, ..)
+                | Draw::RoundedGradient(rect, ..)
+                | Draw::Shadow(rect, ..)
+                | Draw::Text(_, rect, ..)
+                | Draw::Image(_, rect, ..)
+                | Draw::TintedImage(_, rect, ..)
+                | Draw::AppImage(_, rect, ..) => rect.y += dy,
+                Draw::Clip(_) | Draw::EdgeFade(_) | Draw::EdgeFadeX(_) => {}
+            }
+        }
+    }
+
+    fn fade_range(&mut self, from: usize, to: usize, alpha: f32, brightness: f32) {
+        for draw in &mut self.draw[from..to] {
             let apply = |color: &mut Color| {
                 for channel in &mut color[..3] {
                     *channel *= brightness;
@@ -617,6 +637,7 @@ pub fn scene_with_pill(
     }
     out.draw.push(Draw::EdgeFade(None));
     out.draw.push(Draw::Clip(None));
+    let header_start = out.draw.len();
     header(&mut out, state, assets, now, pill_x, pill_width);
     if let Some(
         overlay @ (Overlay::Options { .. }
@@ -728,6 +749,16 @@ pub fn scene_with_pill(
     }
     if state.ambient.is_some() {
         ambient(&mut out, state, assets, now, content_start);
+    } else if let Some(waking) = state.waking {
+        wake(
+            &mut out,
+            state,
+            assets,
+            now,
+            content_start,
+            header_start,
+            waking,
+        );
     }
     out
 }
@@ -1300,9 +1331,9 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
 
 fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     if state.preferences.glass_clock {
-        // While the ambient screen shows, it draws the clock block itself.
-        if state.ambient.is_none() {
-            glass_clock(out, state, assets, now, None, 1.);
+        // While the ambient screen shows or wakes, it draws the clock block itself.
+        if state.ambient.is_none() && (state.waking.is_none() || state.preferences.reduced_motion) {
+            glass_clock(out, state, assets, now, None, 0., 1.);
         }
     } else {
         home_heading(out, state, assets, now);
@@ -1419,6 +1450,7 @@ fn glass_clock(
     assets: &Assets,
     now: OffsetDateTime,
     stops: Option<(AmbientSpot, AmbientSpot, f32)>,
+    homeward: f32,
     opacity: f32,
 ) {
     let language = state.preferences.language;
@@ -1478,7 +1510,12 @@ fn glass_clock(
     };
     let (dx, dy) = stops.map_or((0., 0.), |(from, to, glide)| {
         let (a, b) = (offset(from), offset(to));
-        (a.0 + (b.0 - a.0) * glide, a.1 + (b.1 - a.1) * glide)
+        // Waking glides the block from wherever it was back to Home.
+        let away = 1. - homeward;
+        (
+            (a.0 + (b.0 - a.0) * glide) * away,
+            (a.1 + (b.1 - a.1) * glide) * away,
+        )
     });
     let mut y = home_y + dy;
     // A soft dark halo behind the date and time keeps them readable on bright wallpapers;
@@ -1591,8 +1628,71 @@ fn ambient(
         assets,
         now,
         Some(state.ambient_stops()),
+        0.,
         prominence * shown,
     );
+}
+
+/// Waking from the ambient screen: the wallpaper brightens as the clock block glides home,
+/// then the top bar fades back and the favourites rise into place. Reduced motion crossfades.
+fn wake(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    now: OffsetDateTime,
+    content_start: usize,
+    header_start: usize,
+    waking: crate::state::Waking,
+) {
+    let progress = state.wake_progress().unwrap_or(1.);
+    let stage =
+        |start: f32, length: f32| crate::state::ease(((progress - start) / length).clamp(0., 1.));
+    // Home may not have finished fading out when woken: return from where it was.
+    let shown = 1. - waking.ui;
+    let back = |amount: f32| shown + (1. - shown) * amount;
+    let end = out.draw.len();
+    let (dim, homeward, clock_fade) = if state.preferences.reduced_motion {
+        let amount = crate::state::ease(progress);
+        out.fade_range(content_start, end, back(amount), 1.);
+        (waking.dim * (1. - amount), 0., 1. - amount)
+    } else {
+        let rows = stage(0.45, 0.55);
+        out.fade_range(content_start, header_start, back(rows), 1.);
+        out.shift_range(content_start, header_start, 28. * (1. - rows));
+        out.fade_range(header_start, end, back(stage(0.3, 0.5)), 1.);
+        let clock_fade = if state.preferences.glass_clock {
+            1.
+        } else {
+            1. - stage(0.3, 0.5)
+        };
+        (
+            waking.dim * (1. - stage(0., 0.6)),
+            stage(0., 0.85),
+            clock_fade,
+        )
+    };
+    // Dim the wallpaper beneath the returning interface rather than over it.
+    out.draw.insert(
+        content_start,
+        Draw::Shape(
+            Rect::new(0., 0., 1920., 1080.),
+            0.,
+            0.,
+            c(0x000000, 0.62 * dim),
+        ),
+    );
+    let opacity = (1. + 0.4 * dim) * clock_fade;
+    if opacity > 0. {
+        glass_clock(
+            out,
+            state,
+            assets,
+            now,
+            Some(waking.stops),
+            homeward,
+            opacity,
+        );
+    }
 }
 
 /// The usual Home heading: date, greeting, weather and, when on, the 5-day forecast.

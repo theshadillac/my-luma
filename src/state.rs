@@ -36,6 +36,21 @@ pub const AMBIENT_DIM_START: f32 = 2.;
 pub const AMBIENT_DIM_FADE: f32 = 2.5;
 pub const AMBIENT_DRIFT_EVERY: f32 = 60.;
 pub const AMBIENT_DRIFT_GLIDE: f32 = 4.;
+/// Waking from the ambient screen, in seconds: the wallpaper brightens, the clock block glides
+/// home, then the top bar and the favourites settle back in. Reduced motion just crossfades.
+pub const AMBIENT_WAKE: f32 = 0.8;
+pub const AMBIENT_WAKE_REDUCED: f32 = 0.4;
+
+/// The ambient screen as it was when woken, so the wake can run its transition in reverse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Waking {
+    pub since: Instant,
+    /// How far Home had faded out and the wallpaper had dimmed, each 0 to 1.
+    pub ui: f32,
+    pub dim: f32,
+    /// Where the clock block was on its tour.
+    pub stops: (AmbientSpot, AmbientSpot, f32),
+}
 
 /// A stop on the ambient clock block's tour.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -320,6 +335,8 @@ pub struct State {
     /// The ambient transition last drawn (fades, tour stop and glide), so each changed
     /// frame is redrawn and a still one is not.
     ambient_drawn: Option<(f32, f32, usize, f32)>,
+    /// The wake-up transition back to Home, while it runs.
+    pub waking: Option<Waking>,
     /// Until the first app list arrives (or the user presses something), Home's focus belongs on
     /// the first app, not the tab bar it starts on while nothing is loaded yet.
     settle_focus: bool,
@@ -348,6 +365,7 @@ impl State {
             last_input: Instant::now(),
             ambient: None,
             ambient_drawn: None,
+            waking: None,
             settle_focus: true,
             lift_focus: (
                 Target::Nav(0),
@@ -504,6 +522,14 @@ impl State {
             self.ambient_drawn = ambient;
             self.dirty = true;
         }
+        if let Some(progress) = self.wake_progress() {
+            self.dirty = true;
+            if progress >= 1. {
+                // Home is back: the selected tile lifts in as the last beat.
+                self.waking = None;
+                self.lift_focus = (self.focus.clone(), None, Instant::now());
+            }
+        }
         let target = self.landing_target();
         if target != self.landing.1 {
             self.landing = (self.landing(), target, Instant::now());
@@ -571,6 +597,7 @@ impl State {
             || self.landing() != self.landing.1
             || self.panel_started.is_some()
             || self.ambient_fading()
+            || self.waking.is_some()
             || self.lift_moving()
             || (!self.preferences.reduced_motion
                 && self
@@ -583,11 +610,39 @@ impl State {
     pub fn note_input(&mut self) -> bool {
         self.last_input = Instant::now();
         self.settle_focus = false;
-        if self.ambient.take().is_some() {
+        if self.ambient.is_some() {
+            let (ui, dim) = self.ambient_progress();
+            let stops = self.ambient_stops();
+            self.ambient = None;
+            self.waking = Some(Waking {
+                since: Instant::now(),
+                ui,
+                dim,
+                stops,
+            });
             self.dirty = true;
             return true;
         }
         false
+    }
+
+    /// A press during the wake-up skips to its end, so the press acts at once.
+    pub fn finish_wake(&mut self) {
+        if self.waking.take().is_some() {
+            self.lift_focus = (self.focus.clone(), None, Instant::now());
+            self.dirty = true;
+        }
+    }
+
+    /// How far the wake-up has run, 0 to 1, while it runs.
+    pub fn wake_progress(&self) -> Option<f32> {
+        let length = if self.preferences.reduced_motion {
+            AMBIENT_WAKE_REDUCED
+        } else {
+            AMBIENT_WAKE
+        };
+        self.waking
+            .map(|waking| (waking.since.elapsed().as_secs_f32() / length).min(1.))
     }
 
     /// How long until the ambient screen may start, when it can start at all.
@@ -612,6 +667,10 @@ impl State {
             && (self.preferences.ambient_minutes == 0 || self.page != Page::Home)
         {
             self.ambient = None;
+            self.dirty = true;
+        }
+        if self.waking.is_some() && self.page != Page::Home {
+            self.waking = None;
             self.dirty = true;
         }
         if shown && self.ambient_due() == Some(Duration::ZERO) {
@@ -3113,6 +3172,6 @@ impl State {
 }
 
 /// Smooth start and finish for a 0–1 progress.
-fn ease(t: f32) -> f32 {
+pub(crate) fn ease(t: f32) -> f32 {
     t * t * (3. - 2. * t)
 }

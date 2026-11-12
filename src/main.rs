@@ -1304,6 +1304,8 @@ fn run() -> Result<(), String> {
                     if *repeat && wake_key.is_some() && *scancode == wake_key {
                         continue;
                     }
+                    // A second press mid-wake finishes it and acts at once.
+                    state.finish_wake();
                 }
                 Event::MouseButtonUp { .. } if external_input && wake_button => {
                     wake_button = false;
@@ -1314,6 +1316,9 @@ fn run() -> Result<(), String> {
                     continue;
                 }
                 Event::MouseWheel { .. } if external_input && state.note_input() => continue,
+                Event::MouseButtonDown { .. } | Event::MouseWheel { .. } if external_input => {
+                    state.finish_wake();
+                }
                 Event::MouseMotion { .. } | Event::TextInput { .. } if external_input => {
                     state.note_input();
                 }

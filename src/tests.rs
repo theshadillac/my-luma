@@ -4302,3 +4302,53 @@ fn hovering_an_inactive_nav_tab_draws_a_distinct_highlight_only_while_hovered() 
     state.hover = Some(Target::Nav(0));
     assert_eq!(tab(&state, 0), (None, active));
 }
+
+#[test]
+fn waking_glides_the_clock_home_while_home_returns_and_a_second_press_skips_ahead() {
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    state.preferences.glass_clock = true;
+    state.preferences.ambient_minutes = 2;
+    // Two minutes in, the clock block rests in the upper left corner.
+    state.ambient = Some(Instant::now() - Duration::from_secs(130));
+    let clock_x = |state: &State| {
+        scene(state)
+            .draw
+            .iter()
+            .filter_map(|draw| match draw {
+                crate::renderer::Draw::Text(value, rect, style, ..)
+                    if value.contains(':') && style.size > 150. =>
+                {
+                    Some(rect.x)
+                }
+                _ => None,
+            })
+            .fold(f32::MAX, f32::min)
+    };
+    let corner = clock_x(&state);
+    assert!(corner < 400., "{corner}");
+    // The waking press is still only a wake, but now starts a transition back to Home.
+    assert!(state.note_input());
+    assert!(state.ambient.is_none());
+    let waking = state.waking.expect("waking");
+    assert_eq!(waking.dim, 1.);
+    // It begins where the ambient screen left off, with Home already usable.
+    assert!((clock_x(&state) - corner).abs() < 2.);
+    assert!(!scene(&state).controls.is_empty());
+    // Halfway, the clock block is on its way home.
+    state.waking.as_mut().unwrap().since = Instant::now() - Duration::from_millis(400);
+    let halfway = clock_x(&state);
+    assert!(halfway > corner + 50., "{halfway}");
+    // At the end it rests exactly where Home draws it, and the wake clears itself.
+    state.waking.as_mut().unwrap().since = Instant::now() - Duration::from_secs(1);
+    let landed = clock_x(&state);
+    state.tick();
+    assert!(state.waking.is_none());
+    assert!((clock_x(&state) - landed).abs() < 1.);
+    // A second press mid-wake skips straight to Home and acts.
+    state.ambient = Some(Instant::now() - Duration::from_secs(130));
+    assert!(state.note_input());
+    assert!(!state.note_input());
+    state.finish_wake();
+    assert!(state.waking.is_none());
+}
