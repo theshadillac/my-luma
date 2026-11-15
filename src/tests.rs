@@ -198,16 +198,16 @@ fn home_relaunch_resets_scrolled_favorites_and_keeps_remote_routes() {
 
     state.return_home();
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Nav(0));
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.page, Page::Apps);
+    assert_eq!(state.focus, Target::Nav(2), "Up reaches the gear");
     state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.page, Page::Home);
     assert_eq!(
-        state.focus,
-        Target::Nav(0),
-        "Tab browsing stays in the header"
+        state.page,
+        Page::Home,
+        "No tabs: Left stays on Home's buttons"
     );
+    assert_eq!(state.focus, Target::TvSettings);
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::App(favorites[0].clone()));
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn remote_routes_from_header_and_back_through_settings() {
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::App("netflix".into()));
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Nav(0));
+    assert_eq!(state.focus, Target::Nav(2));
     state.open(2);
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(0));
@@ -407,8 +407,11 @@ fn keyboard_is_modal_and_back_preserves_then_clears_search() {
     assert_eq!(state.apps().len(), 1);
     state.back();
     assert!(state.query.is_empty());
-    assert_eq!(state.focus, Target::Nav(1));
+    assert_eq!(state.focus, Target::Search);
     assert_eq!(state.page, Page::Apps);
+    // With the search cleared, Back closes the app drawer.
+    state.back();
+    assert_eq!(state.page, Page::Home);
 }
 
 #[test]
@@ -603,7 +606,7 @@ fn pointer_focus_does_not_scroll_the_clicked_control() {
     state.scroll = 150.;
     state.pointer_focus(Target::App("netflix".into()));
     assert_eq!(state.scroll, 150.);
-    state.focus(Target::Nav(1), &controls(&state));
+    state.focus(Target::Filter(1), &controls(&state));
     assert_eq!(state.scroll, 0.);
 }
 
@@ -638,14 +641,49 @@ fn reordering_skips_hidden_and_unavailable_favorite_slots() {
 }
 
 #[test]
-fn focused_navigation_tabs_switch_pages_immediately() {
+fn down_past_homes_last_row_opens_the_app_drawer_and_back_returns_to_the_favourite() {
     let mut state = ready();
-    state.direction(Direction::Right, &controls(&state));
+    state.preferences.reduced_motion = true;
+    state.focus = Target::App("youtube.leanback.v4".into());
+    state.direction(Direction::Down, &controls(&state));
+    assert!(
+        matches!(state.focus, Target::Input(_)),
+        "Inputs still come first"
+    );
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(
+        state.page,
+        Page::Apps,
+        "Down past the last row opens the drawer"
+    );
+    assert!(matches!(state.focus, Target::App(_)));
+    // Up from the drawer's top row (its filters) goes back to Home.
+    state.focus = Target::Filter(1);
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.page, Page::Home);
+    // Opened from a favourite, Back lands on that favourite again.
+    state.focus = Target::App("youtube.leanback.v4".into());
+    state.open_drawer();
     assert_eq!(state.page, Page::Apps);
-    assert_eq!(state.focus, Target::Nav(1));
-    state.direction(Direction::Right, &controls(&state));
+    state.back();
+    assert_eq!(state.page, Page::Home);
+    assert_eq!(state.focus, Target::App("youtube.leanback.v4".into()));
+    // With every input hidden from Home, Down from a favourite opens the drawer directly.
+    for input in state.inventory.inputs.clone() {
+        state
+            .preferences
+            .input_modes
+            .insert(input.id, crate::model::InputMode::Off);
+    }
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.page, Page::Apps);
+    state.back();
+    assert_eq!(state.focus, Target::App("youtube.leanback.v4".into()));
+    // The gear opens Settings on its first section; Back steps out through the gear.
+    state.focus = Target::Nav(2);
+    state.activate();
     assert_eq!(state.page, Page::Settings);
-    assert_eq!(state.focus, Target::Nav(2));
+    assert_eq!(state.focus, Target::Sidebar(0));
 }
 
 #[test]
@@ -2729,7 +2767,7 @@ fn language_list_scrolls_under_fixed_ui_without_clipping_or_fades() {
             )
         })
         .unwrap();
-    for key in ["interface", "settings"] {
+    for key in ["interface"] {
         let label = state.preferences.language.t(key);
         let fixed = rendered
             .draw
@@ -2774,25 +2812,18 @@ fn apps_scroll_behind_navigation_without_a_top_cutoff_or_fade() {
             )
         })
         .expect("cards remain drawn until they leave the screen, not the content viewport");
-    let nav_label = rendered
+    // The header clock is drawn over the scrolled cards; the drawer has no top buttons.
+    let clock = rendered
         .draw
         .iter()
-        .rposition(|draw| {
-            matches!(draw,
-                Draw::Text(label, ..) if label == state.preferences.language.t("apps")
-            )
-        })
+        .rposition(|draw| matches!(draw, Draw::Text(_, rect, ..) if rect.y < 120. && rect.x == 84.))
         .unwrap();
-    assert!(card < nav_label);
-    let nav = rendered
-        .controls
-        .iter()
-        .find(|control| control.target == Target::Nav(1))
-        .unwrap();
-    let (x, y) = nav.rect.center();
-    assert_eq!(
-        state.hit_test(&rendered.controls, x, y),
-        Some(Target::Nav(1))
+    assert!(card < clock);
+    assert!(
+        !rendered
+            .controls
+            .iter()
+            .any(|control| matches!(control.target, Target::Nav(_) | Target::TvSettings))
     );
 }
 
@@ -2942,7 +2973,7 @@ fn clock_date_and_home_input_descriptions_use_larger_text() {
 }
 
 #[test]
-fn tv_settings_button_is_centered_alongside_navigation() {
+fn tv_settings_and_gear_buttons_sit_at_the_top_right() {
     let rendered = scene(&ready());
     let button = rendered
         .controls
@@ -2952,7 +2983,15 @@ fn tv_settings_button_is_centered_alongside_navigation() {
     assert!((button.rect.y + button.rect.h / 2. - (42.5 + 68.6 / 2.)).abs() < 0.01);
     assert_eq!(button.rect.h, 60.);
     assert_eq!(button.rect.w, button.rect.h);
-    assert_eq!(button.rect.x + button.rect.w, 1836.);
+    // The gear (Luma settings) takes the corner; LG's TV settings sits to its left.
+    assert_eq!(button.rect.x + button.rect.w, 1836. - 60. - 16.);
+    let gear = rendered
+        .controls
+        .iter()
+        .find(|control| control.target == Target::Nav(2))
+        .unwrap();
+    assert_eq!(gear.rect.x + gear.rect.w, 1836.);
+    assert_eq!(gear.rect.y, button.rect.y);
     let (x, y) = button.rect.center();
     assert_eq!(
         ready().hit_test(&rendered.controls, x, y),
@@ -3417,13 +3456,13 @@ fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
             .iter()
             .any(|control| control.target == Target::InputsButton)
     };
-    // Off by default: no button, and Up from a favorite on the right still goes to the tabs.
+    // Off by default: no button, and Up from a favorite on the right goes to the gear.
     assert!(!state.preferences.inputs_menu);
     assert!(!has_button(&state));
     let right = state.apps()[5].id.clone();
     state.focus = Target::App(right.clone());
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Nav(0));
+    assert_eq!(state.focus, Target::Nav(2));
 
     // Settings → Widgets → Inputs switches it on; Left leaves the page as from its other rows.
     state.open(2);
@@ -3485,10 +3524,13 @@ fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
 
     state.open(0);
     assert!(has_button(&state));
-    // Up from the right half of Home reaches the button; Left goes to the tabs, Right to TV
-    // settings.
+    // Up reaches the gear; the button is two to its left, past TV settings.
     state.focus = Target::App(right);
     state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Nav(2));
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::TvSettings);
+    state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::InputsButton);
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::TvSettings);
@@ -3638,6 +3680,7 @@ fn wallpaper_first_home_stays_lowered_without_input_cards() {
         reduced_motion: true,
         ..Preferences::default()
     });
+    state.note_input();
     state.set_inventory(demo_inventory(), None);
     let inputs: Vec<String> = state
         .inventory
@@ -3771,16 +3814,13 @@ fn clock_size_is_chosen_in_clock_settings_and_keeps_the_clock_centred_on_the_nav
     // Medium is the original header clock: 24 px in a 28.8 px line at y 62.4.
     let (rect, size) = clock(&state);
     assert_eq!((rect.x, rect.y, rect.h, size), (84., 62.4, 28.8, 24.));
-    let nav = view::navigation(
-        &view::Assets {
-            root: PathBuf::new(),
-            version: "test".into(),
-            metrics: BTreeMap::new(),
-            artwork: crate::app_artwork::Service::new(false),
-        },
-        state.preferences.language,
-    )
-    .surface;
+    // Without tabs, the clock keeps clear of the top-right buttons.
+    let nav = scene(&state)
+        .controls
+        .iter()
+        .find(|control| control.target == Target::TvSettings)
+        .unwrap()
+        .rect;
     assert!(rect.x + rect.w <= nav.x);
     // Settings → General → Clock → Size → Extra large.
     state.open(2);
@@ -3814,7 +3854,7 @@ fn clock_size_is_chosen_in_clock_settings_and_keeps_the_clock_centred_on_the_nav
         );
         assert!(
             rect.x + rect.w <= nav.x,
-            "{size:?} stays left of the navigation"
+            "{size:?} stays left of the top-right buttons"
         );
     }
     // Back leaves the clock page for General, like the other clock settings.
@@ -4255,52 +4295,27 @@ fn cold_start_focus_stays_put_after_the_user_presses_something() {
 }
 
 #[test]
-fn hovering_an_inactive_nav_tab_draws_a_distinct_highlight_only_while_hovered() {
+fn hovering_the_gear_lights_it_only_while_hovered() {
     use crate::renderer::Draw;
     let mut state = ready();
-    let tab = |state: &State, index| {
+    let lit = |state: &State| {
         let scene = scene(state);
         let rect = scene
             .controls
             .iter()
-            .find(|c| c.target == Target::Nav(index))
+            .find(|c| c.target == Target::Nav(2))
             .unwrap()
             .rect;
-        let pill = scene.draw.iter().find_map(|draw| match draw {
-            Draw::Shape(r, _, 0., color)
-                if (r.x, r.y, r.w, r.h) == (rect.x, rect.y, rect.w, rect.h) =>
-            {
-                Some(*color)
-            }
-            _ => None,
-        });
-        let label = scene.draw.iter().find_map(|draw| match draw {
-            Draw::Text(_, r, .., color, true) if r.x == rect.x && r.w == rect.w => Some(*color),
-            _ => None,
-        });
-        (pill, label.unwrap())
+        scene.draw.iter().any(|draw| {
+            matches!(draw, Draw::RoundedGradient(r, ..) if (r.x, r.y, r.w, r.h) == (rect.x, rect.y, rect.w, rect.h))
+        })
     };
-    let (_, idle) = tab(&state, 1);
-    let (_, active) = tab(&state, 0);
-    assert_eq!(tab(&state, 1).0, None);
-
-    state.pointer_focus(Target::Nav(1));
-    state.hover = Some(Target::Nav(1));
-    let (pill, label) = tab(&state, 1);
-    assert!(pill.is_some());
-    assert!(
-        label != idle && label != active,
-        "hover must not look active"
-    );
-
-    // Leaving the tab clears the highlight even though focus stays on it.
+    assert!(!lit(&state));
+    state.pointer_focus(Target::Nav(2));
+    state.hover = Some(Target::Nav(2));
+    assert!(lit(&state));
     state.hover = None;
-    assert_eq!(state.focus, Target::Nav(1));
-    assert_eq!(tab(&state, 1), (None, idle));
-
-    // The active tab never gets a hover pill on top of its own.
-    state.hover = Some(Target::Nav(0));
-    assert_eq!(tab(&state, 0), (None, active));
+    assert!(!lit(&state), "leaving the gear clears the highlight");
 }
 
 #[test]
@@ -4351,4 +4366,86 @@ fn waking_glides_the_clock_home_while_home_returns_and_a_second_press_skips_ahea
     assert!(!state.note_input());
     state.finish_wake();
     assert!(state.waking.is_none());
+}
+
+#[test]
+fn more_apps_hint_follows_its_setting_and_opens_the_drawer() {
+    use crate::model::MoreAppsHint;
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    let hint = |state: &State| {
+        controls(state)
+            .into_iter()
+            .find(|control| control.target == Target::MoreApps)
+    };
+    let shown = hint(&state).expect("shown by default");
+    assert!(shown.rect.y > 900., "under Home's last row");
+    state.preferences.more_apps_hint = MoreAppsHint::Selected;
+    state.focus = Target::Nav(2);
+    assert!(hint(&state).is_none(), "only while an app is selected");
+    state.focus = Target::App("netflix".into());
+    assert!(hint(&state).is_some());
+    state.preferences.more_apps_hint = MoreAppsHint::Off;
+    assert!(hint(&state).is_none());
+    // Settings → General cycles it; a click on the hint opens the drawer.
+    state.preferences.more_apps_hint = MoreAppsHint::Always;
+    state.focus = Target::MoreApps;
+    state.activate();
+    assert_eq!(state.page, Page::Apps);
+    state.open(2);
+    state.focus = Target::Setting(crate::state::MORE_APPS_ROW);
+    state.activate();
+    assert_eq!(state.preferences.more_apps_hint, MoreAppsHint::Selected);
+}
+
+#[test]
+fn clock_position_and_size_move_and_scale_the_glass_clock_without_reaching_the_favourites() {
+    use crate::model::{ClockPosition, ClockSize};
+    // The wallpaper-first Home, as on the owner's TV: the rows stay lowered.
+    let mut state = State::new(Preferences {
+        landing_layout: true,
+        reduced_motion: true,
+        glass_clock: true,
+        ..Preferences::default()
+    });
+    state.note_input();
+    state.set_inventory(demo_inventory(), None);
+    assert_eq!(state.landing(), 1.);
+    let digits = |state: &State| {
+        scene(state)
+            .draw
+            .into_iter()
+            .filter_map(|draw| match draw {
+                crate::renderer::Draw::Text(value, rect, style, ..)
+                    if value.contains(':') && style.size > 90. =>
+                {
+                    Some((rect.y, style.size))
+                }
+                _ => None,
+            })
+            .fold((f32::MAX, 0_f32), |(y, s), (ry, rs)| (y.min(ry), s.max(rs)))
+    };
+    let (default_y, medium) = digits(&state);
+    state.preferences.clock_position = ClockPosition::Higher;
+    assert!(digits(&state).0 < default_y - 40.);
+    state.preferences.clock_position = ClockPosition::Lower;
+    assert!(digits(&state).0 > default_y + 30.);
+    state.preferences.clock_position = ClockPosition::Default;
+    state.preferences.clock_size = ClockSize::Small;
+    assert!(digits(&state).1 < medium * 0.8);
+    state.preferences.clock_size = ClockSize::ExtraLarge;
+    state.preferences.clock_position = ClockPosition::Lower;
+    let (y, size) = digits(&state);
+    assert!(size > medium);
+    // The favourites heading sits at 478.5 + 280 with the rows lowered; the clock stays above.
+    assert!(
+        y + size * 1.02 < 478.5 + crate::state::LANDING_DROP,
+        "{y} + {size}"
+    );
+    // Clock → Position cycles the setting.
+    state.open(2);
+    state.subpage = Some(crate::state::Subpage::Clock);
+    state.focus = Target::ClockPosition;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.preferences.clock_position, ClockPosition::Higher);
 }

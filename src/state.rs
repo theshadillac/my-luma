@@ -23,6 +23,10 @@ pub const GLASS_CLOCK_ROW: usize = 15;
 pub const AMBIENT_ROW: usize = 16;
 /// General settings row: the selected tile's lift.
 pub const TILE_LIFT_ROW: usize = 17;
+/// General settings row: the "More apps" hint under Home's last row.
+pub const MORE_APPS_ROW: usize = 18;
+/// Changing page (Home, the app drawer, Settings) eases the new page in, in seconds.
+pub const PAGE_MOTION: f32 = 0.42;
 /// How long the selected tile takes to grow and lift (and the previous one to settle).
 pub const TILE_LIFT_TIME: f32 = 0.18;
 /// The ambient screen's delay choices, in minutes; 0 is off.
@@ -105,8 +109,12 @@ pub enum Page {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum Target {
+    /// Nav(2) is the gear button (Luma settings); Home and the app drawer have no tabs.
     Nav(usize),
     TvSettings,
+    /// The faint "More apps" hint under Home's last row: opens the app drawer.
+    MoreApps,
+    ClockPosition,
     /// The top bar's Inputs button (Settings → Widgets → Inputs) and its menu's rows.
     InputsButton,
     InputPick(String),
@@ -337,6 +345,10 @@ pub struct State {
     ambient_drawn: Option<(f32, f32, usize, f32)>,
     /// The wake-up transition back to Home, while it runs.
     pub waking: Option<Waking>,
+    /// The page just entered and when, while it eases in.
+    pub page_motion: Option<(Page, Instant)>,
+    /// The favourite the app drawer was opened from, focused again when it closes.
+    drawer_return: Option<Target>,
     /// Until the first app list arrives (or the user presses something), Home's focus belongs on
     /// the first app, not the tab bar it starts on while nothing is loaded yet.
     settle_focus: bool,
@@ -366,6 +378,8 @@ impl State {
             ambient: None,
             ambient_drawn: None,
             waking: None,
+            page_motion: None,
+            drawer_return: None,
             settle_focus: true,
             lift_focus: (
                 Target::Nav(0),
@@ -522,6 +536,12 @@ impl State {
             self.ambient_drawn = ambient;
             self.dirty = true;
         }
+        if let Some((_, since)) = self.page_motion {
+            self.dirty = true;
+            if since.elapsed().as_secs_f32() >= PAGE_MOTION {
+                self.page_motion = None;
+            }
+        }
         if let Some(progress) = self.wake_progress() {
             self.dirty = true;
             if progress >= 1. {
@@ -598,6 +618,7 @@ impl State {
             || self.panel_started.is_some()
             || self.ambient_fading()
             || self.waking.is_some()
+            || self.page_motion.is_some()
             || self.lift_moving()
             || (!self.preferences.reduced_motion
                 && self
@@ -793,6 +814,42 @@ impl State {
         pending
     }
 
+    /// Starts easing in the page just entered (not with reduced motion).
+    fn ease_in_page(&mut self) {
+        self.page_motion = (!self.preferences.reduced_motion).then(|| (self.page, Instant::now()));
+    }
+
+    /// How far the page just entered has eased in, 0 to 1, while it does.
+    pub fn page_motion_progress(&self) -> Option<(Page, f32)> {
+        self.page_motion
+            .map(|(page, since)| (page, (since.elapsed().as_secs_f32() / PAGE_MOTION).min(1.)))
+    }
+
+    /// Down past Home's last row (or the "More apps" hint): the app drawer, which is the Apps
+    /// page, eases up over the wallpaper. Back or Up from its top row returns to the favourite.
+    pub fn open_drawer(&mut self) {
+        let from = matches!(self.focus, Target::App(_)).then(|| self.focus.clone());
+        self.open(1);
+        self.ease_in_page();
+        self.focus = self.first_content();
+        self.drawer_return = from;
+    }
+
+    /// Leaves the app drawer for Home, on the favourite it was opened from where possible.
+    pub fn close_drawer(&mut self) -> Vec<Effect> {
+        let back = self.drawer_return.take();
+        let effects = self.return_home();
+        self.ease_in_page();
+        if let Some(target) = back
+            && let Target::App(id) = &target
+            && self.apps().iter().any(|app| &app.id == id)
+        {
+            self.focus = target;
+            self.settle_focus = false;
+        }
+        effects
+    }
+
     pub fn open(&mut self, index: usize) {
         self.weather.cancel_search();
         self.page = match index {
@@ -800,6 +857,9 @@ impl State {
             2 => Page::Settings,
             _ => Page::Home,
         };
+        if self.page != Page::Apps {
+            self.drawer_return = None;
+        }
         self.focus = Target::Nav(self.page_index());
         self.scroll = 0.;
         if self.page == Page::Home {
@@ -1552,19 +1612,8 @@ impl State {
                             self.focus(Target::App(id), controls);
                         }
                         Direction::Up => {
-                            // The top bar's button above the right half of the screen, if shown.
-                            let right = controls
-                                .iter()
-                                .find(|control| control.target == self.focus)
-                                .is_some_and(|control| control.rect.center().0 >= 960.);
-                            self.focus(
-                                if right && self.inputs_button() {
-                                    Target::InputsButton
-                                } else {
-                                    Target::Nav(0)
-                                },
-                                controls,
-                            )
+                            // Up reaches the gear (Luma settings) at the top right.
+                            self.focus(Target::Nav(2), controls)
                         }
                         Direction::Down => {
                             let x = controls
@@ -1590,6 +1639,9 @@ impl State {
                                 .map(|control| control.target.clone());
                             if let Some(next) = next {
                                 self.focus(next, controls);
+                            } else {
+                                // Nothing below the favourites: Down opens the app drawer.
+                                self.open_drawer();
                             }
                         }
                     }
@@ -1598,7 +1650,7 @@ impl State {
             }
             if self.focus == Target::InputsButton {
                 match direction {
-                    Direction::Left => self.focus(Target::Nav(self.page_index()), controls),
+                    Direction::Left => {}
                     Direction::Right => self.focus(Target::TvSettings, controls),
                     Direction::Up => {}
                     Direction::Down => self.focus(self.first_content(), controls),
@@ -1617,6 +1669,7 @@ impl State {
                     Target::ClockFormat,
                     Target::ClockTimeFormat,
                     Target::ClockSize,
+                    Target::ClockPosition,
                 ]),
                 _ => None,
             };
@@ -1643,6 +1696,7 @@ impl State {
                                 | Target::ClockFormat
                                 | Target::ClockTimeFormat
                                 | Target::ClockSize
+                                | Target::ClockPosition
                                 | Target::DateFormat
                         ) =>
                     {
@@ -1870,23 +1924,27 @@ impl State {
                         );
                         return vec![];
                     }
-                    Direction::Up => {
-                        self.focus(Target::Nav(1), controls);
-                        return vec![];
-                    }
+                    Direction::Up => return self.close_drawer(),
                     _ => {}
                 }
             }
-            if let Target::Nav(index) = self.focus {
-                let next = match direction {
-                    Direction::Left if index > 0 => Some(index - 1),
-                    Direction::Right if index < 2 => Some(index + 1),
-                    _ => None,
-                };
-                if let Some(next) = next {
-                    self.open(next);
-                    return vec![];
-                }
+            // The drawer's top row (filters and search) goes back up to Home.
+            if self.page == Page::Apps
+                && matches!(direction, Direction::Up)
+                && matches!(
+                    self.focus,
+                    Target::Filter(_) | Target::ClearFilter | Target::Search | Target::ClearSearch
+                )
+            {
+                return self.close_drawer();
+            }
+            // Home's top-right buttons come back down to the favourites.
+            if self.page == Page::Home
+                && matches!(direction, Direction::Down)
+                && matches!(self.focus, Target::TvSettings | Target::InputsButton)
+            {
+                self.focus(self.first_content(), controls);
+                return vec![];
             }
             if self.page == Page::Apps
                 && let Target::App(id) = &self.focus
@@ -2021,6 +2079,8 @@ impl State {
         let next = controls
             .iter()
             .filter(|candidate| candidate.target != self.focus)
+            // The "More apps" hint is for the pointer: Down past the last row opens the drawer.
+            .filter(|candidate| candidate.target != Target::MoreApps)
             .filter(|candidate| {
                 self.page != Page::Home
                     || !matches!(candidate.target, Target::App(_))
@@ -2032,7 +2092,7 @@ impl State {
                 if self.overlay.is_none()
                     && matches!(direction, Direction::Up)
                     && candidate.rect.y < 150.
-                    && candidate.target != Target::Nav(self.page_index())
+                    && candidate.target != Target::Nav(2)
                 {
                     return None;
                 }
@@ -2068,6 +2128,15 @@ impl State {
             .map(|(target, _)| target);
         if let Some(next) = next {
             self.focus(next, controls);
+        } else if self.page == Page::Home
+            && self.overlay.is_none()
+            && matches!(direction, Direction::Down)
+            && matches!(
+                self.focus,
+                Target::App(_) | Target::Input(_) | Target::MoreApps
+            )
+        {
+            self.open_drawer();
         }
         vec![]
     }
@@ -2456,7 +2525,15 @@ impl State {
             return self.send_tile(tile);
         }
         match self.focus.clone() {
-            Target::Nav(index) => self.open(index),
+            Target::Nav(index) => {
+                // The gear opens Settings on its first section, ready to move down the list.
+                let from_settings = self.page == Page::Settings;
+                self.open(index);
+                if index == 2 && !from_settings {
+                    self.focus = self.first_content();
+                    self.ease_in_page();
+                }
+            }
             Target::Browse => self.open(1),
             Target::Retry => return vec![Effect::Reload],
             Target::DismissNotice => self.notice = None,
@@ -2474,6 +2551,12 @@ impl State {
                 self.pressed = None;
             }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
+            Target::MoreApps => self.open_drawer(),
+            Target::ClockPosition => {
+                self.preferences.clock_position = self.preferences.clock_position.next();
+                self.dirty = true;
+                return vec![Effect::Save];
+            }
             Target::InputsButton => {
                 if let Some(first) = self.input_choices().into_iter().next() {
                     self.overlay = Some(Overlay::Inputs);
@@ -2771,6 +2854,9 @@ impl State {
                     }
                     GLASS_CLOCK_ROW => self.preferences.glass_clock = !self.preferences.glass_clock,
                     TILE_LIFT_ROW => self.preferences.tile_lift = !self.preferences.tile_lift,
+                    MORE_APPS_ROW => {
+                        self.preferences.more_apps_hint = self.preferences.more_apps_hint.next()
+                    }
                     AMBIENT_ROW => {
                         let current = AMBIENT_CHOICES
                             .iter()
@@ -3141,13 +3227,18 @@ impl State {
             self.scroll = 0.;
             return vec![];
         }
-        if self.page == Page::Apps && matches!(self.focus, Target::Search | Target::ClearSearch) {
+        if self.page == Page::Apps
+            && matches!(self.focus, Target::Search | Target::ClearSearch)
+            && !self.query.is_empty()
+        {
             self.query.clear();
-            self.focus = Target::Nav(1);
+            self.focus = Target::Search;
             self.scroll = 0.;
             return vec![];
         }
-        if self.page != Page::Home {
+        if self.page == Page::Apps {
+            self.close_drawer()
+        } else if self.page != Page::Home {
             self.return_home()
         } else if self.preferences.back_recents {
             self.open_recents()

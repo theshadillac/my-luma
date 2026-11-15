@@ -119,14 +119,7 @@ try {
 
   const german = await scenario('de-home', `${picker},up,enter,home,down`);
   assert.equal(german.preferences.language, 'de');
-  for (const key of [
-    'home',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(german, key, 'de');
   assert.ok(german.ui_text.includes('Netflix'), 'Installed app names stay intact');
   const persisted = await scenario('de-settings', 'settings,down');
@@ -138,15 +131,7 @@ try {
     `${picker},${Array(12).fill('down').join(',')},enter,home,down`,
   );
   assert.equal(chinese.preferences.language, 'zh');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(chinese, key, 'zh');
   assert.ok(chinese.ui_text.includes('Netflix'));
   assert.ok(chinese.ui_text.includes('10月21日星期三'));
@@ -226,15 +211,7 @@ try {
     `${picker},${Array(6).fill('down').join(',')},enter,home,down`,
   );
   assert.equal(portuguese.preferences.language, 'pt');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(portuguese, key, 'pt');
   assert.ok(portuguese.ui_text.includes('QUARTA-FEIRA, 21 DE OUTUBRO'));
   assert.ok(
@@ -293,15 +270,7 @@ try {
   assert.ok(chineseFocused.ui_text.includes('简体中文'));
   const vietnamese = await scenario('vi-home', `${vietnamesePicker},enter,home,down`);
   assert.equal(vietnamese.preferences.language, 'vi');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(vietnamese, key, 'vi');
   assert.ok(vietnamese.ui_text.includes('THỨ TƯ, 21 THÁNG 10'));
   assert.ok(vietnamese.ui_text.includes('Netflix'), 'Installed app names stay intact');
@@ -352,15 +321,7 @@ try {
   assert.ok(traditionalFocused.ui_text.includes('繁體中文'));
   const traditional = await scenario('zh-tw-home', `${traditionalPicker},enter,home,down`);
   assert.equal(traditional.preferences.language, 'zh-tw');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(traditional, key, 'zh-tw');
   assert.ok(traditional.ui_text.includes('10月21日星期三'));
   assert.ok(traditional.ui_text.includes('Netflix'));
@@ -384,7 +345,7 @@ try {
   );
   const catalan = await scenario('ca-home', `${picker},up,up,enter,home,down`);
   assert.equal(catalan.preferences.language, 'ca');
-  for (const key of ['home', 'settings', 'favorites', 'evening', 'setWeatherLocation'])
+  for (const key of ['moreApps', 'favorites', 'evening', 'setWeatherLocation'])
     contains(catalan, key, 'ca');
   assert.ok(catalan.ui_text.includes('DIMECRES, 21 D’OCTUBRE'));
   assert.ok(catalan.ui_text.includes('Netflix'));

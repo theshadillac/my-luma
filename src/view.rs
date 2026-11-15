@@ -6,8 +6,8 @@ use crate::{
     state::{
         AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW,
         HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
-        HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, Overlay, Page, Rect, SYSTEM_SECTION,
-        State, Subpage, TILE_LIFT_ROW, Target, TextField, WIDGETS_SECTION,
+        HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, Page, Rect,
+        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -521,6 +521,7 @@ fn text(size: f32, weight: u16, tracking: f32) -> TextStyle {
 }
 
 pub struct Navigation {
+    #[allow(dead_code)]
     pub surface: Rect,
     pub items: [Rect; 3],
 }
@@ -747,6 +748,23 @@ pub fn scene_with_pill(
     if let Some((notice, _)) = &state.notice {
         toast(&mut out, state, assets, notice);
     }
+    // A page just entered eases in: the app drawer rises, Home settles down from above it,
+    // and Settings fades up.
+    if let Some((page, progress)) = state.page_motion_progress()
+        && state.ambient.is_none()
+        && state.waking.is_none()
+    {
+        let eased = crate::state::ease(progress);
+        out.fade_range(content_start, header_start, eased, 1.);
+        let lift = match page {
+            Page::Apps => 90.,
+            Page::Home => -60.,
+            Page::Settings => 24.,
+        };
+        out.shift_range(content_start, header_start, lift * (1. - eased));
+        let end = out.draw.len();
+        out.fade_range(header_start, end, eased, 1.);
+    }
     if state.ambient.is_some() {
         ambient(&mut out, state, assets, now, content_start);
     } else if let Some(waking) = state.waking {
@@ -768,8 +786,8 @@ fn header(
     state: &State,
     assets: &Assets,
     now: OffsetDateTime,
-    pill_x: f32,
-    pill_width: f32,
+    _pill_x: f32,
+    _pill_width: f32,
 ) {
     let language = state.preferences.language;
     let clock = language.clock(
@@ -777,12 +795,11 @@ fn header(
         state.preferences.hour_24,
         state.preferences.show_seconds,
     );
-    let layout = navigation(assets, language);
-    // Centred on the navigation bar at every size, and never reaching into it.
+    // No tabs: the plain clock keeps the top-left corner, sized by Clock size.
     let style = assets.fit_text(
         &clock,
         text(state.preferences.clock_size.font_size(), 500, -0.03),
-        layout.surface.x - 84. - 24.,
+        760.,
     );
     // 6/5 rather than 1.2 keeps Medium's original 28.8 px line exactly.
     let height = style.size * 6. / 5.;
@@ -790,59 +807,43 @@ fn header(
     if !(state.preferences.glass_clock && state.page == Page::Home) {
         out.text(
             clock,
-            Rect::new(84., 76.8 - height / 2., layout.surface.x - 84., height),
+            Rect::new(84., 76.8 - height / 2., 760., height),
             style,
             WHITE,
             false,
         );
     }
-    let nav = layout.surface;
-    out.shadow(nav, 48., 18., 4., 0.06);
-    out.shape(nav, 48., c(0x171c20, 0.72));
-    out.border(nav, 48., 1., c(0xffffff, 0.07));
-    let pill = Rect::new(pill_x, 52.3, pill_width, 49.);
-    out.draw.push(Draw::RoundedGradient(
-        pill,
-        32.,
-        c(0xfafafa, 1.),
-        c(0xe5e5e5, 1.),
-    ));
-    if matches!(state.focus, Target::Nav(_)) && !state.pointer {
-        // Follow the pill's animated position and width instead of jumping to
-        // the destination tab's control rectangle.
-        out.border(pill.inset(-5.), 37., 2., c(0xf0f0f0, 0.95));
-    }
-    for (index, key) in ["home", "apps", "settings"].into_iter().enumerate() {
-        let rect = layout.items[index];
-        let active = state.page_index() == index;
-        // The focus ring is hidden for the pointer, so a hovered inactive tab gets a
-        // faint pill: clearly hovered, never mistaken for the active page.
-        let hovered = !active && state.pointer && state.hover == Some(Target::Nav(index));
-        if hovered {
-            out.shape(rect, 32., c(0xffffff, 0.14));
-        }
-        out.text(
-            language.t(key),
-            Rect::new(rect.x, 64.3, rect.w, 25.),
-            text(20.8, 550, -0.02),
-            if active {
-                c(0x2c2c2c, 1.)
-            } else if hovered {
-                WHITE
-            } else {
-                c(0xeeeeee, 0.73)
-            },
-            true,
-        );
-        out.control(Target::Nav(index), rect, false);
+    // The app drawer keeps its top clear: Up from its first row goes back to Home.
+    if state.page == Page::Apps {
+        return;
     }
     let button_size = 60.;
-    let rect = Rect::new(
-        1836. - button_size,
-        nav.y + (nav.h - button_size) / 2.,
-        button_size,
-        button_size,
+    let y = 42.5 + (68.6 - button_size) / 2.;
+    let ink = |focused: bool| {
+        if focused {
+            c(0x2c2c2c, 1.)
+        } else {
+            c(0xeeeeee, 0.73)
+        }
+    };
+    // The gear (Luma settings) at the top right, then LG's settings and Inputs to its left.
+    let gear = Rect::new(1836. - button_size, y, button_size, button_size);
+    let focused = state.focus == Target::Nav(2) && !state.pointer;
+    let hovered = state.pointer && state.hover == Some(Target::Nav(2));
+    out.pill(gear, focused || hovered, state.page == Page::Settings);
+    out.icon(
+        assets,
+        "gear",
+        Rect::new(
+            gear.x + (gear.w - 26.) / 2.,
+            gear.y + (gear.h - 26.) / 2.,
+            26.,
+            26.,
+        ),
+        ink(focused || hovered),
     );
+    out.control(Target::Nav(2), gear, false);
+    let rect = Rect::new(gear.x - 16. - button_size, y, button_size, button_size);
     let focused = state.focus == Target::TvSettings;
     out.pill(rect, focused, false);
     out.icon(
@@ -854,11 +855,7 @@ fn header(
             23.2,
             23.2,
         ),
-        if focused {
-            c(0x2c2c2c, 1.)
-        } else {
-            c(0xeeeeee, 0.73)
-        },
+        ink(focused),
     );
     out.control(Target::TvSettings, rect, false);
     if state.inputs_button() {
@@ -1471,13 +1468,29 @@ fn glass_clock(
         0.
     };
     let room = (bottom - top - date_height - forecast_height).max(80.);
-    // The digits' line box is about 1.02 × the size; cap at 330 px.
-    let size = (room / 1.02).clamp(96., 330.);
+    // The digits' line box is about 1.02 × the size; cap at 330 px. Clock size scales that,
+    // and without tabs a larger clock may rise toward the top edge, never into the favourites.
+    let scale = match state.preferences.clock_size {
+        crate::model::ClockSize::Small => 0.72,
+        crate::model::ClockSize::Medium => 1.,
+        crate::model::ClockSize::Large => 1.16,
+        crate::model::ClockSize::ExtraLarge => 1.32,
+    };
+    const CEILING: f32 = 56.;
+    let largest = ((bottom - CEILING - date_height - forecast_height) / 1.02).max(80.);
+    let size = ((room / 1.02).clamp(96., 330.) * scale).min(largest);
     let style = text(size, 600, -0.045).leading(1.0);
     let fitted = assets.fit_text(&clock, style, 1500.);
     let clock_height = fitted.size * 1.02;
     let block = date_height + clock_height + forecast_height;
-    let home_y = top + (bottom - top - block).max(0.) / 2.;
+    let centred = top + (bottom - top - block) / 2.;
+    let home_y = (centred
+        + match state.preferences.clock_position {
+            crate::model::ClockPosition::Higher => -72.,
+            crate::model::ClockPosition::Default => 0.,
+            crate::model::ClockPosition::Lower => 52.,
+        })
+    .clamp(CEILING, (bottom - block).max(CEILING));
     // The block's width: the widest of date, time and forecast.
     let date_width = if state.preferences.show_date {
         assets.width(
@@ -1999,6 +2012,56 @@ fn home_content(out: &mut Scene, state: &State, assets: &Assets) {
     if landing > 0. {
         out.fade(inputs_start, 1. - landing, 1.);
     }
+    more_apps_hint(
+        out,
+        state,
+        assets,
+        if inputs.is_empty() {
+            544.8 + grid_height - s
+        } else {
+            input_y + 58.4 + inputs.len().div_ceil(COLUMNS) as f32 * 126.4 - 22.4
+        },
+    );
+}
+
+/// The faint "More apps" and chevron under Home's last row: Down (or a click) opens the drawer.
+fn more_apps_hint(out: &mut Scene, state: &State, assets: &Assets, bottom: f32) {
+    use crate::model::MoreAppsHint;
+    let on_app = matches!(state.focus, Target::App(_) | Target::Input(_)) && !state.pointer;
+    let shown = match state.preferences.more_apps_hint {
+        MoreAppsHint::Always => true,
+        MoreAppsHint::Selected => on_app,
+        MoreAppsHint::Off => false,
+    };
+    if !shown || state.moving.is_some() || state.apps().is_empty() {
+        return;
+    }
+    let hovered = state.pointer && state.hover == Some(Target::MoreApps);
+    let alpha = if hovered {
+        0.7
+    } else if on_app || state.focus == Target::MoreApps {
+        0.36
+    } else {
+        0.24
+    };
+    let label = state.preferences.language.t("moreApps");
+    let style = text(21., 600, 0.04);
+    let width = assets.width(label, style) + 48.;
+    let rect = Rect::new(960. - width / 2., bottom + 24., width, 58.);
+    out.text(
+        label,
+        Rect::new(rect.x, rect.y + 2., rect.w, 26.),
+        style,
+        c(0xffffff, alpha),
+        true,
+    );
+    out.icon(
+        assets,
+        "chevron-down",
+        Rect::new(960. - 12., rect.y + 30., 24., 24.),
+        c(0xffffff, alpha),
+    );
+    out.control(Target::MoreApps, rect, false);
 }
 
 struct WeatherSummary {
@@ -3141,6 +3204,13 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     }),
                     false,
                 ),
+                (
+                    MORE_APPS_ROW,
+                    "moreAppsHint",
+                    "grid",
+                    Some(language.t(state.preferences.more_apps_hint.label_key())),
+                    false,
+                ),
             ]
             .into_iter()
             .enumerate()
@@ -3647,6 +3717,11 @@ fn clock_settings(out: &mut Scene, state: &State, assets: &Assets) {
             Target::ClockSize,
             "clockSize",
             language.t(state.preferences.clock_size.label_key()),
+        ),
+        (
+            Target::ClockPosition,
+            "clockPosition",
+            language.t(state.preferences.clock_position.label_key()),
         ),
     ]
     .into_iter()

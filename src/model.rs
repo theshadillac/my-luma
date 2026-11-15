@@ -247,6 +247,78 @@ impl ClockSize {
     }
 }
 
+/// Where Home's clock block sits vertically (fork option, glass clock).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockPosition {
+    Higher,
+    #[default]
+    Default,
+    Lower,
+}
+
+impl ClockPosition {
+    pub const ALL: [Self; 3] = [Self::Higher, Self::Default, Self::Lower];
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Higher => "positionHigher",
+            Self::Default => "positionDefault",
+            Self::Lower => "positionLower",
+        }
+    }
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|p| *p == self).unwrap_or(1) + 1) % Self::ALL.len()]
+    }
+}
+
+fn deserialize_clock_position<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ClockPosition, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("higher") => ClockPosition::Higher,
+            Some("lower") => ClockPosition::Lower,
+            _ => ClockPosition::Default,
+        },
+    )
+}
+
+/// When Home shows the faint "More apps" hint under its last row (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MoreAppsHint {
+    #[default]
+    Always,
+    Selected,
+    Off,
+}
+
+impl MoreAppsHint {
+    pub const ALL: [Self; 3] = [Self::Always, Self::Selected, Self::Off];
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Always => "hintAlways",
+            Self::Selected => "hintSelected",
+            Self::Off => "stateOff",
+        }
+    }
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|p| *p == self).unwrap_or(0) + 1) % Self::ALL.len()]
+    }
+}
+
+fn deserialize_more_apps_hint<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<MoreAppsHint, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("selected") => MoreAppsHint::Selected,
+            Some("off") => MoreAppsHint::Off,
+            _ => MoreAppsHint::Always,
+        },
+    )
+}
+
 /// Unknown or missing values keep the original medium clock instead of rejecting preferences.
 fn deserialize_clock_size<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -320,6 +392,12 @@ pub struct Preferences {
     pub ambient_minutes: u8,
     /// The selected app tile grows and lifts a little (fork option, on by default).
     pub tile_lift: bool,
+    /// Where Home's clock block sits (fork option).
+    #[serde(deserialize_with = "deserialize_clock_position")]
+    pub clock_position: ClockPosition,
+    /// The faint "More apps" hint under Home's last row (fork option).
+    #[serde(deserialize_with = "deserialize_more_apps_hint")]
+    pub more_apps_hint: MoreAppsHint,
 }
 
 impl Default for Preferences {
@@ -360,6 +438,8 @@ impl Default for Preferences {
             show_forecast: false,
             ambient_minutes: 0,
             tile_lift: true,
+            clock_position: ClockPosition::Default,
+            more_apps_hint: MoreAppsHint::Always,
         }
     }
 }
