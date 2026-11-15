@@ -2767,19 +2767,17 @@ fn language_list_scrolls_under_fixed_ui_without_clipping_or_fades() {
             )
         })
         .unwrap();
-    for key in ["interface"] {
-        let label = state.preferences.language.t(key);
-        let fixed = rendered
-            .draw
-            .iter()
-            .position(|draw| {
-                matches!(draw,
-                    Draw::Text(text, ..) if text == label
-                )
-            })
-            .unwrap();
-        assert!(fixed > last_language);
-    }
+    let label = state.preferences.language.t("interface");
+    let fixed = rendered
+        .draw
+        .iter()
+        .position(|draw| {
+            matches!(draw,
+                Draw::Text(text, ..) if text == label
+            )
+        })
+        .unwrap();
+    assert!(fixed > last_language);
     let nav = rendered
         .controls
         .iter()
