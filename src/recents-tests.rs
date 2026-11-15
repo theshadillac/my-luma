@@ -303,18 +303,14 @@ fn a_short_back_on_home_opens_recents_and_the_next_press_restores_the_app() {
 }
 
 #[test]
-fn home_header_has_only_the_gear_and_tv_settings() {
+fn home_header_has_only_the_gear() {
     let state = ready();
     let header: Vec<_> = controls(&state)
         .into_iter()
         .filter(|control| control.rect.y < 120.)
         .collect();
-    assert_eq!(header.len(), 2);
-    assert!(
-        header
-            .iter()
-            .all(|control| matches!(control.target, Target::Nav(_) | Target::TvSettings))
-    );
+    assert_eq!(header.len(), 1);
+    assert_eq!(header[0].target, Target::Nav(2));
 }
 
 #[test]

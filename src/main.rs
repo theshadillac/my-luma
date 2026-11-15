@@ -319,6 +319,7 @@ fn effects(
                     platform.send(Request::Refresh);
                 }
             }
+            Effect::System(call) => platform.send(Request::System(call)),
             Effect::Launch(id) => {
                 if scroll_preview::is_placeholder(&id) {
                     state.notify(state.preferences.language.t("scrollTestOnly"));
@@ -1082,13 +1083,14 @@ fn run() -> Result<(), String> {
             && state.deleting_wallpaper.is_none()
             && !state.animating()
             && (startup_cycle
+                || state.day_night_due(now)
                 || wallpaper_cycle::due(
                     state.preferences.wallpaper_cycle,
                     state.preferences.wallpaper_changed,
                     unix,
                 ))
         {
-            let cycled = state.cycle_wallpaper(unix);
+            let cycled = state.cycle_wallpaper_at(now);
             if startup_cycle {
                 startup_cycle_pending = false;
             }
@@ -1165,6 +1167,19 @@ fn run() -> Result<(), String> {
                     if let Err(error) = input_refresh.completed(Instant::now(), result) {
                         eprintln!("Luma HDMI refresh: {error}");
                     }
+                }
+                Response::System(call, result) => {
+                    let follow = state.system_response(call, result);
+                    running &= effects(
+                        follow,
+                        &mut state,
+                        &platform,
+                        &preferences_path,
+                        &weather_service,
+                        &wallpaper_service,
+                        &webhook_service,
+                        &updates,
+                    );
                 }
                 Response::Launched(result) => {
                     state.launching = false;

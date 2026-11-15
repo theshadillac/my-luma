@@ -4,10 +4,11 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, GLASS_CLOCK_ROW,
-        HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
-        HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, Page, Rect,
-        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, WIDGETS_SECTION,
+        AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, DAY_NIGHT_ROW,
+        GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT,
+        HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay,
+        PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION, State, Subpage,
+        TILE_LIFT_ROW, Target, TextField, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -282,6 +283,22 @@ impl Scene {
                 | Draw::Image(_, rect, ..)
                 | Draw::TintedImage(_, rect, ..)
                 | Draw::AppImage(_, rect, ..) => rect.y += dy,
+                Draw::Clip(_) | Draw::EdgeFade(_) | Draw::EdgeFadeX(_) => {}
+            }
+        }
+    }
+
+    /// Moves a span of draws right by `dx` (left when negative). Clips and edge fades stay put.
+    fn shift_range_x(&mut self, from: usize, to: usize, dx: f32) {
+        for draw in &mut self.draw[from..to] {
+            match draw {
+                Draw::Shape(rect, ..)
+                | Draw::RoundedGradient(rect, ..)
+                | Draw::Shadow(rect, ..)
+                | Draw::Text(_, rect, ..)
+                | Draw::Image(_, rect, ..)
+                | Draw::TintedImage(_, rect, ..)
+                | Draw::AppImage(_, rect, ..) => rect.x += dx,
                 Draw::Clip(_) | Draw::EdgeFade(_) | Draw::EdgeFadeX(_) => {}
             }
         }
@@ -577,6 +594,7 @@ pub fn scene_with_pill(
             false,
         );
     }
+    weather_effect(&mut out, state, now);
     let content_start = out.draw.len();
     if recents_replaces_page(state) {
         out.shape(
@@ -647,6 +665,7 @@ pub fn scene_with_pill(
         | Overlay::BackgroundDelete { .. }
         | Overlay::Keyboard
         | Overlay::Inputs
+        | Overlay::Quick
         | Overlay::WallpaperUpload
         | Overlay::TileEditor),
     ) = &state.overlay
@@ -684,7 +703,13 @@ pub fn scene_with_pill(
         };
         out.controls.clear();
         let start = out.draw.len();
-        out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x080b12, 0.70));
+        // The quick panel dims less: Home stays visible beside it.
+        let dim = if matches!(overlay, Overlay::Quick) {
+            0.38
+        } else {
+            0.70
+        };
+        out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x080b12, dim));
         if matches!(
             overlay,
             Overlay::Options { .. } | Overlay::BackgroundOptions { .. }
@@ -703,6 +728,7 @@ pub fn scene_with_pill(
             }
             Overlay::Keyboard => keyboard(&mut out, state, assets),
             Overlay::Inputs => inputs_menu(&mut out, state, assets, anchor),
+            Overlay::Quick => quick_panel(&mut out, state, assets),
             Overlay::WallpaperUpload => wallpaper_upload(&mut out, state, assets),
             Overlay::TileEditor => tile_editor(&mut out, state, assets),
             Overlay::SystemKeyboard | Overlay::Recents { .. } => {}
@@ -843,38 +869,7 @@ fn header(
         ink(focused || hovered),
     );
     out.control(Target::Nav(2), gear, false);
-    let rect = Rect::new(gear.x - 16. - button_size, y, button_size, button_size);
-    let focused = state.focus == Target::TvSettings;
-    out.pill(rect, focused, false);
-    out.icon(
-        assets,
-        "settings",
-        Rect::new(
-            rect.x + (rect.w - 23.2) / 2.,
-            rect.y + (rect.h - 23.2) / 2.,
-            23.2,
-            23.2,
-        ),
-        ink(focused),
-    );
-    out.control(Target::TvSettings, rect, false);
-    if state.inputs_button() {
-        let button = inputs_button_rect(assets, language, rect);
-        let lit = state.focus == Target::InputsButton;
-        inputs_button(out, assets, language, button, lit);
-        out.control(Target::InputsButton, button, false);
-    }
-}
-
-/// The top bar's Inputs button, left of the TV settings button: an icon and its label.
-fn inputs_button_rect(assets: &Assets, language: Language, settings: Rect) -> Rect {
-    let width = 20. + 24. + 10. + assets.width(language.t("inputs"), text(20.8, 550, -0.02)) + 24.;
-    Rect::new(
-        settings.x - 16. - width,
-        settings.y,
-        width.ceil(),
-        settings.h,
-    )
+    // TV settings and Inputs now live in the quick settings panel behind the gear.
 }
 
 fn inputs_button(out: &mut Scene, assets: &Assets, language: Language, rect: Rect, lit: bool) {
@@ -906,6 +901,211 @@ fn inputs_button(out: &mut Scene, assets: &Assets, language: Language, rect: Rec
 
 /// The Inputs menu under its button: Live TV, then each input with whether a device is plugged
 /// in. OK switches to it; Back returns to the button.
+/// Light rain or snow over the wallpaper, behind everything else. Each drop's place comes
+/// from its index and the time alone, so nothing is stored between frames.
+fn weather_effect(out: &mut Scene, state: &State, now: OffsetDateTime) {
+    use crate::state::Precipitation;
+    let Some(kind) = state.precipitation() else {
+        return;
+    };
+    // Seconds within the hour keep the float precise; drops simply wrap every hour.
+    let t = if state.preferences.reduced_motion {
+        0.
+    } else {
+        now.unix_timestamp().rem_euclid(3600) as f32 + now.nanosecond() as f32 / 1e9
+    };
+    let hash = |n: u32| -> f32 {
+        let mut x = n.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x2C1B_3C6D);
+        x ^= x >> 12;
+        (x % 10_000) as f32 / 10_000.
+    };
+    match kind {
+        Precipitation::Rain => {
+            for i in 0..140u32 {
+                let speed = 900. + hash(i * 3) * 500.;
+                let length = 22. + hash(i * 5) * 18.;
+                let y = (hash(i * 7) * 1180. + t * speed).rem_euclid(1180.) - 100.;
+                let x = (hash(i * 11) * 1980. - t * 60.).rem_euclid(1980.) - 30.;
+                out.shape(
+                    Rect::new(x, y, 1.6, length),
+                    0.8,
+                    c(0xd8e4f2, 0.10 + hash(i * 13) * 0.12),
+                );
+            }
+        }
+        Precipitation::Snow => {
+            for i in 0..110u32 {
+                let speed = 28. + hash(i * 3) * 46.;
+                let size = 2.5 + hash(i * 5) * 4.;
+                let y = (hash(i * 7) * 1140. + t * speed).rem_euclid(1140.) - 30.;
+                let sway = (t * (0.4 + hash(i * 17) * 0.5) + hash(i * 19) * 6.3).sin() * 18.;
+                let x = (hash(i * 11) * 1920. + sway).rem_euclid(1920.);
+                out.shape(
+                    Rect::new(x, y, size, size),
+                    size / 2.,
+                    c(0xffffff, 0.35 + hash(i * 13) * 0.35),
+                );
+            }
+        }
+    }
+}
+
+/// The quick settings panel: a frosted sheet sliding in from the right, two buttons a row,
+/// with "All settings" at the bottom.
+fn quick_panel(out: &mut Scene, state: &State, assets: &Assets) {
+    use crate::model::QuickKey;
+    let language = state.preferences.language;
+    let start = out.draw.len();
+    let panel = Rect::new(1240., 40., 640., 1000.);
+    out.modal = Some(panel);
+    out.shadow(panel, 36., 120., 25., 0.45);
+    out.draw.push(Draw::RoundedGradient(
+        panel,
+        36.,
+        c(0x34383b, 0.93),
+        c(0x24282d, 0.97),
+    ));
+    out.border(panel, 36., 1., c(0xffffff, 0.14));
+    out.text(
+        language.t("quickSettings"),
+        Rect::new(panel.x + 44., panel.y + 40., panel.w - 88., 40.),
+        text(30., 600, -0.01),
+        WHITE,
+        false,
+    );
+    let (pad, gap, tile_h) = (44., 20., 172.);
+    let tile_w = (panel.w - pad * 2. - gap) / 2.;
+    let keys = state.quick_keys();
+    let value = |key: QuickKey| -> Option<String> {
+        match key {
+            QuickKey::Picture => Some(
+                state
+                    .tv_picture
+                    .as_deref()
+                    .map(|mode| {
+                        crate::state::PICTURE_MODES
+                            .iter()
+                            .find(|(id, _)| *id == mode)
+                            .map_or(mode.to_owned(), |(_, name)| (*name).to_owned())
+                    })
+                    .unwrap_or_else(|| language.t("tapToChange").to_owned()),
+            ),
+            QuickKey::Sound => Some(
+                match state.tv_sound.as_deref() {
+                    Some("external_arc") => language.t("soundReceiver"),
+                    Some("tv_speaker") => language.t("soundTvSpeakers"),
+                    Some(other) => other,
+                    None => language.t("tapToChange"),
+                }
+                .to_owned(),
+            ),
+            _ => None,
+        }
+    };
+    let lit = |target: &Target| {
+        (state.focus == *target && !state.pointer)
+            || (state.pointer && state.hover.as_ref() == Some(target))
+    };
+    for (index, key) in keys.iter().enumerate() {
+        let rect = Rect::new(
+            panel.x + pad + (index % 2) as f32 * (tile_w + gap),
+            panel.y + 112. + (index / 2) as f32 * (tile_h + gap),
+            tile_w,
+            tile_h,
+        );
+        let target = Target::Quick(*key);
+        let focused = lit(&target);
+        if focused {
+            out.draw.push(Draw::RoundedGradient(
+                rect,
+                26.,
+                c(0xfafafa, 1.),
+                c(0xe5e5e5, 1.),
+            ));
+        } else {
+            out.shape(rect, 26., c(0xffffff, 0.09));
+            out.border(rect, 26., 1., c(0xffffff, 0.08));
+        }
+        let ink = if focused { c(0x242424, 1.) } else { WHITE };
+        let soft = if focused {
+            c(0x242424, 0.62)
+        } else {
+            c(0xffffff, 0.62)
+        };
+        out.icon(
+            assets,
+            key.icon(),
+            Rect::new(rect.x + 26., rect.y + 26., 36., 36.),
+            ink,
+        );
+        out.text(
+            language.t(key.label_key()),
+            Rect::new(rect.x + 26., rect.y + 86., rect.w - 52., 30.),
+            text(22., 600, 0.),
+            ink,
+            false,
+        );
+        if let Some(value) = value(*key) {
+            let style = assets.fit_text(&value, text(19., 500, 0.), rect.w - 52.);
+            out.text(
+                value,
+                Rect::new(rect.x + 26., rect.y + 120., rect.w - 52., 26.),
+                style,
+                soft,
+                false,
+            );
+        }
+        out.control(target, rect, false);
+    }
+    let rows = keys.len().div_ceil(2) as f32;
+    let all = Rect::new(
+        panel.x + pad,
+        panel.y + 112. + rows * (tile_h + gap) + 8.,
+        panel.w - pad * 2.,
+        84.,
+    );
+    let focused = lit(&Target::QuickAll);
+    if focused {
+        out.draw.push(Draw::RoundedGradient(
+            all,
+            22.,
+            c(0xfafafa, 1.),
+            c(0xe5e5e5, 1.),
+        ));
+    } else {
+        out.shape(all, 22., c(0xffffff, 0.09));
+    }
+    let ink = if focused { c(0x242424, 1.) } else { WHITE };
+    out.icon(
+        assets,
+        "gear",
+        Rect::new(all.x + 26., all.y + 27., 30., 30.),
+        ink,
+    );
+    out.text(
+        language.t("allSettings"),
+        Rect::new(all.x + 72., all.y + 26., all.w - 140., 32.),
+        text(23., 600, 0.),
+        ink,
+        false,
+    );
+    out.icon(
+        assets,
+        "right",
+        Rect::new(all.x + all.w - 52., all.y + 30., 24., 24.),
+        ink,
+    );
+    out.control(Target::QuickAll, all, false);
+    // It slides in from the right edge as it opens.
+    if let Some(opened) = state.panel_started {
+        let progress = crate::state::ease((opened.elapsed().as_secs_f32() / 0.32).min(1.));
+        let end = out.draw.len();
+        out.shift_range_x(start, end, 120. * (1. - progress));
+    }
+}
+
 fn inputs_menu(out: &mut Scene, state: &State, assets: &Assets, button: Option<Rect>) {
     let language = state.preferences.language;
     let choices = state.input_choices();
@@ -1330,7 +1530,17 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     if state.preferences.glass_clock {
         // While the ambient screen shows or wakes, it draws the clock block itself.
         if state.ambient.is_none() && (state.waking.is_none() || state.preferences.reduced_motion) {
+            // No tabs above it any more: the clock's soft halo may fade out all the way to the
+            // top edge instead of being cut off where the old tab bar ended.
+            let viewport = state.content_viewport();
+            out.draw.push(Draw::Clip(Some(Rect::new(
+                0.,
+                0.,
+                1920.,
+                viewport.y + viewport.h,
+            ))));
             glass_clock(out, state, assets, now, None, 0., 1.);
+            out.draw.push(Draw::Clip(Some(viewport)));
         }
     } else {
         home_heading(out, state, assets, now);
@@ -1530,6 +1740,24 @@ fn glass_clock(
             (a.1 + (b.1 - a.1) * glide) * away,
         )
     });
+    // OLED pixel shift: on Home (not Ambient, which moves the block anyway) the block steps
+    // through eight spots a few pixels apart, one every three minutes.
+    let (dx, dy) = if stops.is_none() && state.preferences.pixel_shift {
+        const SPOTS: [(f32, f32); 8] = [
+            (0., 0.),
+            (4., -3.),
+            (-3., 4.),
+            (5., 2.),
+            (-4., -4.),
+            (2., 5.),
+            (-5., 1.),
+            (1., -5.),
+        ];
+        let (x, y) = SPOTS[(now.unix_timestamp() / 180).rem_euclid(8) as usize];
+        (dx + x, dy + y)
+    } else {
+        (dx, dy)
+    };
     let mut y = home_y + dy;
     // A soft dark halo behind the date and time keeps them readable on bright wallpapers;
     // on dark ones it disappears into the picture.
@@ -1537,14 +1765,14 @@ fn glass_clock(
     out.shadow(
         Rect::new(
             960. + dx - block_width / 2. + 40.,
-            y + 20.,
+            y + 36.,
             block_width - 80.,
-            date_height + clock_height - 40.,
+            date_height + clock_height - 56.,
         ),
         160.,
         170.,
         0.,
-        0.42 * halo,
+        0.36 * halo,
     );
     if state.preferences.show_date {
         let date = state.preferences.date_format.format(language, now);
@@ -2901,6 +3129,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Shortcuts) => language.t("shortcuts"),
                 Some(Subpage::Inputs) => language.t("inputs"),
                 Some(Subpage::Clock) => language.t("clock"),
+                Some(Subpage::QuickPanel) => language.t("quickSettings"),
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::TextRendering) => language.t("textRendering"),
                 _ => "",
@@ -2983,6 +3212,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 | Subpage::Date
                 | Subpage::AppNames
                 | Subpage::Clock
+                | Subpage::QuickPanel
         ) {
             match subpage {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
@@ -2993,6 +3223,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 Subpage::Date => date_settings(out, state, assets),
                 Subpage::AppNames => app_name_settings(out, state, assets),
                 Subpage::Clock => clock_settings(out, state, assets),
+                Subpage::QuickPanel => quick_panel_settings(out, state, assets),
                 _ => unreachable!(),
             }
             if let Some(opened) = state.panel_started {
@@ -3083,7 +3314,8 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             | Subpage::Greeting
             | Subpage::Date
             | Subpage::AppNames
-            | Subpage::Clock => {
+            | Subpage::Clock
+            | Subpage::QuickPanel => {
                 unreachable!()
             }
             Subpage::Language => Language::ALL
@@ -3209,6 +3441,40 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     "moreAppsHint",
                     "grid",
                     Some(language.t(state.preferences.more_apps_hint.label_key())),
+                    false,
+                ),
+                (QUICK_PANEL_ROW, "quickSettings", "gear", None, true),
+                (
+                    PIXEL_SHIFT_ROW,
+                    "pixelShift",
+                    "motion",
+                    Some(if state.preferences.pixel_shift {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
+                    false,
+                ),
+                (
+                    WEATHER_EFFECTS_ROW,
+                    "weatherEffects",
+                    "weather-snow",
+                    Some(if state.preferences.weather_effects {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
+                    false,
+                ),
+                (
+                    DAY_NIGHT_ROW,
+                    "dayNightWallpapers",
+                    "weather-moon",
+                    Some(if state.preferences.day_night {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
                     false,
                 ),
             ]
@@ -3349,6 +3615,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     let check = Rect::new(rect.x + rect.w - 28., rect.y + rect.h - 28., 21.6, 21.6);
                     out.shape(check, 10.8, c(0xf3f3f3, 1.));
                     out.icon(assets, "check", check.inset(3.6), c(0x333333, 1.));
+                }
+                // A small moon marks wallpapers kept for night.
+                if state
+                    .preferences
+                    .night_wallpapers
+                    .iter()
+                    .any(|item| item == id)
+                {
+                    let badge = Rect::new(rect.x + 12., rect.y + 12., 34., 34.);
+                    out.shape(badge, 17., c(0x101520, 0.72));
+                    out.icon(assets, "weather-moon", badge.inset(8.), c(0xffffff, 0.92));
                 }
                 if state.focus == Target::Background(index) {
                     out.ring(rect, 16.);
@@ -3687,6 +3964,32 @@ fn date_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 description: None,
                 selected: false,
                 chevron,
+            },
+        );
+    }
+}
+
+/// Settings → General → Quick settings: switch each panel button on or off.
+fn quick_panel_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    for (index, key) in crate::model::QuickKey::ALL.into_iter().enumerate() {
+        row(
+            out,
+            state,
+            assets,
+            Row {
+                target: Target::QuickToggle(key),
+                rect: Rect::new(640., 164.8 + index as f32 * 84. - state.scroll, 1120., 72.),
+                title: language.t(key.label_key()),
+                icon: Some(key.icon()),
+                value: Some(if state.preferences.quick_shown(key) {
+                    language.t("stateOn")
+                } else {
+                    language.t("stateOff")
+                }),
+                description: None,
+                selected: false,
+                chevron: false,
             },
         );
     }
@@ -4141,7 +4444,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     let height = if shortcut {
         176.
     } else if background {
-        if deletable { 176. } else { 99.2 }
+        if deletable { 252.8 } else { 176. }
     } else if deletable {
         329.6
     } else {
@@ -4189,7 +4492,18 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
             (Target::TileRemove(id.into()), language.t("removeTile")),
         ]
     } else if background {
-        let mut actions = vec![(Target::UseBackground, language.t("useBackground"))];
+        let night = state
+            .preferences
+            .night_wallpapers
+            .iter()
+            .any(|item| item == id);
+        let mut actions = vec![
+            (Target::UseBackground, language.t("useBackground")),
+            (
+                Target::NightBackground,
+                language.t(if night { "useInDaytime" } else { "useAtNight" }),
+            ),
+        ];
         if deletable {
             actions.push((Target::DeleteBackground, language.t("deleteBackground")));
         }

@@ -16,6 +16,7 @@ fn reading() -> Reading {
         code: 2,
         is_day: true,
         daily: None,
+        sun: None,
     }
 }
 fn preferences() -> Preferences {

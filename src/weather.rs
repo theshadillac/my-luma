@@ -127,6 +127,9 @@ pub struct Reading {
     /// The next five days, today first, when the service returned them.
     #[serde(default)]
     pub daily: Option<[Day; 5]>,
+    /// Today's sunrise and sunset, Unix seconds, when the service returned them.
+    #[serde(default)]
+    pub sun: Option<(i64, i64)>,
 }
 
 /// One day of the 5-day forecast, in Celsius like the current reading.
@@ -148,6 +151,14 @@ impl Day {
             && (-100.0..=70.0).contains(&self.low)
             && self.low <= self.high
     }
+}
+
+/// Today's sunrise and sunset from Open-Meteo's `daily` block, when both are sensible.
+pub fn parse_sun(value: &Value) -> Option<(i64, i64)> {
+    let daily = &value["daily"];
+    let rise = daily["sunrise"].as_array()?.first()?.as_i64()?;
+    let set = daily["sunset"].as_array()?.first()?.as_i64()?;
+    (rise < set && set - rise < 86_400).then_some((rise, set))
 }
 
 /// Reads Open-Meteo's `daily` block (unixtime dates at local midnight plus the location's
@@ -207,6 +218,7 @@ pub fn parse_reading(value: &Value) -> Result<Reading, String> {
             code: code as u8,
             is_day: day == 1.,
             daily: parse_daily(value),
+            sun: parse_sun(value),
         };
         if reading.valid() {
             return Ok(reading);
@@ -258,6 +270,7 @@ pub fn day_condition(day: Day) -> Condition {
         code: day.code,
         is_day: true,
         daily: None,
+        sun: None,
     })
 }
 pub fn condition(reading: Reading) -> Condition {

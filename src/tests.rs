@@ -205,7 +205,11 @@ fn home_relaunch_resets_scrolled_favorites_and_keeps_remote_routes() {
         Page::Home,
         "No tabs: Left stays on Home's buttons"
     );
-    assert_eq!(state.focus, Target::TvSettings);
+    assert_eq!(
+        state.focus,
+        Target::Nav(2),
+        "the gear is the only top button"
+    );
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::App(favorites[0].clone()));
 }
@@ -679,9 +683,13 @@ fn down_past_homes_last_row_opens_the_app_drawer_and_back_returns_to_the_favouri
     assert_eq!(state.page, Page::Apps);
     state.back();
     assert_eq!(state.focus, Target::App("youtube.leanback.v4".into()));
-    // The gear opens Settings on its first section; Back steps out through the gear.
+    // The gear opens the quick panel; All settings opens Settings on its first section.
     state.focus = Target::Nav(2);
     state.activate();
+    assert!(matches!(state.overlay, Some(Overlay::Quick)));
+    state.focus = Target::QuickAll;
+    state.activate();
+    assert!(state.overlay.is_none());
     assert_eq!(state.page, Page::Settings);
     assert_eq!(state.focus, Target::Sidebar(0));
 }
@@ -1737,6 +1745,7 @@ fn weather_units_save_without_replacing_celsius_cache_and_hide_keeps_city() {
             code: 2,
             is_day: true,
             daily: None,
+            sun: None,
         },
     });
     state.focus = Target::WeatherTemperature;
@@ -2971,30 +2980,118 @@ fn clock_date_and_home_input_descriptions_use_larger_text() {
 }
 
 #[test]
-fn tv_settings_and_gear_buttons_sit_at_the_top_right() {
-    let rendered = scene(&ready());
-    let button = rendered
-        .controls
-        .iter()
-        .find(|control| control.target == Target::TvSettings)
-        .unwrap();
-    assert!((button.rect.y + button.rect.h / 2. - (42.5 + 68.6 / 2.)).abs() < 0.01);
-    assert_eq!(button.rect.h, 60.);
-    assert_eq!(button.rect.w, button.rect.h);
-    // The gear (Luma settings) takes the corner; LG's TV settings sits to its left.
-    assert_eq!(button.rect.x + button.rect.w, 1836. - 60. - 16.);
+fn the_gear_sits_alone_at_the_top_right_and_opens_the_quick_panel() {
+    use crate::model::QuickKey;
+    let mut state = ready();
+    let rendered = scene(&state);
     let gear = rendered
         .controls
         .iter()
         .find(|control| control.target == Target::Nav(2))
         .unwrap();
+    assert!((gear.rect.y + gear.rect.h / 2. - (42.5 + 68.6 / 2.)).abs() < 0.01);
+    assert_eq!((gear.rect.w, gear.rect.h), (60., 60.));
     assert_eq!(gear.rect.x + gear.rect.w, 1836.);
-    assert_eq!(gear.rect.y, button.rect.y);
-    let (x, y) = button.rect.center();
+    let (x, y) = gear.rect.center();
     assert_eq!(
-        ready().hit_test(&rendered.controls, x, y),
-        Some(Target::TvSettings)
+        state.hit_test(&rendered.controls, x, y),
+        Some(Target::Nav(2))
     );
+    // TV settings moved into the panel, which also reads the TV's picture and sound.
+    assert!(
+        !rendered
+            .controls
+            .iter()
+            .any(|c| c.target == Target::TvSettings)
+    );
+    state.focus = Target::Nav(2);
+    let effects = state.activate();
+    assert_eq!(
+        effects,
+        vec![
+            Effect::System(crate::state::SystemCall::ReadPicture),
+            Effect::System(crate::state::SystemCall::ReadSound),
+        ]
+    );
+    assert_eq!(state.focus, Target::Quick(QuickKey::ScreenOff));
+    let panel: Vec<_> = scene(&state)
+        .controls
+        .into_iter()
+        .map(|c| c.target)
+        .collect();
+    assert!(panel.contains(&Target::Quick(QuickKey::TvSettings)));
+    assert!(panel.contains(&Target::QuickAll));
+    assert!(
+        !panel.contains(&Target::Quick(QuickKey::Inputs)),
+        "Inputs follows its own setting, off by default"
+    );
+    // Spatial moves inside the panel; Back closes it onto the gear.
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::Quick(QuickKey::Sleep));
+    state.focus = Target::Quick(QuickKey::TvSettings);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch("com.palm.app.settings".into())]
+    );
+    assert!(state.overlay.is_none());
+    state.open_quick();
+    state.back();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::Nav(2));
+}
+
+#[test]
+fn quick_panel_controls_cycle_picture_and_sound_and_report_refusals() {
+    use crate::{model::QuickKey, state::SystemCall};
+    let mut state = ready();
+    state.open_quick();
+    state.focus = Target::Quick(QuickKey::Picture);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::System(SystemCall::SetPicture("filmMaker".into()))]
+    );
+    state.system_response(
+        SystemCall::ReadPicture,
+        Ok(serde_json::json!({"settings": {"pictureMode": "cinema"}})),
+    );
+    assert_eq!(
+        state.activate(),
+        vec![Effect::System(SystemCall::SetPicture("normal".into()))]
+    );
+    state.system_response(
+        SystemCall::ReadSound,
+        Ok(serde_json::json!({"soundOutput": "external_arc"})),
+    );
+    state.focus = Target::Quick(QuickKey::Sound);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::System(SystemCall::SetSound("tv_speaker".into()))]
+    );
+    assert!(state.notice.is_none());
+    state.system_response(
+        SystemCall::SetSound("tv_speaker".into()),
+        Err("denied".into()),
+    );
+    assert!(state.notice.is_some(), "a refused change says so");
+    // Screen off closes the panel first; Ambient starts even with its timer off.
+    state.focus = Target::Quick(QuickKey::ScreenOff);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::System(SystemCall::ScreenOff)]
+    );
+    assert!(state.overlay.is_none());
+    state.preferences.ambient_minutes = 0;
+    state.open_quick();
+    state.focus = Target::Quick(QuickKey::Ambient);
+    state.activate();
+    state.ambient_tick(true);
+    assert!(state.ambient.is_some());
+    assert!(state.note_input(), "any key wakes it as usual");
+    // Each button can be switched off in Settings.
+    state.preferences.toggle_quick(QuickKey::Sleep);
+    assert!(!state.quick_keys().contains(&QuickKey::Sleep));
+    state.preferences.toggle_quick(QuickKey::Sleep);
+    assert!(state.quick_keys().contains(&QuickKey::Sleep));
 }
 
 #[test]
@@ -3447,14 +3544,11 @@ fn update_card_shows_progress_restores_retry_and_ignores_presses_while_busy() {
 }
 
 #[test]
-fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
+fn inputs_stay_off_until_chosen_then_switch_from_the_quick_panel() {
+    use crate::model::QuickKey;
     let mut state = ready();
-    let has_button = |state: &State| {
-        controls(state)
-            .iter()
-            .any(|control| control.target == Target::InputsButton)
-    };
-    // Off by default: no button, and Up from a favorite on the right goes to the gear.
+    let has_button = |state: &State| state.quick_keys().contains(&QuickKey::Inputs);
+    // Off by default: no Inputs button, and Up from a favorite on the right goes to the gear.
     assert!(!state.preferences.inputs_menu);
     assert!(!has_button(&state));
     let right = state.apps()[5].id.clone();
@@ -3522,20 +3616,9 @@ fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
 
     state.open(0);
     assert!(has_button(&state));
-    // Up reaches the gear; the button is two to its left, past TV settings.
-    state.focus = Target::App(right);
-    state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Nav(2));
-    state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::TvSettings);
-    state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::InputsButton);
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::TvSettings);
-    state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::InputsButton);
-
-    // OK opens the menu on its first row; Down moves through it; Back returns to the button.
+    // The gear's quick panel has the Inputs button; OK opens the list on its first row.
+    state.open_quick();
+    state.focus = Target::Quick(QuickKey::Inputs);
     assert!(state.activate().is_empty());
     assert!(matches!(state.overlay, Some(Overlay::Inputs)));
     assert_eq!(
@@ -3546,15 +3629,16 @@ fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
     assert!(
         menu.iter()
             .all(|control| matches!(control.target, Target::InputPick(_))),
-        "only the menu takes input while it is open"
+        "only the list takes input while it is open"
     );
     state.direction(Direction::Down, &menu);
     assert_eq!(state.focus, Target::InputPick("com.webos.app.hdmi1".into()));
+    // Back returns to the quick panel it came from.
     assert!(state.back().is_empty());
-    assert!(state.overlay.is_none());
-    assert_eq!(state.focus, Target::InputsButton);
+    assert!(matches!(state.overlay, Some(Overlay::Quick)));
+    assert_eq!(state.focus, Target::Quick(QuickKey::Inputs));
 
-    // OK on a row switches to it and closes the menu.
+    // OK on a row switches to it and closes everything.
     state.activate();
     state.direction(Direction::Down, &controls(&state));
     state.direction(Direction::Down, &controls(&state));
@@ -3563,7 +3647,7 @@ fn inputs_menu_stays_off_until_chosen_then_switches_from_the_top_bar() {
         vec![Effect::Launch("com.webos.app.hdmi3".into())]
     );
     assert!(state.overlay.is_none());
-    assert_eq!(state.focus, Target::InputsButton);
+    assert_eq!(state.focus, Target::Nav(2));
 }
 
 #[test]
@@ -3812,11 +3896,11 @@ fn clock_size_is_chosen_in_clock_settings_and_keeps_the_clock_centred_on_the_nav
     // Medium is the original header clock: 24 px in a 28.8 px line at y 62.4.
     let (rect, size) = clock(&state);
     assert_eq!((rect.x, rect.y, rect.h, size), (84., 62.4, 28.8, 24.));
-    // Without tabs, the clock keeps clear of the top-right buttons.
+    // Without tabs, the clock keeps clear of the gear at the top right.
     let nav = scene(&state)
         .controls
         .iter()
-        .find(|control| control.target == Target::TvSettings)
+        .find(|control| control.target == Target::Nav(2))
         .unwrap()
         .rect;
     assert!(rect.x + rect.w <= nav.x);
@@ -4261,6 +4345,7 @@ fn with_forecast(state: &mut State) {
             code: 2,
             is_day: true,
             daily: Some([day(4, 2), day(5, 0), day(6, 0), day(0, 3), day(1, 73)]),
+            sun: None,
         },
     });
 }
@@ -4446,4 +4531,132 @@ fn clock_position_and_size_move_and_scale_the_glass_clock_without_reaching_the_f
     state.focus = Target::ClockPosition;
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert_eq!(state.preferences.clock_position, ClockPosition::Higher);
+}
+
+fn scene_at(state: &State, now: time::OffsetDateTime) -> view::Scene {
+    let assets = view::Assets {
+        root: PathBuf::new(),
+        version: "test".into(),
+        metrics: BTreeMap::new(),
+        artwork: crate::app_artwork::Service::new(false),
+    };
+    let navigation = view::navigation(&assets, state.preferences.language);
+    view::scene_with_pill(
+        state,
+        &assets,
+        navigation.items[state.page_index()].x,
+        navigation.items[state.page_index()].w,
+        now,
+    )
+}
+
+#[test]
+fn day_and_night_wallpapers_follow_sunset_and_sunrise() {
+    let at = |hour: u8, minute: u8| {
+        time::OffsetDateTime::UNIX_EPOCH
+            .replace_time(time::Time::from_hms(hour, minute, 0).unwrap())
+    };
+    let mut state = ready();
+    let ids: Vec<String> = (0..state.background_count())
+        .map(|i| state.background_id(i).unwrap().to_owned())
+        .collect();
+    state.preferences.background = ids[0].clone();
+    state.preferences.night_wallpapers = vec![ids[2].clone()];
+    // Without weather: 7 am to 7 pm is day.
+    assert!(!state.is_night(at(12, 0)));
+    assert!(state.is_night(at(20, 0)));
+    assert!(state.is_night(at(6, 59)));
+    // Off: nothing changes at night.
+    assert!(!state.day_night_due(at(21, 0)));
+    state.preferences.day_night = true;
+    assert!(!state.day_night_due(at(12, 0)), "a day wallpaper by day");
+    assert!(state.day_night_due(at(21, 0)));
+    assert!(state.cycle_wallpaper_at(at(21, 0)));
+    assert_eq!(
+        state.preferences.background, ids[2],
+        "the night one after dark"
+    );
+    assert!(!state.day_night_due(at(21, 5)));
+    // By day again, rotation leaves the night wallpaper out.
+    assert!(state.day_night_due(at(8, 0)));
+    assert!(state.cycle_wallpaper_at(at(8, 0)));
+    assert_ne!(state.preferences.background, ids[2]);
+    // The weather service's sunset takes over from 7 pm.
+    with_forecast(&mut state);
+    if let Some(cache) = &mut state.weather.cache {
+        cache.reading.sun = Some((6 * 3600 + 50 * 60, 16 * 3600 + 40 * 60));
+    }
+    assert!(state.is_night(at(17, 0)));
+    assert!(!state.is_night(at(16, 0)));
+    // The wallpaper menu marks one for night, and back.
+    state.open(2);
+    state.section = 1;
+    state.focus = Target::Background(1);
+    state.options();
+    state.focus = Target::NightBackground;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.night_wallpapers.contains(&ids[1]));
+    state.activate();
+    assert!(!state.preferences.night_wallpapers.contains(&ids[1]));
+}
+
+#[test]
+fn pixel_shift_nudges_the_glass_clock_only_when_on() {
+    let mut state = ready();
+    state.preferences.glass_clock = true;
+    let clock_x = |state: &State, minutes: i64| {
+        scene_at(
+            state,
+            time::OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(minutes),
+        )
+        .draw
+        .into_iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(value, rect, style, ..)
+                if value.contains(':') && style.size > 90. =>
+            {
+                Some(rect.x)
+            }
+            _ => None,
+        })
+        .fold(f32::MAX, f32::min)
+    };
+    // 0:00 and 0:01 draw the same digits' width, three minutes apart nudges.
+    let (first, later) = (clock_x(&state, 600), clock_x(&state, 603));
+    assert_eq!(first, later, "off by default");
+    state.preferences.pixel_shift = true;
+    let (first, later) = (clock_x(&state, 600), clock_x(&state, 603));
+    assert!((first - later).abs() > 0.5 && (first - later).abs() <= 10.);
+}
+
+#[test]
+fn rain_and_snow_show_only_with_the_option_and_matching_weather() {
+    use crate::state::Precipitation;
+    let mut state = ready();
+    with_forecast(&mut state);
+    let set_code = |state: &mut State, code: u8| {
+        if let Some(cache) = &mut state.weather.cache {
+            cache.reading.code = code;
+        }
+    };
+    set_code(&mut state, 73);
+    assert_eq!(state.precipitation(), None, "off by default");
+    state.preferences.weather_effects = true;
+    assert_eq!(state.precipitation(), Some(Precipitation::Snow));
+    set_code(&mut state, 63);
+    assert_eq!(state.precipitation(), Some(Precipitation::Rain));
+    let drops = |state: &State| {
+        scene(state)
+            .draw
+            .iter()
+            .filter(|draw| matches!(draw, crate::renderer::Draw::Shape(rect, ..) if rect.w < 3.))
+            .count()
+    };
+    assert!(drops(&state) >= 100);
+    assert!(state.animating(), "falling weather keeps frames coming");
+    set_code(&mut state, 2);
+    assert_eq!(state.precipitation(), None, "partly cloudy: nothing falls");
+    set_code(&mut state, 73);
+    state.open(1);
+    assert_eq!(state.precipitation(), None, "Home only");
 }

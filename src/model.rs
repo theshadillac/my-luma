@@ -283,6 +283,64 @@ fn deserialize_clock_position<'de, D: serde::Deserializer<'de>>(
     )
 }
 
+/// A button of the quick settings panel behind the gear (fork).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub enum QuickKey {
+    ScreenOff,
+    Sleep,
+    Picture,
+    Sound,
+    Ambient,
+    Inputs,
+    TvSettings,
+}
+
+impl QuickKey {
+    pub const ALL: [Self; 7] = [
+        Self::ScreenOff,
+        Self::Sleep,
+        Self::Picture,
+        Self::Sound,
+        Self::Ambient,
+        Self::Inputs,
+        Self::TvSettings,
+    ];
+    /// Stable name kept in preferences.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::ScreenOff => "screen-off",
+            Self::Sleep => "sleep",
+            Self::Picture => "picture",
+            Self::Sound => "sound",
+            Self::Ambient => "ambient",
+            Self::Inputs => "inputs",
+            Self::TvSettings => "tv-settings",
+        }
+    }
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::ScreenOff => "screenOff",
+            Self::Sleep => "sleepTimer",
+            Self::Picture => "pictureMode",
+            Self::Sound => "soundOutput",
+            Self::Ambient => "ambientNow",
+            Self::Inputs => "inputs",
+            Self::TvSettings => "tvSettings",
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::ScreenOff => "power",
+            Self::Sleep => "weather-moon",
+            Self::Picture => "sparkles",
+            Self::Sound => "volume",
+            Self::Ambient => "clock",
+            Self::Inputs => "input-hdmi",
+            Self::TvSettings => "settings",
+        }
+    }
+}
+
 /// When Home shows the faint "More apps" hint under its last row (fork option).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -398,6 +456,16 @@ pub struct Preferences {
     /// The faint "More apps" hint under Home's last row (fork option).
     #[serde(deserialize_with = "deserialize_more_apps_hint")]
     pub more_apps_hint: MoreAppsHint,
+    /// Quick settings buttons switched off, by `QuickKey::key` (Inputs follows `inputs_menu`).
+    pub quick_hidden: Vec<String>,
+    /// Nudges Home's clock block a few pixels every few minutes (OLED care, fork option).
+    pub pixel_shift: bool,
+    /// Day wallpapers by day, night ones after sunset (fork option).
+    pub day_night: bool,
+    /// Wallpapers marked for night, by background id.
+    pub night_wallpapers: Vec<String>,
+    /// Light rain or snow over Home's wallpaper while it rains or snows (fork option).
+    pub weather_effects: bool,
 }
 
 impl Default for Preferences {
@@ -440,11 +508,35 @@ impl Default for Preferences {
             tile_lift: true,
             clock_position: ClockPosition::Default,
             more_apps_hint: MoreAppsHint::Always,
+            quick_hidden: Vec::new(),
+            pixel_shift: false,
+            day_night: false,
+            night_wallpapers: Vec::new(),
+            weather_effects: false,
         }
     }
 }
 
 impl Preferences {
+    /// Whether a quick settings button is switched on. Inputs keeps its earlier setting,
+    /// which used to show an Inputs button in the top bar.
+    pub fn quick_shown(&self, key: QuickKey) -> bool {
+        if key == QuickKey::Inputs {
+            return self.inputs_menu;
+        }
+        !self.quick_hidden.iter().any(|hidden| hidden == key.key())
+    }
+
+    pub fn toggle_quick(&mut self, key: QuickKey) {
+        if key == QuickKey::Inputs {
+            self.inputs_menu = !self.inputs_menu;
+        } else if self.quick_shown(key) {
+            self.quick_hidden.push(key.key().into());
+        } else {
+            self.quick_hidden.retain(|hidden| hidden != key.key());
+        }
+    }
+
     pub fn splash_background(&self) -> &str {
         self.splash_background
             .as_deref()

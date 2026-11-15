@@ -25,6 +25,30 @@ pub const AMBIENT_ROW: usize = 16;
 pub const TILE_LIFT_ROW: usize = 17;
 /// General settings row: the "More apps" hint under Home's last row.
 pub const MORE_APPS_ROW: usize = 18;
+/// General settings row: which quick settings buttons show.
+pub const QUICK_PANEL_ROW: usize = 19;
+/// General settings row: OLED pixel shift of Home's clock block.
+pub const PIXEL_SHIFT_ROW: usize = 20;
+/// General settings row: day and night wallpapers.
+pub const DAY_NIGHT_ROW: usize = 21;
+/// General settings row: rain and snow over the wallpaper.
+pub const WEATHER_EFFECTS_ROW: usize = 22;
+
+/// Falling weather drawn over Home's wallpaper.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Precipitation {
+    Rain,
+    Snow,
+}
+const QUICK_TOGGLES: [Target; 7] = [
+    Target::QuickToggle(crate::model::QuickKey::ScreenOff),
+    Target::QuickToggle(crate::model::QuickKey::Sleep),
+    Target::QuickToggle(crate::model::QuickKey::Picture),
+    Target::QuickToggle(crate::model::QuickKey::Sound),
+    Target::QuickToggle(crate::model::QuickKey::Ambient),
+    Target::QuickToggle(crate::model::QuickKey::Inputs),
+    Target::QuickToggle(crate::model::QuickKey::TvSettings),
+];
 /// Changing page (Home, the app drawer, Settings) eases the new page in, in seconds.
 pub const PAGE_MOTION: f32 = 0.42;
 /// How long the selected tile takes to grow and lift (and the previous one to settle).
@@ -114,6 +138,12 @@ pub enum Target {
     TvSettings,
     /// The faint "More apps" hint under Home's last row: opens the app drawer.
     MoreApps,
+    /// A wallpaper's options: mark it for night (or day) use.
+    NightBackground,
+    /// A quick settings button, its "All settings" link, and its on/off row in Settings.
+    Quick(crate::model::QuickKey),
+    QuickAll,
+    QuickToggle(crate::model::QuickKey),
     ClockPosition,
     /// The top bar's Inputs button (Settings → Widgets → Inputs) and its menu's rows.
     InputsButton,
@@ -223,8 +253,10 @@ pub enum Overlay {
     },
     Keyboard,
     SystemKeyboard,
-    /// The top bar's Inputs menu.
+    /// The Inputs list, opened from the quick settings panel.
     Inputs,
+    /// The quick settings panel behind the gear.
+    Quick,
     WallpaperUpload,
     TileEditor,
     BackgroundOptions {
@@ -250,6 +282,7 @@ pub enum Subpage {
     ClockFormat,
     TimeFormat,
     ClockSize,
+    QuickPanel,
     Input(String),
     InputIcons(String),
     WeatherLocation,
@@ -274,6 +307,29 @@ pub enum Direction {
     Right,
 }
 
+/// A TV system control from the quick settings panel, run on the platform worker.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SystemCall {
+    ScreenOff,
+    /// LG's own sleep timer menu.
+    OpenSleep,
+    ReadPicture,
+    SetPicture(String),
+    ReadSound,
+    SetSound(String),
+}
+
+/// Picture modes the quick panel steps through, as LG's settings service names them.
+pub const PICTURE_MODES: [(&str, &str); 5] = [
+    ("filmMaker", "Filmmaker"),
+    ("cinema", "Cinema"),
+    ("normal", "Standard"),
+    ("vivid", "Vivid"),
+    ("eco", "Eco"),
+];
+/// Sound outputs the quick panel switches between: the receiver over eARC, or the TV.
+pub const SOUND_OUTPUTS: [&str; 2] = ["external_arc", "tv_speaker"];
+
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     Save,
@@ -293,6 +349,7 @@ pub enum Effect {
     Quit,
     Weather(weather::Command),
     UpdateDownload(String),
+    System(SystemCall),
 }
 
 pub const KEYS: [&str; 40] = [
@@ -349,6 +406,11 @@ pub struct State {
     pub page_motion: Option<(Page, Instant)>,
     /// The favourite the app drawer was opened from, focused again when it closes.
     drawer_return: Option<Target>,
+    /// The TV's picture mode and sound output as last read, for the quick panel.
+    pub tv_picture: Option<String>,
+    pub tv_sound: Option<String>,
+    /// Ambient started from the quick panel, whatever its idle timer.
+    ambient_manual: bool,
     /// Until the first app list arrives (or the user presses something), Home's focus belongs on
     /// the first app, not the tab bar it starts on while nothing is loaded yet.
     settle_focus: bool,
@@ -380,6 +442,9 @@ impl State {
             waking: None,
             page_motion: None,
             drawer_return: None,
+            tv_picture: None,
+            tv_sound: None,
+            ambient_manual: false,
             settle_focus: true,
             lift_focus: (
                 Target::Nav(0),
@@ -536,6 +601,10 @@ impl State {
             self.ambient_drawn = ambient;
             self.dirty = true;
         }
+        // Falling rain or snow redraws every frame while it shows.
+        if self.precipitation().is_some() && !self.preferences.reduced_motion {
+            self.dirty = true;
+        }
         if let Some((_, since)) = self.page_motion {
             self.dirty = true;
             if since.elapsed().as_secs_f32() >= PAGE_MOTION {
@@ -619,6 +688,7 @@ impl State {
             || self.ambient_fading()
             || self.waking.is_some()
             || self.page_motion.is_some()
+            || (self.precipitation().is_some() && !self.preferences.reduced_motion)
             || self.lift_moving()
             || (!self.preferences.reduced_motion
                 && self
@@ -631,6 +701,7 @@ impl State {
     pub fn note_input(&mut self) -> bool {
         self.last_input = Instant::now();
         self.settle_focus = false;
+        self.ambient_manual = false;
         if self.ambient.is_some() {
             let (ui, dim) = self.ambient_progress();
             let stops = self.ambient_stops();
@@ -685,7 +756,8 @@ impl State {
     /// Starts the ambient screen once Home has been idle long enough; only while Luma is seen.
     pub fn ambient_tick(&mut self, shown: bool) {
         if self.ambient.is_some()
-            && (self.preferences.ambient_minutes == 0 || self.page != Page::Home)
+            && ((self.preferences.ambient_minutes == 0 && !self.ambient_manual)
+                || self.page != Page::Home)
         {
             self.ambient = None;
             self.dirty = true;
@@ -814,6 +886,66 @@ impl State {
         pending
     }
 
+    /// The quick settings buttons switched on, in panel order.
+    pub fn quick_keys(&self) -> Vec<crate::model::QuickKey> {
+        use crate::model::QuickKey;
+        QuickKey::ALL
+            .into_iter()
+            .filter(|key| self.preferences.quick_shown(*key))
+            .filter(|key| *key != QuickKey::Inputs || !self.input_choices().is_empty())
+            .collect()
+    }
+
+    /// The gear opens the quick settings panel, reading the TV's picture and sound first.
+    pub fn open_quick(&mut self) -> Vec<Effect> {
+        self.overlay = Some(Overlay::Quick);
+        self.focus = self
+            .quick_keys()
+            .first()
+            .map_or(Target::QuickAll, |key| Target::Quick(*key));
+        self.pressed = None;
+        self.panel_started = (!self.preferences.reduced_motion).then(Instant::now);
+        self.dirty = true;
+        vec![
+            Effect::System(SystemCall::ReadPicture),
+            Effect::System(SystemCall::ReadSound),
+        ]
+    }
+
+    fn close_quick(&mut self) {
+        self.overlay = None;
+        self.panel_started = None;
+        self.focus = Target::Nav(2);
+        self.pressed = None;
+        self.dirty = true;
+    }
+
+    /// A TV control's answer: remembered values for the panel, or a short notice on failure.
+    pub fn system_response(
+        &mut self,
+        call: SystemCall,
+        result: Result<serde_json::Value, String>,
+    ) -> Vec<Effect> {
+        self.dirty = true;
+        match (call, result) {
+            (SystemCall::ReadPicture, Ok(value)) => {
+                self.tv_picture = value["settings"]["pictureMode"].as_str().map(str::to_owned);
+            }
+            (SystemCall::ReadSound, Ok(value)) => {
+                self.tv_sound = value["soundOutput"].as_str().map(str::to_owned);
+            }
+            (SystemCall::SetPicture(mode), Ok(_)) => self.tv_picture = Some(mode),
+            (SystemCall::SetSound(output), Ok(_)) => self.tv_sound = Some(output),
+            (SystemCall::ReadPicture | SystemCall::ReadSound, Err(_)) => {}
+            (_, Err(error)) => {
+                eprintln!("Luma quick settings: {error}");
+                self.notify(self.preferences.language.t("tvControlFailed"));
+            }
+            (_, Ok(_)) => {}
+        }
+        vec![]
+    }
+
     /// Starts easing in the page just entered (not with reduced motion).
     fn ease_in_page(&mut self) {
         self.page_motion = (!self.preferences.reduced_motion).then(|| (self.page, Instant::now()));
@@ -905,11 +1037,6 @@ impl State {
         .collect()
     }
 
-    /// Whether the top bar shows the Inputs button.
-    pub fn inputs_button(&self) -> bool {
-        self.preferences.inputs_menu && !self.input_choices().is_empty()
-    }
-
     pub fn apps(&self) -> Vec<&App> {
         let ids = self.preferences.favorites(&self.inventory.apps);
         if self.page == Page::Home {
@@ -967,11 +1094,16 @@ impl State {
         // row stays lowered when focus moves into it.
         let lowered = self.preferences.landing_layout
             && self.page == Page::Home
-            && self.overlay.is_none()
+            && matches!(self.overlay, None | Some(Overlay::Quick | Overlay::Inputs))
             && self.moving.is_none()
             && (matches!(
                 self.focus,
-                Target::Nav(_) | Target::TvSettings | Target::InputsButton
+                Target::Nav(_)
+                    | Target::TvSettings
+                    | Target::InputsButton
+                    | Target::Quick(_)
+                    | Target::QuickAll
+                    | Target::InputPick(_)
             ) || !self.home_inputs_shown());
         if lowered { 1. } else { 0. }
     }
@@ -1356,12 +1488,95 @@ impl State {
         self.background_ids().count()
     }
 
-    pub fn cycle_wallpaper(&mut self, now: u64) -> bool {
-        let ids: Vec<_> = self
+    /// Whether it is night where the TV is: between today's sunset and sunrise from the
+    /// weather service, or 7 pm to 7 am without it.
+    pub fn is_night(&self, now: time::OffsetDateTime) -> bool {
+        let minutes = |at: time::OffsetDateTime| at.hour() as i32 * 60 + at.minute() as i32;
+        let local = |unix: i64| {
+            time::OffsetDateTime::from_unix_timestamp(unix)
+                .ok()
+                .map(|at| minutes(at.to_offset(now.offset())))
+        };
+        let sun = self
+            .preferences
+            .weather_location
+            .as_ref()
+            .and_then(|place| self.weather.reading(place))
+            .and_then(|reading| reading.sun)
+            .and_then(|(rise, set)| Some((local(rise)?, local(set)?)));
+        let (rise, set) = sun.unwrap_or((7 * 60, 19 * 60));
+        let now = minutes(now);
+        now < rise || now >= set
+    }
+
+    /// Rain or snow to draw over Home's wallpaper: the option is on and the current weather
+    /// (WMO code) is drizzle, rain, showers, a storm, or snow.
+    pub fn precipitation(&self) -> Option<Precipitation> {
+        if !self.preferences.weather_effects
+            || self.page != Page::Home
+            || !matches!(self.overlay, None | Some(Overlay::Quick))
+        {
+            return None;
+        }
+        let place = self.preferences.weather_location.as_ref()?;
+        match self.weather.reading(place)?.code {
+            51..=67 | 80..=82 | 95..=99 => Some(Precipitation::Rain),
+            71..=77 | 85..=86 => Some(Precipitation::Snow),
+            _ => None,
+        }
+    }
+
+    fn night_wallpaper(&self, id: &str) -> bool {
+        self.preferences
+            .night_wallpapers
+            .iter()
+            .any(|item| item == id)
+    }
+
+    /// Wallpapers for this time of day, or all of them when day and night is off or a set
+    /// is empty.
+    fn wallpapers_for(&self, night: Option<bool>) -> Vec<String> {
+        let all: Vec<String> = self
             .background_ids()
             .filter(|id| self.deleting_wallpaper.as_deref() != Some(*id))
             .map(str::to_owned)
             .collect();
+        let Some(night) = night.filter(|_| self.preferences.day_night) else {
+            return all;
+        };
+        let matching: Vec<String> = all
+            .iter()
+            .filter(|id| self.night_wallpaper(id) == night)
+            .cloned()
+            .collect();
+        if matching.is_empty() { all } else { matching }
+    }
+
+    /// Day and night is on and the wallpaper belongs to the other half of the day.
+    pub fn day_night_due(&self, now: time::OffsetDateTime) -> bool {
+        let night = self.is_night(now);
+        self.preferences.day_night
+            && self.night_wallpaper(&self.preferences.background) != night
+            && self
+                .wallpapers_for(Some(night))
+                .iter()
+                .any(|id| self.night_wallpaper(id) == night)
+    }
+
+    /// Advances rotation, or swaps to the right half of day and night, with a crossfade.
+    pub fn cycle_wallpaper_at(&mut self, now: time::OffsetDateTime) -> bool {
+        let night = self.is_night(now);
+        let ids = self.wallpapers_for(Some(night));
+        self.cycle_through(ids, now.unix_timestamp().max(0) as u64)
+    }
+
+    #[cfg(test)]
+    pub fn cycle_wallpaper(&mut self, now: u64) -> bool {
+        let ids = self.wallpapers_for(None);
+        self.cycle_through(ids, now)
+    }
+
+    fn cycle_through(&mut self, ids: Vec<String>, now: u64) -> bool {
         let next = crate::wallpaper_cycle::next(&ids, &self.preferences.background);
         self.preferences.wallpaper_changed = now;
         let Some(id) = next else {
@@ -1517,6 +1732,7 @@ impl State {
             Some(Subpage::Shortcuts) => Target::Widget(2),
             Some(Subpage::Inputs) => Target::Widget(3),
             Some(Subpage::Clock) => Target::Setting(1),
+            Some(Subpage::QuickPanel) => Target::Setting(QUICK_PANEL_ROW),
             Some(Subpage::ClockFormat) => {
                 self.subpage = Some(Subpage::Clock);
                 Target::ClockFormat
@@ -1671,6 +1887,7 @@ impl State {
                     Target::ClockSize,
                     Target::ClockPosition,
                 ]),
+                Some(Subpage::QuickPanel) => Some(&QUICK_TOGGLES),
                 _ => None,
             };
             if let Some(rows) = setting_rows
@@ -1938,6 +2155,13 @@ impl State {
             {
                 return self.close_drawer();
             }
+            // The gear stands alone at the top right: Left and Right stay on it.
+            if self.page == Page::Home
+                && matches!(self.focus, Target::Nav(_))
+                && matches!(direction, Direction::Left | Direction::Right)
+            {
+                return vec![];
+            }
             // Home's top-right buttons come back down to the favourites.
             if self.page == Page::Home
                 && matches!(direction, Direction::Down)
@@ -2139,6 +2363,60 @@ impl State {
             self.open_drawer();
         }
         vec![]
+    }
+
+    fn quick(&mut self, key: crate::model::QuickKey) -> Vec<Effect> {
+        use crate::model::QuickKey;
+        match key {
+            QuickKey::ScreenOff => {
+                self.close_quick();
+                vec![Effect::System(SystemCall::ScreenOff)]
+            }
+            QuickKey::Sleep => {
+                self.close_quick();
+                vec![Effect::System(SystemCall::OpenSleep)]
+            }
+            QuickKey::Picture => {
+                let current = self
+                    .tv_picture
+                    .as_deref()
+                    .and_then(|mode| PICTURE_MODES.iter().position(|(id, _)| *id == mode));
+                let next = current.map_or(0, |index| (index + 1) % PICTURE_MODES.len());
+                vec![Effect::System(SystemCall::SetPicture(
+                    PICTURE_MODES[next].0.into(),
+                ))]
+            }
+            QuickKey::Sound => {
+                let next = if self.tv_sound.as_deref() == Some(SOUND_OUTPUTS[0]) {
+                    SOUND_OUTPUTS[1]
+                } else {
+                    SOUND_OUTPUTS[0]
+                };
+                vec![Effect::System(SystemCall::SetSound(next.into()))]
+            }
+            QuickKey::Ambient => {
+                self.close_quick();
+                if self.page != Page::Home {
+                    self.open(0);
+                }
+                self.focus = self.first_content();
+                self.ambient = Some(Instant::now());
+                self.ambient_manual = true;
+                vec![]
+            }
+            QuickKey::Inputs => {
+                if let Some(first) = self.input_choices().into_iter().next() {
+                    self.overlay = Some(Overlay::Inputs);
+                    self.focus = Target::InputPick(first);
+                    self.pressed = None;
+                }
+                vec![]
+            }
+            QuickKey::TvSettings => {
+                self.close_quick();
+                vec![Effect::Launch("com.palm.app.settings".into())]
+            }
+        }
     }
 
     pub fn options(&mut self) {
@@ -2525,15 +2803,21 @@ impl State {
             return self.send_tile(tile);
         }
         match self.focus.clone() {
-            Target::Nav(index) => {
-                // The gear opens Settings on its first section, ready to move down the list.
-                let from_settings = self.page == Page::Settings;
-                self.open(index);
-                if index == 2 && !from_settings {
-                    self.focus = self.first_content();
-                    self.ease_in_page();
-                }
+            Target::Nav(2) => return self.open_quick(),
+            Target::Nav(index) => self.open(index),
+            Target::QuickAll => {
+                self.close_quick();
+                // All settings opens on its first section, ready to move down the list.
+                self.open(2);
+                self.focus = self.first_content();
+                self.ease_in_page();
             }
+            Target::QuickToggle(key) => {
+                self.preferences.toggle_quick(key);
+                self.dirty = true;
+                return vec![Effect::Save];
+            }
+            Target::Quick(key) => return self.quick(key),
             Target::Browse => self.open(1),
             Target::Retry => return vec![Effect::Reload],
             Target::DismissNotice => self.notice = None,
@@ -2570,7 +2854,7 @@ impl State {
             Target::InputPick(id) if !self.launching => {
                 self.overlay = None;
                 self.panel_started = None;
-                self.focus = Target::InputsButton;
+                self.focus = Target::Nav(2);
                 return vec![Effect::Launch(id)];
             }
             Target::InputsMenu => {
@@ -2857,6 +3141,17 @@ impl State {
                     MORE_APPS_ROW => {
                         self.preferences.more_apps_hint = self.preferences.more_apps_hint.next()
                     }
+                    PIXEL_SHIFT_ROW => self.preferences.pixel_shift = !self.preferences.pixel_shift,
+                    DAY_NIGHT_ROW => self.preferences.day_night = !self.preferences.day_night,
+                    WEATHER_EFFECTS_ROW => {
+                        self.preferences.weather_effects = !self.preferences.weather_effects
+                    }
+                    QUICK_PANEL_ROW => {
+                        self.subpage = Some(Subpage::QuickPanel);
+                        self.focus = Target::QuickToggle(crate::model::QuickKey::ALL[0]);
+                        self.scroll = 0.;
+                        return vec![];
+                    }
                     AMBIENT_ROW => {
                         let current = AMBIENT_CHOICES
                             .iter()
@@ -2927,6 +3222,18 @@ impl State {
                 self.preferences.wallpaper_changed = unix_now();
                 self.back();
                 return vec![Effect::Save];
+            }
+            Target::NightBackground => {
+                if let Some(Overlay::BackgroundOptions { id, .. }) = &self.overlay {
+                    let night = &mut self.preferences.night_wallpapers;
+                    if let Some(index) = night.iter().position(|item| item == id) {
+                        night.remove(index);
+                    } else {
+                        night.push(id.clone());
+                    }
+                    self.dirty = true;
+                    return vec![Effect::Save];
+                }
             }
             Target::DeleteBackground => {
                 if let Some(Overlay::BackgroundOptions { id, restore }) = self.overlay.clone()
@@ -3006,6 +3313,7 @@ impl State {
                     }
                     Some(
                         Subpage::WeatherLocation
+                        | Subpage::QuickPanel
                         | Subpage::Greeting
                         | Subpage::Date
                         | Subpage::AppNames
@@ -3201,8 +3509,14 @@ impl State {
                 }
             }
             if matches!(overlay, Overlay::Inputs) {
-                self.focus = Target::InputsButton;
+                // Back from the Inputs list returns to the quick panel it came from.
+                self.overlay = Some(Overlay::Quick);
+                self.focus = Target::Quick(crate::model::QuickKey::Inputs);
                 self.pressed = None;
+                return vec![];
+            }
+            if matches!(overlay, Overlay::Quick) {
+                self.close_quick();
                 return vec![];
             }
             if let Overlay::Options { restore, .. } | Overlay::Recents { restore } = overlay {

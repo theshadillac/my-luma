@@ -121,7 +121,7 @@ impl Client {
                 ("current", "temperature_2m,is_day,weather_code"),
                 (
                     "daily",
-                    "weather_code,temperature_2m_max,temperature_2m_min",
+                    "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset",
                 ),
                 ("forecast_days", "5"),
                 ("timeformat", "unixtime"),
@@ -326,6 +326,7 @@ mod tests {
                 code: 2,
                 is_day: true,
                 daily: None,
+                sun: None,
             },
         };
         {

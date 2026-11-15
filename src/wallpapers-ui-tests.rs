@@ -650,10 +650,16 @@ fn background_popup_is_modal_lifts_the_same_thumbnail_and_restores_its_parent() 
             .iter()
             .map(|c| c.target.clone())
             .collect::<Vec<_>>(),
-        vec![Target::UseBackground, Target::DeleteBackground]
+        vec![
+            Target::UseBackground,
+            Target::NightBackground,
+            Target::DeleteBackground
+        ]
     );
     assert!(popup.draw.iter().any(|draw| matches!(draw, Draw::Image(_, rect, ..) if rect.x == before.x && rect.y == before.y && rect.w == before.w && rect.h == 202.5)));
     state.direction(Direction::Down, &popup.controls);
+    assert_eq!(state.focus, Target::NightBackground);
+    state.direction(Direction::Down, &scene(&state).controls);
     assert_eq!(state.focus, Target::DeleteBackground);
     state.activate();
     assert_eq!(state.focus, Target::CancelDelete);
@@ -679,7 +685,8 @@ fn selected_background_has_no_delete_action_and_rejects_forced_confirmation() {
         .unwrap();
     state.focus = Target::Background(index);
     state.options();
-    assert_eq!(scene(&state).controls.len(), 1);
+    // Use, and Use at night; no delete for the wallpaper in use.
+    assert_eq!(scene(&state).controls.len(), 2);
     assert!(!state.can_delete_background(&selected));
     state.focus = Target::DeleteBackground;
     state.activate();
