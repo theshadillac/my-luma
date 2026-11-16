@@ -3,14 +3,24 @@
   "repos": {
     "Seagey/couch-tv": "21514a5232e616fbcc5e4bab908e295ff8a089b4",
     "techgenius1/tvOS-Launcher": "ddfd2531fd3cc5fd1d6790d7fad21cf71389b4dc",
-    "aabytt/custom-screensaver-aerial": "e073d32cb683d94efad616f4c3641a23a08043c3"
+    "aabytt/custom-screensaver-aerial": "e073d32cb683d94efad616f4c3641a23a08043c3",
+    "kitsuned/AltHome": "a67385151486347394c6ac6e8af8da61e6c72685",
+    "mareklarek/webos10-homescreen-customization": "80e39c822097a933fd49c2a23ff5cdfbf9e54763",
+    "webosbrew/custom-screensaver": "90666c19112ec77d6c2b1b84ae7db7d914285e92"
   },
   "releases": {
-    "ecklf/lg-luma": "v2.19 merged; 3.x not yet reviewed"
+    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16 (latest v3.4.0)"
   },
   "items": [
     "https://repo.webosbrew.org/apps/org.aabytt.webos.custom-screensaver-aerial/",
     "https://repo.webosbrew.org/apps/org.rchalaaa.webos.custom-screensaver/",
-    "https://github.com/webosbrew/youtube-webos"
+    "https://github.com/webosbrew/youtube-webos",
+    "https://github.com/kitsuned/AltHome",
+    "https://github.com/mareklarek/webos10-homescreen-customization",
+    "https://github.com/anubhavmalhotra/r2d2-tv",
+    "https://repo.webosbrew.org/apps/org.webosbrew.custom-screensaver/",
+    "https://repo.webosbrew.org/apps/org.oted.idlegif/",
+    "https://www.pulse.bot/consumer-tech/news/this-free-launcher-made-my-smart-tv-feel-like-it-should-have-all-along-3972b140-a2d0-44ff-a0e6-2e91a8ee3771/",
+    "reddit r/webos: root bind-mount custom stock screensaver photos (2026-11-15)"
   ]
 }
