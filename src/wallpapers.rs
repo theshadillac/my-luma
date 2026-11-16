@@ -29,7 +29,8 @@ pub const IMPORT_FOLDER: &str = "import";
 const MAX_IMPORT_FILE: u64 = 40 * 1024 * 1024;
 const MAX_IMPORT_PIXELS: u64 = 48_000_000;
 const SESSION_TIME: Duration = Duration::from_secs(600);
-const SESSION_REQUEST_LIMIT: usize = 64;
+// Room for the page's own files plus a full gallery's worth of uploads and retries.
+const SESSION_REQUEST_LIMIT: usize = 160;
 const REQUEST_TIME: Duration = Duration::from_secs(20);
 const STOP: u64 = u64::MAX;
 
@@ -719,7 +720,9 @@ fn serve(
     };
     if request.method == "GET" && request.length == 0 {
         if route == "info.json" {
-            let body = serde_json::json!({"path": directory.to_string_lossy()}).to_string();
+            let free = MAX_WALLPAPERS.saturating_sub(catalog(directory).len());
+            let body =
+                serde_json::json!({"path": directory.to_string_lossy(), "free": free}).to_string();
             response(
                 stream,
                 "200 OK",
@@ -744,6 +747,10 @@ fn serve(
             "crop.js" => (
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/crop.js"),
+            ),
+            "queue.js" => (
+                "text/javascript; charset=utf-8",
+                include_bytes!("../assets/wallpaper-upload/queue.js"),
             ),
             "storage.js" => (
                 "text/javascript; charset=utf-8",

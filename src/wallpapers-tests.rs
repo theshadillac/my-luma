@@ -376,6 +376,7 @@ fn browser_assets_are_local_and_a_real_http_upload_needs_no_name() {
         "",
         "app.js",
         "crop.js",
+        "queue.js",
         "storage.js",
         "app.css",
         "luma-mark.svg",
@@ -396,6 +397,7 @@ fn browser_assets_are_local_and_a_real_http_upload_needs_no_name() {
         if route == "info.json" {
             assert!(response.starts_with("HTTP/1.1 200"));
             assert!(response.contains(&fixture.wallpapers().to_string_lossy().to_string()));
+            assert!(response.contains("\"free\":60"), "{response}");
         }
     }
     let bytes = image(1920, 1080);
