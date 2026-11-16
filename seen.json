@@ -1,0 +1,16 @@
+{
+  "note": "Items already reviewed with Stephen. Keys are URLs or repo@version.",
+  "repos": {
+    "Seagey/couch-tv": "21514a5232e616fbcc5e4bab908e295ff8a089b4",
+    "techgenius1/tvOS-Launcher": "ddfd2531fd3cc5fd1d6790d7fad21cf71389b4dc",
+    "aabytt/custom-screensaver-aerial": "e073d32cb683d94efad616f4c3641a23a08043c3"
+  },
+  "releases": {
+    "ecklf/lg-luma": "v2.19 merged; 3.x not yet reviewed"
+  },
+  "items": [
+    "https://repo.webosbrew.org/apps/org.aabytt.webos.custom-screensaver-aerial/",
+    "https://repo.webosbrew.org/apps/org.rchalaaa.webos.custom-screensaver/",
+    "https://github.com/webosbrew/youtube-webos"
+  ]
+}
