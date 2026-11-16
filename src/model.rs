@@ -317,6 +317,31 @@ impl QuickKey {
     }
 }
 
+/// How the app drawer orders apps after the favourites (fork option, from upstream 3.1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppSorting {
+    #[default]
+    Alphabetical,
+    Usage,
+}
+
+impl AppSorting {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Alphabetical => "appSortingAlphabetical",
+            Self::Usage => "appSortingUsage",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Alphabetical => Self::Usage,
+            Self::Usage => Self::Alphabetical,
+        }
+    }
+}
+
 /// When Home shows the faint "More apps" hint under its last row (fork option).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -444,6 +469,12 @@ pub struct Preferences {
     pub weather_effects: bool,
     /// Category filters and the search box at the top of the app drawer (fork option).
     pub drawer_toolbar: bool,
+    /// Short synthesized navigation, select and Back sounds (off by default).
+    pub ui_sounds: bool,
+    /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
+    pub app_sorting: AppSorting,
+    /// Successful launches per app id, kept only on the TV, for the "Most used" order.
+    pub app_launch_counts: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for Preferences {
@@ -492,6 +523,9 @@ impl Default for Preferences {
             night_wallpapers: Vec::new(),
             weather_effects: false,
             drawer_toolbar: true,
+            ui_sounds: false,
+            app_sorting: AppSorting::default(),
+            app_launch_counts: Default::default(),
         }
     }
 }

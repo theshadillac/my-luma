@@ -4,11 +4,12 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, DAY_NIGHT_ROW,
-        DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT,
-        HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW,
-        MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION,
-        State, Subpage, TILE_LIFT_ROW, Target, TextField, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        AMBIENT_ROW, APP_SORTING_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control,
+        DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT,
+        HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
+        LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect,
+        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUNDS_ROW,
+        WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -1147,9 +1148,17 @@ fn inputs_menu(out: &mut Scene, state: &State, assets: &Assets, button: Option<R
             false,
         );
         if let Some(detail) = detail {
+            let dot = input.map_or(0., |input| {
+                out.shape(
+                    Rect::new(rect.x + 64., rect.y + 49., 8., 8.),
+                    4.,
+                    c(input_status_color(input), 1.),
+                );
+                14.
+            });
             out.text(
                 &detail,
-                Rect::new(rect.x + 64., rect.y + 42., rect.w - 84., 22.),
+                Rect::new(rect.x + 64. + dot, rect.y + 42., rect.w - 84. - dot, 22.),
                 text(15.2, 400, 0.),
                 if focused {
                     c(0x242424, 0.62)
@@ -2183,12 +2192,29 @@ fn home_content(out: &mut Scene, state: &State, assets: &Assets) {
                 c(0xe8e8e8, 0.48),
             ),
         ];
-        for (value, base, min, y, height, color) in rows {
-            let (line, style) = assets.fit_line(&value, base, text_width, min);
+        for (row, (value, base, min, y, height, color)) in rows.into_iter().enumerate() {
+            // The status line leads with a dot: green connected, amber connected but no
+            // signal, gray no device or unknown.
+            let dot = if row == 1 {
+                out.shape(
+                    Rect::new(rect.x + 93., rect.y + y + (height - 8.) / 2., 8., 8.),
+                    4.,
+                    c(input_status_color(input), 1.),
+                );
+                14.
+            } else {
+                0.
+            };
+            let (line, style) = assets.fit_line(&value, base, text_width - dot, min);
             let shift = (base.size - style.size) * base.line_height / 2.;
             out.text(
                 line,
-                Rect::new(rect.x + 93., rect.y + y + shift, text_width, height),
+                Rect::new(
+                    rect.x + 93. + dot,
+                    rect.y + y + shift,
+                    text_width - dot,
+                    height,
+                ),
                 style,
                 color,
                 false,
@@ -3428,6 +3454,24 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     }),
                     false,
                 ),
+                (
+                    APP_SORTING_ROW,
+                    "appSorting",
+                    "grid",
+                    Some(language.t(state.preferences.app_sorting.label_key())),
+                    false,
+                ),
+                (
+                    UI_SOUNDS_ROW,
+                    "uiSounds",
+                    "volume",
+                    Some(if state.preferences.ui_sounds {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
+                    false,
+                ),
                 (QUICK_PANEL_ROW, "quickSettings", "gear", None, true),
                 (
                     PIXEL_SHIFT_ROW,
@@ -4313,6 +4357,16 @@ fn device_icon(name: &str) -> &'static str {
         "hdmi"
     }
 }
+/// Status dot colour: green connected, amber when a connected input reports no signal,
+/// gray when nothing is plugged in or the TV doesn't say (from upstream 3.2.1).
+fn input_status_color(input: &Input) -> u32 {
+    match (input.connected, input.signal) {
+        (Some(true), Some(false)) => 0xf5b84b,
+        (Some(true), _) => 0x60e6a0,
+        _ => 0x8c949c,
+    }
+}
+
 /// Detail under an input title: the TV's own label (when connected and not just
 /// the port), the port when a custom name replaces it, then the status.
 pub fn input_status(input: &Input, renamed: bool, language: Language) -> String {

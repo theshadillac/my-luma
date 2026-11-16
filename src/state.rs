@@ -34,6 +34,8 @@ pub const DAY_NIGHT_ROW: usize = 21;
 /// General settings row: rain and snow over the wallpaper.
 pub const WEATHER_EFFECTS_ROW: usize = 22;
 pub const DRAWER_TOOLBAR_ROW: usize = 23;
+pub const UI_SOUNDS_ROW: usize = 24;
+pub const APP_SORTING_ROW: usize = 25;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1004,11 +1006,40 @@ impl State {
                     .position(|id| id == &app.id)
                     .unwrap_or(usize::MAX)
             };
+            let usage = |app: &App| match self.preferences.app_sorting {
+                crate::model::AppSorting::Alphabetical => 0,
+                crate::model::AppSorting::Usage => self
+                    .preferences
+                    .app_launch_counts
+                    .get(&app.id)
+                    .copied()
+                    .unwrap_or(0),
+            };
             rank(a)
                 .cmp(&rank(b))
+                .then_with(|| usage(b).cmp(&usage(a)))
                 .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+                .then_with(|| a.id.cmp(&b.id))
         });
         apps
+    }
+
+    /// Counts successful app launches only (never inputs, shortcuts or preview cards) for the
+    /// "Most used" drawer order. Counting runs in both orders so switching later has history.
+    pub fn record_app_launch(&mut self, id: &str) -> Vec<Effect> {
+        if !self.inventory.apps.iter().any(|app| app.id == id)
+            || crate::scroll_preview::is_placeholder(id)
+            || self.preferences.custom_tile(id).is_some()
+        {
+            return vec![];
+        }
+        let count = self
+            .preferences
+            .app_launch_counts
+            .entry(id.into())
+            .or_default();
+        *count = count.saturating_add(1);
+        vec![Effect::Save]
     }
 
     /// With the wallpaper-first Home on, the favourites sit lower while focus is in the header
@@ -3078,6 +3109,10 @@ impl State {
                     DAY_NIGHT_ROW => self.preferences.day_night = !self.preferences.day_night,
                     WEATHER_EFFECTS_ROW => {
                         self.preferences.weather_effects = !self.preferences.weather_effects
+                    }
+                    UI_SOUNDS_ROW => self.preferences.ui_sounds = !self.preferences.ui_sounds,
+                    APP_SORTING_ROW => {
+                        self.preferences.app_sorting = self.preferences.app_sorting.next()
                     }
                     DRAWER_TOOLBAR_ROW => {
                         self.preferences.drawer_toolbar = !self.preferences.drawer_toolbar;

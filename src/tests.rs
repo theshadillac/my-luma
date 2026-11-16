@@ -4671,3 +4671,44 @@ fn drawer_toolbar_off_hides_filters_and_search_but_keeps_hidden_apps_reachable()
     state.activate();
     assert!(state.apps().iter().any(|app| app.id == hidden));
 }
+
+#[test]
+fn most_used_drawer_order_keeps_favourites_first_and_counts_only_real_launches() {
+    use crate::model::AppSorting;
+    let mut state = ready();
+    state.inventory.apps = vec![
+        App::new("z", "Zulu"),
+        App::new("b", "beta"),
+        App::new("a", "Alpha"),
+        App::new("f2", "Favourite two"),
+        App::new("f1", "Favourite one"),
+    ];
+    state.preferences.favorites = Some(vec!["f2".into(), "f1".into()]);
+    state.preferences.reduced_motion = true;
+    state.open_drawer();
+    let ids = |state: &State| -> Vec<String> {
+        state.apps().into_iter().map(|app| app.id.clone()).collect()
+    };
+    assert_eq!(ids(&state), ["f2", "f1", "a", "b", "z"], "A–Z by default");
+    for _ in 0..3 {
+        assert_eq!(state.record_app_launch("z"), [Effect::Save]);
+    }
+    state.record_app_launch("b");
+    state.record_app_launch("f1");
+    assert!(state.record_app_launch("not-installed").is_empty());
+    assert_eq!(
+        ids(&state),
+        ["f2", "f1", "a", "b", "z"],
+        "counts alone change nothing"
+    );
+    state.preferences.app_sorting = AppSorting::Usage;
+    assert_eq!(ids(&state), ["f2", "f1", "z", "b", "a"]);
+    // Older preference files load with A–Z and no counts.
+    let old: Preferences = serde_json::from_str("{}").unwrap();
+    assert_eq!(old.app_sorting, AppSorting::Alphabetical);
+    assert!(old.app_launch_counts.is_empty());
+    let saved: Preferences =
+        serde_json::from_slice(&serde_json::to_vec(&state.preferences).unwrap()).unwrap();
+    assert_eq!(saved.app_launch_counts["z"], 3);
+    assert_eq!(saved.app_sorting, AppSorting::Usage);
+}
