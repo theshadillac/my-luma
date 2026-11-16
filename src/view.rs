@@ -5,10 +5,10 @@ use crate::{
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
         AMBIENT_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control, DAY_NIGHT_ROW,
-        GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT,
-        HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay,
-        PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION, State, Subpage,
-        TILE_LIFT_ROW, Target, TextField, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT,
+        HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW,
+        MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION,
+        State, Subpage, TILE_LIFT_ROW, Target, TextField, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -2416,8 +2416,9 @@ fn library(out: &mut Scene, state: &State, assets: &Assets) {
 
 fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
+    let toolbar = state.drawer_toolbar();
     let mut x = 84.;
-    for (index, label) in CATEGORIES.into_iter().enumerate() {
+    for (index, label) in CATEGORIES.into_iter().enumerate().filter(|_| toolbar) {
         let label = language.category(label);
         let width = assets.width(label, text(20.8, 550, -0.02)) + 40.;
         let rect = Rect::new(x, 164.8, width, 56.);
@@ -2464,6 +2465,9 @@ fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
             },
         );
         out.control(Target::ClearFilter, rect, false);
+    }
+    if !toolbar {
+        return;
     }
     let search = Rect::new(1532., 164.8, 304., 56.);
     let focused = matches!(state.focus, Target::Search | Target::ClearSearch);
@@ -2521,6 +2525,12 @@ fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
 
 fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
+    // Without a top row the grid starts where the filters used to sit.
+    let top = if state.drawer_top().is_some() {
+        270.4
+    } else {
+        176.
+    };
     let s = state.scroll;
     let favorites = state.preferences.favorites(&state.inventory.apps);
     let apps = state.apps();
@@ -2548,7 +2558,7 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
             state,
             assets,
             EmptyState {
-                rect: Rect::new(84., 259.2 - s, 1752., 304.),
+                rect: Rect::new(84., top - 11.2 - s, 1752., 304.),
                 icon: "grid",
                 title,
                 hint: &hint,
@@ -2556,7 +2566,7 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
             },
         );
     }
-    let mut y = 270.4;
+    let mut y = top;
     let names = state.preferences.show_app_names;
     for row in apps.chunks(APPS_COLUMNS) {
         let row_height = FACE_HEIGHT
@@ -3405,6 +3415,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     "moreAppsHint",
                     "grid",
                     Some(language.t(state.preferences.more_apps_hint.label_key())),
+                    false,
+                ),
+                (
+                    DRAWER_TOOLBAR_ROW,
+                    "drawerToolbar",
+                    "search",
+                    Some(if state.preferences.drawer_toolbar {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
                     false,
                 ),
                 (QUICK_PANEL_ROW, "quickSettings", "gear", None, true),

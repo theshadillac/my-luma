@@ -5064,5 +5064,22 @@
     "sv": "Regn- och snöeffekter",
     "cs": "Efekty deště a sněhu",
     "ca": "Efectes de pluja i neu"
+  },
+  "drawerToolbar": {
+    "en": "Filters and search in the app drawer",
+    "de": "Filter und Suche in der App-Übersicht",
+    "es": "Filtros y búsqueda en el cajón de apps",
+    "zh": "应用抽屉中的筛选和搜索",
+    "zh-tw": "應用程式抽屜中的篩選與搜尋",
+    "pt": "Filtros e pesquisa na gaveta de apps",
+    "it": "Filtri e ricerca nel cassetto app",
+    "ru": "Фильтры и поиск в списке приложений",
+    "pl": "Filtry i wyszukiwanie w szufladzie aplikacji",
+    "fr": "Filtres et recherche dans le tiroir d’apps",
+    "vi": "Bộ lọc và tìm kiếm trong ngăn ứng dụng",
+    "nl": "Filters en zoeken in de app-lade",
+    "sv": "Filter och sök i applådan",
+    "cs": "Filtry a hledání v panelu aplikací",
+    "ca": "Filtres i cerca al calaix d’apps"
   }
 }

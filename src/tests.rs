@@ -4619,3 +4619,55 @@ fn rain_and_snow_show_only_with_the_option_and_matching_weather() {
     state.open(1);
     assert_eq!(state.precipitation(), None, "Home only");
 }
+
+#[test]
+fn drawer_toolbar_off_hides_filters_and_search_but_keeps_hidden_apps_reachable() {
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    let has = |state: &State, target: Target| {
+        controls(state)
+            .into_iter()
+            .any(|control| control.target == target)
+    };
+    state.open_drawer();
+    assert!(has(&state, Target::Filter(1)) && has(&state, Target::Search));
+    // Settings → General turns the toolbar off and forgets any search it could no longer clear.
+    state.query = "net".into();
+    state.open(2);
+    state.focus = Target::Setting(crate::state::DRAWER_TOOLBAR_ROW);
+    state.activate();
+    assert!(!state.preferences.drawer_toolbar);
+    assert!(state.query.is_empty());
+    state.open_drawer();
+    assert!(!has(&state, Target::Filter(1)) && !has(&state, Target::Search));
+    assert!(
+        !has(&state, Target::Filter(5)),
+        "nothing hidden: an empty top row"
+    );
+    let first = |state: &State| Target::App(state.apps()[0].id.clone());
+    let top = |state: &State| {
+        controls(state)
+            .into_iter()
+            .filter_map(|control| match control.target {
+                Target::App(_) => Some(control.rect.y),
+                _ => None,
+            })
+            .fold(f32::MAX, f32::min)
+    };
+    assert!(top(&state) < 200., "the grid moves up into the empty row");
+    // Up from the first row goes straight back to Home.
+    state.focus = first(&state);
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.page, Page::Home);
+    // With a hidden app the lone Hidden pill stays, so it can still be restored.
+    let hidden = state.apps()[0].id.clone();
+    state.preferences.hidden.push(hidden.clone());
+    state.open_drawer();
+    assert!(has(&state, Target::Filter(5)) && !has(&state, Target::Search));
+    assert!(top(&state) > 250.);
+    state.focus = first(&state);
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Filter(5));
+    state.activate();
+    assert!(state.apps().iter().any(|app| app.id == hidden));
+}

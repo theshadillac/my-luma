@@ -33,6 +33,7 @@ pub const PIXEL_SHIFT_ROW: usize = 20;
 pub const DAY_NIGHT_ROW: usize = 21;
 /// General settings row: rain and snow over the wallpaper.
 pub const WEATHER_EFFECTS_ROW: usize = 22;
+pub const DRAWER_TOOLBAR_ROW: usize = 23;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1313,7 +1314,7 @@ impl State {
                 .apps()
                 .first()
                 .map(|app| Target::App(app.id.clone()))
-                .unwrap_or(Target::Filter(1)),
+                .unwrap_or_else(|| self.drawer_top().unwrap_or(Target::Filter(1))),
             Page::Settings => Target::Sidebar(0),
         }
     }
@@ -1412,6 +1413,23 @@ impl State {
         }
         self.focus = target;
         self.dirty = true;
+    }
+
+    /// Whether the drawer shows its category filters and search box.
+    pub fn drawer_toolbar(&self) -> bool {
+        self.preferences.drawer_toolbar
+    }
+
+    /// The drawer's top-row control above the first apps, if it shows one. Without the
+    /// toolbar only the Hidden pill remains, so hidden apps can still be found and restored.
+    pub fn drawer_top(&self) -> Option<Target> {
+        if self.drawer_toolbar() {
+            Some(Target::Filter(1))
+        } else if self.hidden_count() > 0 || self.filter == 5 {
+            Some(Target::Filter(5))
+        } else {
+            None
+        }
     }
 
     pub fn hidden_count(&self) -> usize {
@@ -2118,7 +2136,10 @@ impl State {
                     // Its grid index still defines the route; reveal_focus then
                     // scrolls it into view, without letting the fixed nav steal Up.
                     let next = match direction {
-                        Direction::Up if index < APPS_COLUMNS => Some(Target::Filter(1)),
+                        Direction::Up if index < APPS_COLUMNS => match self.drawer_top() {
+                            Some(target) => Some(target),
+                            None => return self.close_drawer(),
+                        },
                         Direction::Up => Some(Target::App(apps[index - APPS_COLUMNS].id.clone())),
                         Direction::Down
                             if (index / APPS_COLUMNS + 1) * APPS_COLUMNS < apps.len() =>
@@ -2795,7 +2816,7 @@ impl State {
             }
             Target::ClearFilter => {
                 self.filter = 0;
-                self.focus = Target::Filter(1);
+                self.focus = self.drawer_top().unwrap_or_else(|| self.first_content());
                 self.scroll = 0.;
             }
             Target::ClearSearch => {
@@ -3057,6 +3078,16 @@ impl State {
                     DAY_NIGHT_ROW => self.preferences.day_night = !self.preferences.day_night,
                     WEATHER_EFFECTS_ROW => {
                         self.preferences.weather_effects = !self.preferences.weather_effects
+                    }
+                    DRAWER_TOOLBAR_ROW => {
+                        self.preferences.drawer_toolbar = !self.preferences.drawer_toolbar;
+                        if !self.preferences.drawer_toolbar {
+                            // Nothing on screen could clear these any more.
+                            self.query.clear();
+                            if self.filter != 5 {
+                                self.filter = 0;
+                            }
+                        }
                     }
                     QUICK_PANEL_ROW => {
                         self.subpage = Some(Subpage::QuickPanel);

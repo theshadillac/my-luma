@@ -442,6 +442,8 @@ pub struct Preferences {
     pub night_wallpapers: Vec<String>,
     /// Light rain or snow over Home's wallpaper while it rains or snows (fork option).
     pub weather_effects: bool,
+    /// Category filters and the search box at the top of the app drawer (fork option).
+    pub drawer_toolbar: bool,
 }
 
 impl Default for Preferences {
@@ -489,6 +491,7 @@ impl Default for Preferences {
             day_night: false,
             night_wallpapers: Vec::new(),
             weather_effects: false,
+            drawer_toolbar: true,
         }
     }
 }
