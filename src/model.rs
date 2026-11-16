@@ -286,32 +286,16 @@ fn deserialize_clock_position<'de, D: serde::Deserializer<'de>>(
 /// A button of the quick settings panel behind the gear (fork).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum QuickKey {
-    ScreenOff,
-    Sleep,
-    Picture,
-    Sound,
     Ambient,
     Inputs,
     TvSettings,
 }
 
 impl QuickKey {
-    pub const ALL: [Self; 7] = [
-        Self::ScreenOff,
-        Self::Sleep,
-        Self::Picture,
-        Self::Sound,
-        Self::Ambient,
-        Self::Inputs,
-        Self::TvSettings,
-    ];
+    pub const ALL: [Self; 3] = [Self::Ambient, Self::Inputs, Self::TvSettings];
     /// Stable name kept in preferences.
     pub fn key(self) -> &'static str {
         match self {
-            Self::ScreenOff => "screen-off",
-            Self::Sleep => "sleep",
-            Self::Picture => "picture",
-            Self::Sound => "sound",
             Self::Ambient => "ambient",
             Self::Inputs => "inputs",
             Self::TvSettings => "tv-settings",
@@ -319,10 +303,6 @@ impl QuickKey {
     }
     pub fn label_key(self) -> &'static str {
         match self {
-            Self::ScreenOff => "screenOff",
-            Self::Sleep => "sleepTimer",
-            Self::Picture => "pictureMode",
-            Self::Sound => "soundOutput",
             Self::Ambient => "ambientNow",
             Self::Inputs => "inputs",
             Self::TvSettings => "tvSettings",
@@ -330,10 +310,6 @@ impl QuickKey {
     }
     pub fn icon(self) -> &'static str {
         match self {
-            Self::ScreenOff => "power",
-            Self::Sleep => "weather-moon",
-            Self::Picture => "sparkles",
-            Self::Sound => "volume",
             Self::Ambient => "clock",
             Self::Inputs => "input-hdmi",
             Self::TvSettings => "settings",

@@ -2997,7 +2997,7 @@ fn the_gear_sits_alone_at_the_top_right_and_opens_the_quick_panel() {
         state.hit_test(&rendered.controls, x, y),
         Some(Target::Nav(2))
     );
-    // TV settings moved into the panel, which also reads the TV's picture and sound.
+    // TV settings moved into the panel; opening it changes nothing on the TV.
     assert!(
         !rendered
             .controls
@@ -3005,15 +3005,8 @@ fn the_gear_sits_alone_at_the_top_right_and_opens_the_quick_panel() {
             .any(|c| c.target == Target::TvSettings)
     );
     state.focus = Target::Nav(2);
-    let effects = state.activate();
-    assert_eq!(
-        effects,
-        vec![
-            Effect::System(crate::state::SystemCall::ReadPicture),
-            Effect::System(crate::state::SystemCall::ReadSound),
-        ]
-    );
-    assert_eq!(state.focus, Target::Quick(QuickKey::ScreenOff));
+    assert!(state.activate().is_empty());
+    assert_eq!(state.focus, Target::Quick(QuickKey::Ambient));
     let panel: Vec<_> = scene(&state)
         .controls
         .into_iter()
@@ -3027,7 +3020,7 @@ fn the_gear_sits_alone_at_the_top_right_and_opens_the_quick_panel() {
     );
     // Spatial moves inside the panel; Back closes it onto the gear.
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Quick(QuickKey::Sleep));
+    assert_eq!(state.focus, Target::Quick(QuickKey::TvSettings));
     state.focus = Target::Quick(QuickKey::TvSettings);
     assert_eq!(
         state.activate(),
@@ -3041,57 +3034,23 @@ fn the_gear_sits_alone_at_the_top_right_and_opens_the_quick_panel() {
 }
 
 #[test]
-fn quick_panel_controls_cycle_picture_and_sound_and_report_refusals() {
-    use crate::{model::QuickKey, state::SystemCall};
+fn quick_panel_starts_ambient_and_its_buttons_switch_off() {
+    use crate::model::QuickKey;
     let mut state = ready();
-    state.open_quick();
-    state.focus = Target::Quick(QuickKey::Picture);
-    assert_eq!(
-        state.activate(),
-        vec![Effect::System(SystemCall::SetPicture("filmMaker".into()))]
-    );
-    state.system_response(
-        SystemCall::ReadPicture,
-        Ok(serde_json::json!({"settings": {"pictureMode": "cinema"}})),
-    );
-    assert_eq!(
-        state.activate(),
-        vec![Effect::System(SystemCall::SetPicture("normal".into()))]
-    );
-    state.system_response(
-        SystemCall::ReadSound,
-        Ok(serde_json::json!({"soundOutput": "external_arc"})),
-    );
-    state.focus = Target::Quick(QuickKey::Sound);
-    assert_eq!(
-        state.activate(),
-        vec![Effect::System(SystemCall::SetSound("tv_speaker".into()))]
-    );
-    assert!(state.notice.is_none());
-    state.system_response(
-        SystemCall::SetSound("tv_speaker".into()),
-        Err("denied".into()),
-    );
-    assert!(state.notice.is_some(), "a refused change says so");
-    // Screen off closes the panel first; Ambient starts even with its timer off.
-    state.focus = Target::Quick(QuickKey::ScreenOff);
-    assert_eq!(
-        state.activate(),
-        vec![Effect::System(SystemCall::ScreenOff)]
-    );
-    assert!(state.overlay.is_none());
+    // Ambient starts even with its idle timer off, and any key wakes it as usual.
     state.preferences.ambient_minutes = 0;
     state.open_quick();
     state.focus = Target::Quick(QuickKey::Ambient);
-    state.activate();
+    assert!(state.activate().is_empty());
+    assert!(state.overlay.is_none());
     state.ambient_tick(true);
     assert!(state.ambient.is_some());
-    assert!(state.note_input(), "any key wakes it as usual");
-    // Each button can be switched off in Settings.
-    state.preferences.toggle_quick(QuickKey::Sleep);
-    assert!(!state.quick_keys().contains(&QuickKey::Sleep));
-    state.preferences.toggle_quick(QuickKey::Sleep);
-    assert!(state.quick_keys().contains(&QuickKey::Sleep));
+    assert!(state.note_input());
+    // Each button can be switched off in Settings → General → Quick settings.
+    state.preferences.toggle_quick(QuickKey::Ambient);
+    assert!(!state.quick_keys().contains(&QuickKey::Ambient));
+    state.preferences.toggle_quick(QuickKey::Ambient);
+    assert!(state.quick_keys().contains(&QuickKey::Ambient));
 }
 
 #[test]

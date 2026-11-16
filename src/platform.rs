@@ -182,7 +182,6 @@ pub enum Request {
         generation: u64,
         command: crate::recents::Command,
     },
-    System(crate::state::SystemCall),
 }
 pub enum Response {
     Inventory(Result<(Inventory, Option<String>), String>),
@@ -197,7 +196,6 @@ pub enum Response {
         command: crate::recents::Command,
         result: Result<Option<Vec<crate::recents::Entry>>, String>,
     },
-    System(crate::state::SystemCall, Result<Value, String>),
 }
 
 pub struct Platform {
@@ -326,14 +324,6 @@ impl Platform {
                             }
                         });
                         Response::Uninstalled { id, result }
-                    }
-                    Request::System(system) => {
-                        let result = if webos {
-                            system_call(&system)
-                        } else {
-                            Err("TV controls only work on the TV".into())
-                        };
-                        Response::System(system, result)
                     }
                     Request::Launch(id) => Response::Launched(if webos {
                         if crate::scroll_preview::is_placeholder(&id) {
@@ -556,42 +546,6 @@ pub fn inventory_confirms_removal(apps: &Value, id: &str) -> Result<bool, String
         present |= app_id == id;
     }
     Ok(!present)
-}
-
-/// The quick panel's TV controls. Screen off retries with webOS's newer standby argument.
-fn system_call(system: &crate::state::SystemCall) -> Result<Value, String> {
-    use crate::state::SystemCall;
-    const SETTINGS: &str = "luna://com.webos.settingsservice";
-    const AUDIO: &str = "luna://com.webos.service.apiadapter/audio";
-    match system {
-        SystemCall::ScreenOff => call(
-            "luna://com.webos.service.tvpower/power/turnOffScreen",
-            json!({}),
-        )
-        .or_else(|_| {
-            call(
-                "luna://com.webos.service.tvpower/power/turnOffScreen",
-                json!({"standbyMode": "local"}),
-            )
-        }),
-        SystemCall::OpenSleep => call(
-            "luna://com.webos.applicationManager/launch",
-            json!({"id": "com.webos.app.tvhotkey", "params": {"activateType": "sleep"}}),
-        ),
-        SystemCall::ReadPicture => call(
-            &format!("{SETTINGS}/getSystemSettings"),
-            json!({"category": "picture", "keys": ["pictureMode"]}),
-        ),
-        SystemCall::SetPicture(mode) => call(
-            &format!("{SETTINGS}/setSystemSettings"),
-            json!({"category": "picture", "settings": {"pictureMode": mode}}),
-        ),
-        SystemCall::ReadSound => call(&format!("{AUDIO}/getSoundOutput"), json!({})),
-        SystemCall::SetSound(output) => call(
-            &format!("{AUDIO}/changeSoundOutput"),
-            json!({"output": output}),
-        ),
-    }
 }
 
 fn raw_call(uri: &str, payload: &Value) -> Result<Value, String> {

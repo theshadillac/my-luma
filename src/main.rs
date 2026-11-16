@@ -319,7 +319,6 @@ fn effects(
                     platform.send(Request::Refresh);
                 }
             }
-            Effect::System(call) => platform.send(Request::System(call)),
             Effect::Launch(id) => {
                 if scroll_preview::is_placeholder(&id) {
                     state.notify(state.preferences.language.t("scrollTestOnly"));
@@ -1167,19 +1166,6 @@ fn run() -> Result<(), String> {
                     if let Err(error) = input_refresh.completed(Instant::now(), result) {
                         eprintln!("Luma HDMI refresh: {error}");
                     }
-                }
-                Response::System(call, result) => {
-                    let follow = state.system_response(call, result);
-                    running &= effects(
-                        follow,
-                        &mut state,
-                        &platform,
-                        &preferences_path,
-                        &weather_service,
-                        &wallpaper_service,
-                        &webhook_service,
-                        &updates,
-                    );
                 }
                 Response::Launched(result) => {
                     state.launching = false;

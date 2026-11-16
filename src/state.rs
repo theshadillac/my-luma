@@ -40,11 +40,7 @@ pub enum Precipitation {
     Rain,
     Snow,
 }
-const QUICK_TOGGLES: [Target; 7] = [
-    Target::QuickToggle(crate::model::QuickKey::ScreenOff),
-    Target::QuickToggle(crate::model::QuickKey::Sleep),
-    Target::QuickToggle(crate::model::QuickKey::Picture),
-    Target::QuickToggle(crate::model::QuickKey::Sound),
+const QUICK_TOGGLES: [Target; 3] = [
     Target::QuickToggle(crate::model::QuickKey::Ambient),
     Target::QuickToggle(crate::model::QuickKey::Inputs),
     Target::QuickToggle(crate::model::QuickKey::TvSettings),
@@ -307,29 +303,6 @@ pub enum Direction {
     Right,
 }
 
-/// A TV system control from the quick settings panel, run on the platform worker.
-#[derive(Clone, Debug, PartialEq)]
-pub enum SystemCall {
-    ScreenOff,
-    /// LG's own sleep timer menu.
-    OpenSleep,
-    ReadPicture,
-    SetPicture(String),
-    ReadSound,
-    SetSound(String),
-}
-
-/// Picture modes the quick panel steps through, as LG's settings service names them.
-pub const PICTURE_MODES: [(&str, &str); 5] = [
-    ("filmMaker", "Filmmaker"),
-    ("cinema", "Cinema"),
-    ("normal", "Standard"),
-    ("vivid", "Vivid"),
-    ("eco", "Eco"),
-];
-/// Sound outputs the quick panel switches between: the receiver over eARC, or the TV.
-pub const SOUND_OUTPUTS: [&str; 2] = ["external_arc", "tv_speaker"];
-
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     Save,
@@ -349,7 +322,6 @@ pub enum Effect {
     Quit,
     Weather(weather::Command),
     UpdateDownload(String),
-    System(SystemCall),
 }
 
 pub const KEYS: [&str; 40] = [
@@ -406,9 +378,6 @@ pub struct State {
     pub page_motion: Option<(Page, Instant)>,
     /// The favourite the app drawer was opened from, focused again when it closes.
     drawer_return: Option<Target>,
-    /// The TV's picture mode and sound output as last read, for the quick panel.
-    pub tv_picture: Option<String>,
-    pub tv_sound: Option<String>,
     /// Ambient started from the quick panel, whatever its idle timer.
     ambient_manual: bool,
     /// Until the first app list arrives (or the user presses something), Home's focus belongs on
@@ -442,8 +411,6 @@ impl State {
             waking: None,
             page_motion: None,
             drawer_return: None,
-            tv_picture: None,
-            tv_sound: None,
             ambient_manual: false,
             settle_focus: true,
             lift_focus: (
@@ -896,7 +863,7 @@ impl State {
             .collect()
     }
 
-    /// The gear opens the quick settings panel, reading the TV's picture and sound first.
+    /// The gear opens the quick settings panel.
     pub fn open_quick(&mut self) -> Vec<Effect> {
         self.overlay = Some(Overlay::Quick);
         self.focus = self
@@ -906,10 +873,7 @@ impl State {
         self.pressed = None;
         self.panel_started = (!self.preferences.reduced_motion).then(Instant::now);
         self.dirty = true;
-        vec![
-            Effect::System(SystemCall::ReadPicture),
-            Effect::System(SystemCall::ReadSound),
-        ]
+        vec![]
     }
 
     fn close_quick(&mut self) {
@@ -918,32 +882,6 @@ impl State {
         self.focus = Target::Nav(2);
         self.pressed = None;
         self.dirty = true;
-    }
-
-    /// A TV control's answer: remembered values for the panel, or a short notice on failure.
-    pub fn system_response(
-        &mut self,
-        call: SystemCall,
-        result: Result<serde_json::Value, String>,
-    ) -> Vec<Effect> {
-        self.dirty = true;
-        match (call, result) {
-            (SystemCall::ReadPicture, Ok(value)) => {
-                self.tv_picture = value["settings"]["pictureMode"].as_str().map(str::to_owned);
-            }
-            (SystemCall::ReadSound, Ok(value)) => {
-                self.tv_sound = value["soundOutput"].as_str().map(str::to_owned);
-            }
-            (SystemCall::SetPicture(mode), Ok(_)) => self.tv_picture = Some(mode),
-            (SystemCall::SetSound(output), Ok(_)) => self.tv_sound = Some(output),
-            (SystemCall::ReadPicture | SystemCall::ReadSound, Err(_)) => {}
-            (_, Err(error)) => {
-                eprintln!("Luma quick settings: {error}");
-                self.notify(self.preferences.language.t("tvControlFailed"));
-            }
-            (_, Ok(_)) => {}
-        }
-        vec![]
     }
 
     /// Starts easing in the page just entered (not with reduced motion).
@@ -2368,32 +2306,6 @@ impl State {
     fn quick(&mut self, key: crate::model::QuickKey) -> Vec<Effect> {
         use crate::model::QuickKey;
         match key {
-            QuickKey::ScreenOff => {
-                self.close_quick();
-                vec![Effect::System(SystemCall::ScreenOff)]
-            }
-            QuickKey::Sleep => {
-                self.close_quick();
-                vec![Effect::System(SystemCall::OpenSleep)]
-            }
-            QuickKey::Picture => {
-                let current = self
-                    .tv_picture
-                    .as_deref()
-                    .and_then(|mode| PICTURE_MODES.iter().position(|(id, _)| *id == mode));
-                let next = current.map_or(0, |index| (index + 1) % PICTURE_MODES.len());
-                vec![Effect::System(SystemCall::SetPicture(
-                    PICTURE_MODES[next].0.into(),
-                ))]
-            }
-            QuickKey::Sound => {
-                let next = if self.tv_sound.as_deref() == Some(SOUND_OUTPUTS[0]) {
-                    SOUND_OUTPUTS[1]
-                } else {
-                    SOUND_OUTPUTS[0]
-                };
-                vec![Effect::System(SystemCall::SetSound(next.into()))]
-            }
             QuickKey::Ambient => {
                 self.close_quick();
                 if self.page != Page::Home {

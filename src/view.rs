@@ -955,10 +955,18 @@ fn weather_effect(out: &mut Scene, state: &State, now: OffsetDateTime) {
 /// The quick settings panel: a frosted sheet sliding in from the right, two buttons a row,
 /// with "All settings" at the bottom.
 fn quick_panel(out: &mut Scene, state: &State, assets: &Assets) {
-    use crate::model::QuickKey;
     let language = state.preferences.language;
     let start = out.draw.len();
-    let panel = Rect::new(1240., 40., 640., 1000.);
+    // Sized to its buttons, with "All settings" below them.
+    let (pad, gap, tile_h) = (44., 20., 172.);
+    let keys = state.quick_keys();
+    let rows = keys.len().div_ceil(2) as f32;
+    let panel = Rect::new(
+        1240.,
+        40.,
+        640.,
+        112. + rows * (tile_h + gap) + 8. + 84. + 44.,
+    );
     out.modal = Some(panel);
     out.shadow(panel, 36., 120., 25., 0.45);
     out.draw.push(Draw::RoundedGradient(
@@ -975,35 +983,7 @@ fn quick_panel(out: &mut Scene, state: &State, assets: &Assets) {
         WHITE,
         false,
     );
-    let (pad, gap, tile_h) = (44., 20., 172.);
     let tile_w = (panel.w - pad * 2. - gap) / 2.;
-    let keys = state.quick_keys();
-    let value = |key: QuickKey| -> Option<String> {
-        match key {
-            QuickKey::Picture => Some(
-                state
-                    .tv_picture
-                    .as_deref()
-                    .map(|mode| {
-                        crate::state::PICTURE_MODES
-                            .iter()
-                            .find(|(id, _)| *id == mode)
-                            .map_or(mode.to_owned(), |(_, name)| (*name).to_owned())
-                    })
-                    .unwrap_or_else(|| language.t("tapToChange").to_owned()),
-            ),
-            QuickKey::Sound => Some(
-                match state.tv_sound.as_deref() {
-                    Some("external_arc") => language.t("soundReceiver"),
-                    Some("tv_speaker") => language.t("soundTvSpeakers"),
-                    Some(other) => other,
-                    None => language.t("tapToChange"),
-                }
-                .to_owned(),
-            ),
-            _ => None,
-        }
-    };
     let lit = |target: &Target| {
         (state.focus == *target && !state.pointer)
             || (state.pointer && state.hover.as_ref() == Some(target))
@@ -1029,11 +1009,6 @@ fn quick_panel(out: &mut Scene, state: &State, assets: &Assets) {
             out.border(rect, 26., 1., c(0xffffff, 0.08));
         }
         let ink = if focused { c(0x242424, 1.) } else { WHITE };
-        let soft = if focused {
-            c(0x242424, 0.62)
-        } else {
-            c(0xffffff, 0.62)
-        };
         out.icon(
             assets,
             key.icon(),
@@ -1047,19 +1022,8 @@ fn quick_panel(out: &mut Scene, state: &State, assets: &Assets) {
             ink,
             false,
         );
-        if let Some(value) = value(*key) {
-            let style = assets.fit_text(&value, text(19., 500, 0.), rect.w - 52.);
-            out.text(
-                value,
-                Rect::new(rect.x + 26., rect.y + 120., rect.w - 52., 26.),
-                style,
-                soft,
-                false,
-            );
-        }
         out.control(target, rect, false);
     }
-    let rows = keys.len().div_ceil(2) as f32;
     let all = Rect::new(
         panel.x + pad,
         panel.y + 112. + rows * (tile_h + gap) + 8.,
