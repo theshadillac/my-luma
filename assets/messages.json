@@ -5353,5 +5353,39 @@
     "sv": "{state} till {time}",
     "cs": "{state} do {time}",
     "ca": "{state} fins a les {time}"
+  },
+  "uiSoundOutput": {
+    "en": "Sound output",
+    "de": "Tonausgabe",
+    "es": "Salida de sonido",
+    "zh": "声音输出",
+    "zh-tw": "聲音輸出",
+    "pt": "Saída de som",
+    "it": "Uscita audio",
+    "ru": "Аудиовыход",
+    "pl": "Wyjście dźwięku",
+    "fr": "Sortie audio",
+    "vi": "Đầu ra âm thanh",
+    "nl": "Geluidsuitvoer",
+    "sv": "Ljudutgång",
+    "cs": "Zvukový výstup",
+    "ca": "Sortida de so"
+  },
+  "outputDefault": {
+    "en": "Default",
+    "de": "Standard",
+    "es": "Predeterminada",
+    "zh": "默认",
+    "zh-tw": "預設",
+    "pt": "Padrão",
+    "it": "Predefinita",
+    "ru": "По умолчанию",
+    "pl": "Domyślne",
+    "fr": "Par défaut",
+    "vi": "Mặc định",
+    "nl": "Standaard",
+    "sv": "Standard",
+    "cs": "Výchozí",
+    "ca": "Predeterminada"
   }
 }

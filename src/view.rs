@@ -9,7 +9,7 @@ use crate::{
         HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
         LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect,
         SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
-        UI_SOUNDS_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -3493,6 +3493,19 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     } else {
                         language.t("stateOn")
                     }),
+                    false,
+                ),
+                (
+                    UI_SOUND_OUTPUT_ROW,
+                    "uiSoundOutput",
+                    "volume",
+                    Some(
+                        state
+                            .preferences
+                            .ui_sound_output
+                            .as_deref()
+                            .unwrap_or(language.t("outputDefault")),
+                    ),
                     false,
                 ),
                 (

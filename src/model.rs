@@ -501,6 +501,8 @@ pub struct Preferences {
     pub ui_sounds: bool,
     /// UI sound volume (fork option).
     pub ui_sound_level: UiSoundLevel,
+    /// Audio output for UI sounds by its driver name; None plays to the default.
+    pub ui_sound_output: Option<String>,
     /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
     pub app_sorting: AppSorting,
     /// Successful launches per app id, kept only on the TV, for the "Most used" order.
@@ -555,6 +557,7 @@ impl Default for Preferences {
             drawer_toolbar: true,
             ui_sounds: false,
             ui_sound_level: UiSoundLevel::default(),
+            ui_sound_output: None,
             app_sorting: AppSorting::default(),
             app_launch_counts: Default::default(),
         }

@@ -4751,3 +4751,34 @@ fn calculated_sun_times_match_fort_collins_in_november() {
     let noon = evening.replace_hour(12).unwrap();
     assert!(!state.is_night(noon));
 }
+
+#[test]
+fn sound_output_cycles_default_then_each_tv_output_and_back() {
+    use crate::state::{CONTROLS_SECTION, UI_SOUND_OUTPUT_ROW};
+    let mut state = ready();
+    state.preferences.ui_sounds = true;
+    state.open(2);
+    state.section = CONTROLS_SECTION;
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|control| control.target == Target::Setting(UI_SOUND_OUTPUT_ROW))
+    );
+    state.ui_sound_outputs = vec!["pdefaultapp".into(), "pfeedback".into()];
+    state.focus = Target::Setting(UI_SOUND_OUTPUT_ROW);
+    let mut seen = vec![];
+    for _ in 0..3 {
+        assert_eq!(state.activate(), vec![Effect::Save]);
+        seen.push(state.preferences.ui_sound_output.clone());
+    }
+    assert_eq!(
+        seen,
+        [Some("pdefaultapp".into()), Some("pfeedback".into()), None]
+    );
+    state.preferences.ui_sounds = false;
+    assert!(
+        !controls(&state)
+            .iter()
+            .any(|control| control.target == Target::Setting(UI_SOUND_OUTPUT_ROW))
+    );
+}

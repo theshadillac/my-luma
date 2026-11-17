@@ -59,6 +59,8 @@ pub struct Feedback {
     queued_at: Option<Instant>,
     /// Whether the last checked cue drained from the queue (played) or sat there (stalled).
     pub played: Option<bool>,
+    /// The output the open device plays to (None = PulseAudio's default).
+    output: Option<String>,
     last_navigation: Option<Instant>,
 }
 
@@ -74,7 +76,14 @@ impl Feedback {
         }
     }
 
-    pub fn play(&mut self, sdl: &sdl2::Sdl, cue: Cue, level: UiSoundLevel) {
+    pub fn play(&mut self, sdl: &sdl2::Sdl, cue: Cue, level: UiSoundLevel, output: Option<&str>) {
+        // A different output was chosen in Settings: reopen there, and retry if it failed.
+        if self.output.as_deref() != output {
+            self.device = None;
+            self.failed = false;
+            self.played = None;
+            self.output = output.map(str::to_owned);
+        }
         if self.failed {
             return;
         }
@@ -98,7 +107,7 @@ impl Feedback {
         if self.device.is_none() {
             let opened = sdl.audio().and_then(|audio| {
                 audio.open_queue(
-                    None,
+                    output,
                     &AudioSpecDesired {
                         freq: Some(RATE),
                         channels: Some(1),
@@ -163,6 +172,18 @@ impl Feedback {
         let changed = self.played != played;
         self.played = played;
         changed
+    }
+
+    /// Playback outputs the audio driver offers, for the Settings "Sound output" choice.
+    pub fn outputs(sdl: &sdl2::Sdl) -> Vec<String> {
+        let Ok(audio) = sdl.audio() else {
+            return vec![];
+        };
+        let count = audio.num_audio_playback_devices().unwrap_or(0);
+        (0..count)
+            .filter_map(|index| audio.audio_playback_device_name(index).ok())
+            .filter(|name| !name.is_empty())
+            .collect()
     }
 
     /// "pulseaudio · playing": the driver and whether sound is actually leaving the queue.
@@ -272,21 +293,21 @@ mod tests {
         let sdl = sdl2::init().unwrap();
         let mut feedback = Feedback::default();
         feedback.sync(true, true);
-        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium, None);
         assert!(!feedback.failed);
         assert!(feedback.device.is_some());
-        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium, None);
         let last = feedback.last_navigation;
-        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium, None);
         assert_eq!(
             feedback.last_navigation, last,
             "rapid navigation is throttled"
         );
-        feedback.play(&sdl, Cue::Back, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Back, UiSoundLevel::Medium, None);
         assert!(feedback.device.as_ref().unwrap().size() <= (RATE as u32 / 10) * 4);
         feedback.sync(true, false);
         assert!(feedback.device.is_none());
-        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium, None);
         assert!(feedback.device.is_some());
         feedback.sync(false, true);
         assert!(feedback.device.is_none());
@@ -297,10 +318,10 @@ mod tests {
     fn unavailable_audio_fails_silently_without_repeated_initialization() {
         let sdl = sdl2::init().unwrap();
         let mut feedback = Feedback::default();
-        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium, None);
         assert!(feedback.failed);
         assert!(feedback.device.is_none());
-        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium);
+        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium, None);
         assert!(feedback.failed);
         assert!(
             feedback.device.is_none(),

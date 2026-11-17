@@ -58,6 +58,7 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
             let mut rows = vec![BACK_RECENTS_ROW, QUICK_PANEL_ROW, UI_SOUNDS_ROW];
             if ui_sounds {
                 rows.push(UI_SOUND_LEVEL_ROW);
+                rows.push(UI_SOUND_OUTPUT_ROW);
             }
             rows
         }
@@ -97,6 +98,7 @@ pub const DRAWER_TOOLBAR_ROW: usize = 23;
 pub const UI_SOUNDS_ROW: usize = 24;
 pub const APP_SORTING_ROW: usize = 25;
 pub const UI_SOUND_LEVEL_ROW: usize = 26;
+pub const UI_SOUND_OUTPUT_ROW: usize = 27;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -451,6 +453,8 @@ pub struct State {
     pub ui_sounds_unavailable: bool,
     /// What the TV did with the last UI sound, e.g. "pulseaudio · playing"; shown in Settings.
     pub ui_sounds_detail: Option<String>,
+    /// Playback outputs the TV offers for UI sounds (filled once audio is first used).
+    pub ui_sound_outputs: Vec<String>,
     /// The focus the tile lift last saw, the one before it, and when it changed.
     lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
@@ -483,6 +487,7 @@ impl State {
             settle_focus: true,
             ui_sounds_unavailable: false,
             ui_sounds_detail: None,
+            ui_sound_outputs: Vec::new(),
             lift_focus: (
                 Target::Nav(0),
                 None,
@@ -3202,6 +3207,20 @@ impl State {
                     UI_SOUNDS_ROW => self.preferences.ui_sounds = !self.preferences.ui_sounds,
                     UI_SOUND_LEVEL_ROW => {
                         self.preferences.ui_sound_level = self.preferences.ui_sound_level.next()
+                    }
+                    UI_SOUND_OUTPUT_ROW => {
+                        // Default, then each output the TV offers, then back to Default.
+                        let outputs = &self.ui_sound_outputs;
+                        let next = match &self.preferences.ui_sound_output {
+                            None => outputs.first().cloned(),
+                            Some(current) => outputs
+                                .iter()
+                                .position(|output| output == current)
+                                .and_then(|index| outputs.get(index + 1))
+                                .cloned(),
+                        };
+                        self.preferences.ui_sound_output = next;
+                        self.ui_sounds_detail = None;
                     }
                     APP_SORTING_ROW => {
                         self.preferences.app_sorting = self.preferences.app_sorting.next()
