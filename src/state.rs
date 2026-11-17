@@ -36,6 +36,7 @@ pub const WEATHER_EFFECTS_ROW: usize = 22;
 pub const DRAWER_TOOLBAR_ROW: usize = 23;
 pub const UI_SOUNDS_ROW: usize = 24;
 pub const APP_SORTING_ROW: usize = 25;
+pub const UI_SOUND_LEVEL_ROW: usize = 26;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -386,6 +387,8 @@ pub struct State {
     /// Until the first app list arrives (or the user presses something), Home's focus belongs on
     /// the first app, not the tab bar it starts on while nothing is loaded yet.
     settle_focus: bool,
+    /// Set when the TV refused the audio device for UI sounds; shown in Settings.
+    pub ui_sounds_unavailable: bool,
     /// The focus the tile lift last saw, the one before it, and when it changed.
     lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
@@ -416,6 +419,7 @@ impl State {
             drawer_return: None,
             ambient_manual: false,
             settle_focus: true,
+            ui_sounds_unavailable: false,
             lift_focus: (
                 Target::Nav(0),
                 None,
@@ -3111,6 +3115,9 @@ impl State {
                         self.preferences.weather_effects = !self.preferences.weather_effects
                     }
                     UI_SOUNDS_ROW => self.preferences.ui_sounds = !self.preferences.ui_sounds,
+                    UI_SOUND_LEVEL_ROW => {
+                        self.preferences.ui_sound_level = self.preferences.ui_sound_level.next()
+                    }
                     APP_SORTING_ROW => {
                         self.preferences.app_sorting = self.preferences.app_sorting.next()
                     }

@@ -1,4 +1,5 @@
 //! Original, quiet TV-style cues. No external audio assets, codecs, or Apple recordings.
+use crate::model::UiSoundLevel;
 use crate::state::{Overlay, Page, State, Subpage, Target};
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use std::{
@@ -8,6 +9,8 @@ use std::{
 };
 
 const RATE: i32 = 48_000;
+/// Silence queued ahead of the first cue after the device opens.
+const WARM_UP: f32 = 0.35;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Cue {
@@ -48,7 +51,8 @@ impl Route {
 pub struct Feedback {
     device: Option<AudioQueue<f32>>,
     samples: [Vec<f32>; 3],
-    failed: bool,
+    level: Option<UiSoundLevel>,
+    pub failed: bool,
     last_navigation: Option<Instant>,
 }
 
@@ -64,10 +68,19 @@ impl Feedback {
         }
     }
 
-    pub fn play(&mut self, sdl: &sdl2::Sdl, cue: Cue) {
+    pub fn play(&mut self, sdl: &sdl2::Sdl, cue: Cue, level: UiSoundLevel) {
         if self.failed {
             return;
         }
+        if self.level != Some(level) {
+            self.samples = [
+                synthesize(Cue::Navigate, level),
+                synthesize(Cue::Select, level),
+                synthesize(Cue::Back, level),
+            ];
+            self.level = Some(level);
+        }
+        let mut warm_up = false;
         let now = Instant::now();
         if cue == Cue::Navigate
             && self
@@ -89,13 +102,9 @@ impl Feedback {
             });
             match opened {
                 Ok(device) => {
-                    self.samples = [
-                        synthesize(Cue::Navigate),
-                        synthesize(Cue::Select),
-                        synthesize(Cue::Back),
-                    ];
                     device.resume();
                     self.device = Some(device);
+                    warm_up = true;
                 }
                 Err(error) => {
                     eprintln!("Luma UI sounds unavailable: {error}");
@@ -106,13 +115,23 @@ impl Feedback {
         }
         let device = self.device.as_ref().unwrap();
         // Never accumulate stale cues behind rapid repeats; at most one short cue is queued.
-        device.clear();
+        // A freshly opened stream starts with silence instead: AV receivers on eARC/ARC mute
+        // the first few hundred milliseconds of new PCM while they lock on, which would
+        // otherwise swallow the whole click. The open device keeps streaming silence after.
         let index = match cue {
             Cue::Navigate => 0,
             Cue::Select => 1,
             Cue::Back => 2,
         };
-        if let Err(error) = device.queue_audio(&self.samples[index]) {
+        let queued = if warm_up {
+            let mut lead = vec![0.; (WARM_UP * RATE as f32) as usize];
+            lead.extend_from_slice(&self.samples[index]);
+            device.queue_audio(&lead)
+        } else {
+            device.clear();
+            device.queue_audio(&self.samples[index])
+        };
+        if let Err(error) = queued {
             eprintln!("Luma UI sounds stopped: {error}");
             self.device = None;
             self.failed = true;
@@ -123,7 +142,16 @@ impl Feedback {
     }
 }
 
-fn synthesize(cue: Cue) -> Vec<f32> {
+/// Peak amplitude for each volume step. Low is the original upstream level.
+fn gain(level: UiSoundLevel) -> f32 {
+    match level {
+        UiSoundLevel::Low => 0.12,
+        UiSoundLevel::Medium => 0.3,
+        UiSoundLevel::High => 0.6,
+    }
+}
+
+fn synthesize(cue: Cue, level: UiSoundLevel) -> Vec<f32> {
     let (duration, start, end) = match cue {
         Cue::Navigate => (0.045, 540., 420.),
         Cue::Select => (0.085, 660., 990.),
@@ -136,7 +164,7 @@ fn synthesize(cue: Cue) -> Vec<f32> {
             let progress = index as f32 / (count - 1) as f32;
             let envelope = (std::f32::consts::PI * progress).sin().powi(2) * (-3. * progress).exp();
             let phase = TAU * (start * t + (end - start) * t * t / (2. * duration));
-            0.12 * envelope * (phase.sin() + 0.15 * (2. * phase).sin())
+            gain(level) * envelope * (phase.sin() + 0.15 * (2. * phase).sin())
         })
         .collect()
 }
@@ -149,7 +177,7 @@ mod tests {
     #[test]
     fn cues_are_short_quiet_finite_and_fade_at_both_ends() {
         for cue in [Cue::Navigate, Cue::Select, Cue::Back] {
-            let samples = synthesize(cue);
+            let samples = synthesize(cue, UiSoundLevel::Low);
             assert!(samples.len() <= RATE as usize / 10);
             assert!(
                 samples
@@ -160,8 +188,14 @@ mod tests {
             assert!(samples.first().unwrap().abs() < 0.00001);
             assert!(samples.last().unwrap().abs() < 0.00001);
         }
-        assert_ne!(synthesize(Cue::Navigate), synthesize(Cue::Select));
-        assert_ne!(synthesize(Cue::Select), synthesize(Cue::Back));
+        assert_ne!(
+            synthesize(Cue::Navigate, UiSoundLevel::Low),
+            synthesize(Cue::Select, UiSoundLevel::Low)
+        );
+        assert_ne!(
+            synthesize(Cue::Select, UiSoundLevel::Low),
+            synthesize(Cue::Back, UiSoundLevel::Low)
+        );
     }
 
     #[test]
@@ -187,7 +221,10 @@ mod tests {
         let mut feedback = Feedback::default();
         feedback.sync(false, true);
         assert!(feedback.device.is_none());
-        assert!(feedback.samples.iter().all(Vec::is_empty));
+        assert!(
+            feedback.device.is_none(),
+            "no retry until the setting is toggled"
+        );
         feedback.failed = true;
         feedback.sync(true, true);
         assert!(feedback.failed);
@@ -201,21 +238,21 @@ mod tests {
         let sdl = sdl2::init().unwrap();
         let mut feedback = Feedback::default();
         feedback.sync(true, true);
-        feedback.play(&sdl, Cue::Select);
+        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium);
         assert!(!feedback.failed);
         assert!(feedback.device.is_some());
-        feedback.play(&sdl, Cue::Navigate);
+        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium);
         let last = feedback.last_navigation;
-        feedback.play(&sdl, Cue::Navigate);
+        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium);
         assert_eq!(
             feedback.last_navigation, last,
             "rapid navigation is throttled"
         );
-        feedback.play(&sdl, Cue::Back);
+        feedback.play(&sdl, Cue::Back, UiSoundLevel::Medium);
         assert!(feedback.device.as_ref().unwrap().size() <= (RATE as u32 / 10) * 4);
         feedback.sync(true, false);
         assert!(feedback.device.is_none());
-        feedback.play(&sdl, Cue::Select);
+        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium);
         assert!(feedback.device.is_some());
         feedback.sync(false, true);
         assert!(feedback.device.is_none());
@@ -226,13 +263,37 @@ mod tests {
     fn unavailable_audio_fails_silently_without_repeated_initialization() {
         let sdl = sdl2::init().unwrap();
         let mut feedback = Feedback::default();
-        feedback.play(&sdl, Cue::Select);
+        feedback.play(&sdl, Cue::Select, UiSoundLevel::Medium);
         assert!(feedback.failed);
         assert!(feedback.device.is_none());
-        feedback.play(&sdl, Cue::Navigate);
+        feedback.play(&sdl, Cue::Navigate, UiSoundLevel::Medium);
         assert!(feedback.failed);
-        assert!(feedback.samples.iter().all(Vec::is_empty));
+        assert!(
+            feedback.device.is_none(),
+            "no retry until the setting is toggled"
+        );
         feedback.sync(false, true);
         assert!(!feedback.failed);
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::*;
+
+    #[test]
+    fn volume_steps_get_louder_and_never_clip() {
+        let peak = |level| {
+            synthesize(Cue::Select, level)
+                .iter()
+                .fold(0f32, |peak, sample| peak.max(sample.abs()))
+        };
+        let (low, medium, high) = (
+            peak(UiSoundLevel::Low),
+            peak(UiSoundLevel::Medium),
+            peak(UiSoundLevel::High),
+        );
+        assert!(low < medium && medium < high, "{low} {medium} {high}");
+        assert!(high < 0.8);
     }
 }

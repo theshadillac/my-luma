@@ -1684,13 +1684,20 @@ fn run() -> Result<(), String> {
                 _ => {}
             }
             feedback.sync(state.preferences.ui_sounds, focused && visible);
+            if !state.preferences.ui_sounds && state.ui_sounds_unavailable {
+                state.ui_sounds_unavailable = false;
+            }
             if state.preferences.ui_sounds
                 && focused
                 && visible
                 && !scripted_input
                 && let Some(cue) = before_input.cue(cue, &state, !pending.is_empty())
             {
-                feedback.play(&sdl, cue);
+                feedback.play(&sdl, cue, state.preferences.ui_sound_level);
+                if state.ui_sounds_unavailable != feedback.failed {
+                    state.ui_sounds_unavailable = feedback.failed;
+                    state.dirty = true;
+                }
             }
             running &= effects(
                 pending,
@@ -1728,7 +1735,7 @@ fn run() -> Result<(), String> {
             press = None;
             let pending = state.back_recents();
             if state.preferences.ui_sounds && focused && visible && !scripted_input {
-                feedback.play(&sdl, Cue::Select);
+                feedback.play(&sdl, Cue::Select, state.preferences.ui_sound_level);
             }
             running &= effects(
                 pending,
@@ -1757,7 +1764,7 @@ fn run() -> Result<(), String> {
                     .cue(Some(Cue::Navigate), &state, false)
                     .is_some()
             {
-                feedback.play(&sdl, Cue::Select);
+                feedback.play(&sdl, Cue::Select, state.preferences.ui_sound_level);
             }
         }
         if !state.loading

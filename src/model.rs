@@ -317,6 +317,34 @@ impl QuickKey {
     }
 }
 
+/// UI sound volume steps (fork option). Low matches upstream's original level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiSoundLevel {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl UiSoundLevel {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Low => "volumeLow",
+            Self::Medium => "volumeMedium",
+            Self::High => "volumeHigh",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Low,
+        }
+    }
+}
+
 /// How the app drawer orders apps after the favourites (fork option, from upstream 3.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -471,6 +499,8 @@ pub struct Preferences {
     pub drawer_toolbar: bool,
     /// Short synthesized navigation, select and Back sounds (off by default).
     pub ui_sounds: bool,
+    /// UI sound volume (fork option).
+    pub ui_sound_level: UiSoundLevel,
     /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
     pub app_sorting: AppSorting,
     /// Successful launches per app id, kept only on the TV, for the "Most used" order.
@@ -524,6 +554,7 @@ impl Default for Preferences {
             weather_effects: false,
             drawer_toolbar: true,
             ui_sounds: false,
+            ui_sound_level: UiSoundLevel::default(),
             app_sorting: AppSorting::default(),
             app_launch_counts: Default::default(),
         }

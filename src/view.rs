@@ -8,8 +8,8 @@ use crate::{
         DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT,
         HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
         LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect,
-        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUNDS_ROW,
-        WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
+        UI_SOUNDS_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -3465,11 +3465,20 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     UI_SOUNDS_ROW,
                     "uiSounds",
                     "volume",
-                    Some(if state.preferences.ui_sounds {
-                        language.t("stateOn")
-                    } else {
+                    Some(if !state.preferences.ui_sounds {
                         language.t("stateOff")
+                    } else if state.ui_sounds_unavailable {
+                        language.t("soundUnavailable")
+                    } else {
+                        language.t("stateOn")
                     }),
+                    false,
+                ),
+                (
+                    UI_SOUND_LEVEL_ROW,
+                    "uiSoundLevel",
+                    "volume",
+                    Some(language.t(state.preferences.ui_sound_level.label_key())),
                     false,
                 ),
                 (QUICK_PANEL_ROW, "quickSettings", "gear", None, true),
