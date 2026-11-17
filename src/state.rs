@@ -1504,16 +1504,7 @@ impl State {
         if self.focus == target {
             return;
         }
-        if let Target::Sidebar(section) = target {
-            if self.subpage == Some(Subpage::WeatherLocation) {
-                self.weather.cancel_search();
-            }
-            if self.section != section || self.subpage.is_some() {
-                self.scroll = 0.;
-            }
-            self.section = section;
-            self.subpage = None;
-        }
+        // Hovering a sidebar section only highlights it; a click opens it (see activate).
         self.focus = target;
         self.dirty = true;
     }
@@ -2072,6 +2063,12 @@ impl State {
             if let Target::Sidebar(index) = self.focus {
                 match direction {
                     Direction::Right => {
+                        // A pointer may have left focus on a section that isn't open yet.
+                        if index != self.section {
+                            self.section = index;
+                            self.subpage = None;
+                            self.scroll = 0.;
+                        }
                         let entry = if self.section == 1 {
                             Target::UploadWallpaper
                         } else {
@@ -3157,6 +3154,9 @@ impl State {
                 }
             }
             Target::Sidebar(index) => {
+                if self.subpage == Some(Subpage::WeatherLocation) {
+                    self.weather.cancel_search();
+                }
                 self.section = index;
                 self.scroll = 0.;
                 self.subpage = None;

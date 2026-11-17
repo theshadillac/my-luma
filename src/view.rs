@@ -2727,10 +2727,15 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         Target::WallpaperCycle | Target::WallpaperGradient
     )
     .then(|| rotation_value_width(assets, state.preferences.language));
+    // Values size to their text (at least the classic 170 px, at most 420 px), so longer
+    // ones like "Night until 6:47 AM" or "pulseaudio · playing" are never cut off.
+    let measured_value_width = row
+        .value
+        .map(|value| (assets.width(value, text(18.4, 450, 0.)) + 2.).clamp(170., 420.));
     let right_inset = if let Some(width) = compact_value_width {
         width + 24.2 + 24.
-    } else if row.value.is_some() {
-        210.
+    } else if let Some(width) = measured_value_width {
+        width + 40.
     } else if matches!(row.target, Target::UploadWallpaper | Target::WallpaperCycle) {
         24.2
     } else {
@@ -2768,7 +2773,7 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         );
     }
     if let Some(value) = row.value {
-        let value_width = compact_value_width.unwrap_or(170.);
+        let value_width = compact_value_width.or(measured_value_width).unwrap_or(170.);
         out.text(
             value,
             Rect::new(

@@ -2629,6 +2629,9 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
         state.preferences.language = language;
         state.open(2);
         state.pointer_focus(Target::Sidebar(WIDGETS_SECTION));
+        // Hover only highlights the section; the click opens it.
+        assert_ne!(state.section, WIDGETS_SECTION);
+        state.activate();
         let page = scene(&state);
         assert_eq!(
             page.controls
@@ -2655,6 +2658,7 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
             assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t(key))), "{key}/{language:?}");
         }
         state.pointer_focus(Target::Sidebar(0));
+        state.activate();
         assert!(!scene(&state).draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t("greeting"))));
     }
 }
