@@ -1,16 +1,17 @@
 {
   "note": "Items already reviewed with Stephen. Keys are URLs or repo@version.",
   "repos": {
-    "Seagey/couch-tv": "21514a5232e616fbcc5e4bab908e295ff8a089b4",
+    "Seagey/couch-tv": "9cc67b788fb84a6633a2a824e88dbd7ca7f4626c",
     "techgenius1/tvOS-Launcher": "ddfd2531fd3cc5fd1d6790d7fad21cf71389b4dc",
-    "aabytt/custom-screensaver-aerial": "e073d32cb683d94efad616f4c3641a23a08043c3",
+    "aabytt/custom-screensaver-aerial": "c760ba1567dabb83f3e8e074a069f635ecabb399",
     "kitsuned/AltHome": "a67385151486347394c6ac6e8af8da61e6c72685",
     "mareklarek/webos10-homescreen-customization": "80e39c822097a933fd49c2a23ff5cdfbf9e54763",
     "webosbrew/custom-screensaver": "90666c19112ec77d6c2b1b84ae7db7d914285e92",
-    "cocombee/glass-tv": "ce164b650818249f89725ed8070c911b3958df30"
+    "cocombee/glass-tv": "ce164b650818249f89725ed8070c911b3958df30",
+    "ecklf/lg-luma@main": "a3e4234ade3c19a75a37c32e61b764b5bcff26ae"
   },
   "releases": {
-    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16 (latest v3.4.0)"
+    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16 (latest v3.4.0); unreleased main to a3e4234 reviewed 2026-11-17"
   },
   "items": [
     "https://repo.webosbrew.org/apps/org.aabytt.webos.custom-screensaver-aerial/",
@@ -23,6 +24,16 @@
     "https://repo.webosbrew.org/apps/org.oted.idlegif/",
     "https://www.pulse.bot/consumer-tech/news/this-free-launcher-made-my-smart-tv-feel-like-it-should-have-all-along-3972b140-a2d0-44ff-a0e6-2e91a8ee3771/",
     "reddit r/webos: root bind-mount custom stock screensaver photos (2026-11-15)",
-    "https://github.com/cocombee/glass-tv"
+    "https://github.com/cocombee/glass-tv",
+    "https://github.com/FrAcTi0N/webos-aerial-nosignal",
+    "https://github.com/Commanderx-code/webos-launcher",
+    "https://github.com/rawinek/webos-homebar",
+    "https://github.com/maskodroids-code/LGlow-Atlas",
+    "https://github.com/aabytt/custom-screensaver-aerial/pull/92",
+    "https://github.com/webosbrew/home-chooser",
+    "https://github.com/rorygallagher2024/glasshouse",
+    "https://github.com/marelucent/quiet-skies",
+    "https://github.com/Razdva122/clean-your-tv-lg-webos",
+    "https://github.com/KaykCaputo/WiiOS-webOS"
   ]
 }
