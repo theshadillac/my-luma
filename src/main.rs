@@ -1071,6 +1071,10 @@ fn run() -> Result<(), String> {
             }
         }
         state.dirty |= assets.artwork.poll();
+        if feedback.check() {
+            state.ui_sounds_detail = feedback.diagnosis();
+            state.dirty = true;
+        }
         let unix = state::unix_now();
         let startup_cycle = wallpaper_cycle::startup_due(
             state.preferences.wallpaper_cycle,
@@ -1083,7 +1087,7 @@ fn run() -> Result<(), String> {
             && state.overlay.is_none()
             && state.moving.is_none()
             && state.deleting_wallpaper.is_none()
-            && !state.animating()
+            && !state.transitioning()
             && (startup_cycle
                 || state.day_night_due(now)
                 || wallpaper_cycle::due(

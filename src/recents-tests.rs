@@ -939,8 +939,9 @@ fn the_back_button_shortcut_to_recent_apps_can_be_turned_off() {
     assert!(state.recents_open());
     state.back();
     assert!(!state.recents_open());
-    // Settings → General: the row is below Reduced motion and switches the shortcut off.
+    // Settings → Controls & sound: the row comes first and switches the shortcut off.
     state.open(2);
+    state.section = crate::state::CONTROLS_SECTION;
     let general = controls(&state);
     let row = |id| {
         general
@@ -950,7 +951,7 @@ fn the_back_button_shortcut_to_recent_apps_can_be_turned_off() {
             .rect
             .y
     };
-    assert!(row(2) < row(BACK_RECENTS_ROW));
+    assert!(row(BACK_RECENTS_ROW) < 250.);
     state.focus = Target::Setting(BACK_RECENTS_ROW);
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert!(!state.preferences.back_recents);

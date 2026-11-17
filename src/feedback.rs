@@ -53,6 +53,12 @@ pub struct Feedback {
     samples: [Vec<f32>; 3],
     level: Option<UiSoundLevel>,
     pub failed: bool,
+    /// SDL's audio driver once the device opened, for the Settings diagnosis.
+    driver: Option<&'static str>,
+    /// When the last cue was queued, to check later that the TV actually played it.
+    queued_at: Option<Instant>,
+    /// Whether the last checked cue drained from the queue (played) or sat there (stalled).
+    pub played: Option<bool>,
     last_navigation: Option<Instant>,
 }
 
@@ -102,6 +108,7 @@ impl Feedback {
             });
             match opened {
                 Ok(device) => {
+                    self.driver = sdl.audio().ok().map(|audio| audio.current_audio_driver());
                     device.resume();
                     self.device = Some(device);
                     warm_up = true;
@@ -139,6 +146,33 @@ impl Feedback {
         if cue == Cue::Navigate {
             self.last_navigation = Some(now);
         }
+        self.queued_at = Some(now);
+    }
+
+    /// Once a cue has had time to play, records whether the queue drained. Returns true
+    /// when the result changed, so Settings can redraw its diagnosis.
+    pub fn check(&mut self) -> bool {
+        let (Some(device), Some(queued)) = (&self.device, self.queued_at) else {
+            return false;
+        };
+        if queued.elapsed() < Duration::from_millis(900) {
+            return false;
+        }
+        self.queued_at = None;
+        let played = Some(device.size() == 0);
+        let changed = self.played != played;
+        self.played = played;
+        changed
+    }
+
+    /// "pulseaudio · playing": the driver and whether sound is actually leaving the queue.
+    pub fn diagnosis(&self) -> Option<String> {
+        let driver = self.driver?;
+        Some(match self.played {
+            Some(true) => format!("{driver} · playing"),
+            Some(false) => format!("{driver} · stalled"),
+            None => driver.to_owned(),
+        })
     }
 }
 

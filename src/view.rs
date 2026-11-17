@@ -617,7 +617,7 @@ pub fn scene_with_pill(
     match state.page {
         Page::Home => home(&mut out, state, assets, now),
         Page::Apps => library(&mut out, state, assets),
-        Page::Settings => settings(&mut out, state, assets),
+        Page::Settings => settings(&mut out, state, assets, now),
     }
     if let Some(error) = &state.error
         && !state.inventory.apps.is_empty()
@@ -3061,19 +3061,16 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
     }
 }
 
-fn settings(out: &mut Scene, state: &State, assets: &Assets) {
-    settings_content(out, state, assets);
+fn settings(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
+    settings_content(out, state, assets, now);
     settings_sidebar(out, state, assets);
 }
 
 fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
-    for (index, key) in ["interface", "background", "widgets", "system"]
-        .into_iter()
-        .enumerate()
-    {
-        let label = language.t(key);
-        let rect = Rect::new(160., 164.8 + index as f32 * 84., 403.2, 72.);
+    for (position, index) in crate::state::SECTION_ORDER.into_iter().enumerate() {
+        let label = language.t(crate::state::SECTION_KEYS[index]);
+        let rect = Rect::new(160., 164.8 + position as f32 * 84., 403.2, 72.);
         let focused = state.focus == Target::Sidebar(index);
         out.pill(rect, focused, state.section == index);
         let color = if focused {
@@ -3197,7 +3194,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
     }
 }
 
-fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
+fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let language = state.preferences.language;
     let s = state.scroll;
     if let Some(subpage) = &state.subpage {
@@ -3364,27 +3361,44 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
         }
         return;
     }
+    // "Night until 6:54 AM": which half Day and night thinks it is, and when it next switches.
+    let day_night_value: &str = &{
+        let night = state.is_night(now);
+        let next = state.sun_times(now).map(|(rise, set)| {
+            let at = |unix: i64| {
+                OffsetDateTime::from_unix_timestamp(unix)
+                    .map(|at| at.to_offset(now.offset()))
+                    .ok()
+            };
+            if night { at(rise) } else { at(set) }
+        });
+        let label = language.t(if night { "nightNow" } else { "dayNow" });
+        match next.flatten() {
+            Some(at) => language.format(
+                "untilTime",
+                &[
+                    ("state", label),
+                    (
+                        "time",
+                        &language.clock(at, state.preferences.hour_24, false),
+                    ),
+                ],
+            ),
+            None => label.to_owned(),
+        }
+    };
     let ambient_value = match state.preferences.ambient_minutes {
         0 => language.t("stateOff").to_owned(),
         minutes => language.format("minutesShort", &[("minutes", &minutes.to_string())]),
     };
     match state.section {
-        0 => {
-            for (position, (index, key, icon, value, chevron)) in [
+        crate::state::HOME_SECTION
+        | crate::state::DRAWER_SECTION
+        | crate::state::AMBIENT_SECTION
+        | crate::state::CONTROLS_SECTION => {
+            let all = [
                 (0, "appNames", "type", None, true),
                 (1, "clock", "clock", None, true),
-                (4, "language", "language", Some(language.name()), true),
-                (
-                    2,
-                    "reducedMotion",
-                    "motion",
-                    Some(if state.preferences.reduced_motion {
-                        language.t("stateOn")
-                    } else {
-                        language.t("stateOff")
-                    }),
-                    false,
-                ),
                 (
                     BACK_RECENTS_ROW,
                     "backRecents",
@@ -3469,6 +3483,8 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                         language.t("stateOff")
                     } else if state.ui_sounds_unavailable {
                         language.t("soundUnavailable")
+                    } else if let Some(detail) = &state.ui_sounds_detail {
+                        detail.as_str()
                     } else {
                         language.t("stateOn")
                     }),
@@ -3509,15 +3525,18 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     "dayNightWallpapers",
                     "weather-moon",
                     Some(if state.preferences.day_night {
-                        language.t("stateOn")
+                        day_night_value
                     } else {
                         language.t("stateOff")
                     }),
                     false,
                 ),
-            ]
-            .into_iter()
-            .enumerate()
+            ];
+            let order = crate::state::section_rows(state.section, state.preferences.ui_sounds);
+            for (position, (index, key, icon, value, chevron)) in order
+                .iter()
+                .filter_map(|wanted| all.iter().find(|row| row.0 == *wanted).cloned())
+                .enumerate()
             {
                 row(
                     out,
@@ -3761,6 +3780,24 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             );
             for (position, (index, title, icon, value, chevron)) in [
                 (
+                    4,
+                    language.t("language"),
+                    "language",
+                    Some(language.name()),
+                    true,
+                ),
+                (
+                    2,
+                    language.t("reducedMotion"),
+                    "motion",
+                    Some(if state.preferences.reduced_motion {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
+                    false,
+                ),
+                (
                     7,
                     language.t("textRendering"),
                     "type",
@@ -3794,8 +3831,8 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                             640.,
                             408.8
                                 + position as f32 * 84.
-                                + if position > 0 { 16. } else { 0. }
                                 + if position > 2 { 16. } else { 0. }
+                                + if position > 4 { 16. } else { 0. }
                                 - s,
                             1120.,
                             72.,
@@ -5029,7 +5066,7 @@ mod tests {
                     .iter()
                     .filter_map(|draw| match draw {
                         Draw::Text(label, rect, style, color, _)
-                            if (rect.y - 356.3).abs() < 0.001 =>
+                            if (rect.y - (356.3 + 2. * 84.)).abs() < 0.001 =>
                         {
                             Some((label, rect, style, color))
                         }
@@ -5047,7 +5084,7 @@ mod tests {
                     .iter()
                     .filter_map(|draw| match draw {
                         Draw::TintedImage(_, rect, _, _, color)
-                            if (rect.y - 359.8).abs() < 0.001 =>
+                            if (rect.y - (359.8 + 2. * 84.)).abs() < 0.001 =>
                         {
                             assert_eq!(color, parts[0].3);
                             Some(rect)
@@ -5078,7 +5115,7 @@ mod tests {
             let label = language.t("uploadWallpaper");
             let label_width = assets.width(label, text(20.8, 550, -0.02));
             let mut scene = Scene::new();
-            settings(&mut scene, &state, &assets);
+            settings(&mut scene, &state, &assets, OffsetDateTime::UNIX_EPOCH);
             let button = scene
                 .controls
                 .iter()
@@ -5109,7 +5146,7 @@ mod tests {
         for enabled in [false, true] {
             state.preferences.wallpaper_cycle = enabled;
             let mut scene = Scene::new();
-            settings(&mut scene, &state, &assets);
+            settings(&mut scene, &state, &assets, OffsetDateTime::UNIX_EPOCH);
             let button = scene
                 .controls
                 .iter()

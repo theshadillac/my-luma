@@ -459,7 +459,7 @@ fn gallery_scrolls_behind_fixed_controls_without_clipping_or_fades() {
             )
         })
         .unwrap();
-    for key in ["uploadWallpaper", "wallpaperCycle", "interface"] {
+    for key in ["uploadWallpaper", "wallpaperCycle", "settingsHome"] {
         let label = state.preferences.language.t(key);
         let fixed = scrolled
             .draw
@@ -496,7 +496,7 @@ fn scrolled_backgrounds_cannot_capture_upload_or_sidebar_pointer_hits() {
     );
     assert_eq!(state.hit_test(&gallery, 1000., 200.), None);
     assert_eq!(
-        state.hit_test(&gallery, 300., 280.),
+        state.hit_test(&gallery, 300., 368.),
         Some(Target::Sidebar(1))
     );
     assert_eq!(

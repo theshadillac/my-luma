@@ -101,9 +101,9 @@ async function scenario(name, script, extra = []) {
 function contains(state, key, language) {
   assert.ok(state.ui_text.includes(messages[key][language]), `Missing rendered ${key}/${language}`);
 }
-const picker = 'settings,down,enter,down,down,enter';
-const weatherPage = 'settings,down,down,down,enter,down,down,enter';
-const inputsPage = 'settings,down,down,down,enter,down,down,down,down,enter';
+const picker = 'settings,down,down,down,down,down,down,down,enter,down,enter';
+const weatherPage = 'settings,down,down,down,down,down,enter,down,down,enter';
+const inputsPage = 'settings,down,down,down,down,down,enter,down,down,down,down,enter';
 const location = `${weatherPage},down,enter`;
 try {
   if (process.env.LUMA_SMOKE_SKIP_BUILD !== '1')
@@ -122,7 +122,7 @@ try {
   for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(german, key, 'de');
   assert.ok(german.ui_text.includes('Netflix'), 'Installed app names stay intact');
-  const persisted = await scenario('de-settings', 'settings,down');
+  const persisted = await scenario('de-settings', 'settings,down,down,down,down,down,down,down');
   assert.equal(persisted.preferences.language, 'de');
   contains(persisted, 'language', 'de');
 
@@ -136,8 +136,12 @@ try {
   assert.ok(chinese.ui_text.includes('Netflix'));
   assert.ok(chinese.ui_text.includes('10月21日星期三'));
   const chineseSettings = await scenario('zh-settings', 'settings,down');
-  contains(chineseSettings, 'language', 'zh');
   contains(chineseSettings, 'appNames', 'zh');
+  contains(
+    await scenario('zh-system', 'settings,down,down,down,down,down,down,down'),
+    'language',
+    'zh',
+  );
 
   const selected = await scenario(
     'zh-weather',
@@ -180,13 +184,13 @@ try {
   const input = await scenario('zh-input-options', `${inputsPage},enter`);
   for (const key of ['stateOn', 'stateOff', 'stateAuto', 'inputWhenConnected'])
     contains(input, key, 'zh');
-  const background = await scenario('zh-background', 'settings,down,down,enter');
+  const background = await scenario('zh-background', 'settings,down,down,down,enter');
   for (const key of ['background', 'uploadWallpaper']) contains(background, key, 'zh');
   assert.deepEqual(background.focus, { Background: 3 });
   // Background thumbnails have no captions; their actions are translated in the popup.
   const backgroundOptions = await scenario(
     'zh-background-options',
-    'settings,down,down,enter,down,enter',
+    'settings,down,down,down,enter,down,enter',
   );
   assert.equal(backgroundOptions.modal, true);
   assert.equal(backgroundOptions.focus, 'UseBackground');
@@ -224,8 +228,13 @@ try {
     'pt',
     'Portuguese is restored after restart',
   );
-  assert.ok(portugueseSettings.ui_text.includes('Português (Brasil)'));
-  for (const key of ['language', 'appNames', 'clock']) contains(portugueseSettings, key, 'pt');
+  for (const key of ['appNames', 'clock']) contains(portugueseSettings, key, 'pt');
+  const portugueseSystem = await scenario(
+    'pt-system',
+    'settings,down,down,down,down,down,down,down',
+  );
+  assert.ok(portugueseSystem.ui_text.includes('Português (Brasil)'));
+  contains(portugueseSystem, 'language', 'pt');
   assert.equal(JSON.parse(await fs.readFile(preferences, 'utf8')).language, 'pt');
 
   const portugueseDialog = await scenario('pt-dialog', 'apps,down,menu');
@@ -278,8 +287,13 @@ try {
 
   const vietnameseSettings = await scenario('vi-settings', 'settings,down');
   assert.equal(vietnameseSettings.preferences.language, 'vi', 'Vietnamese survives a restart');
-  assert.ok(vietnameseSettings.ui_text.includes('Tiếng Việt'));
-  for (const key of ['language', 'appNames', 'clock']) contains(vietnameseSettings, key, 'vi');
+  for (const key of ['appNames', 'clock']) contains(vietnameseSettings, key, 'vi');
+  const vietnameseSystem = await scenario(
+    'vi-system',
+    'settings,down,down,down,down,down,down,down',
+  );
+  assert.ok(vietnameseSystem.ui_text.includes('Tiếng Việt'));
+  contains(vietnameseSystem, 'language', 'vi');
   const vietnameseOptions = await scenario('vi-app-options', 'apps,down,enter');
   for (const key of ['open', 'removeFavorite', 'hideApp', 'deleteApp'])
     contains(vietnameseOptions, key, 'vi');
@@ -327,7 +341,12 @@ try {
   assert.ok(traditional.ui_text.includes('Netflix'));
   const traditionalSettings = await scenario('zh-tw-settings', 'settings,down');
   assert.equal(traditionalSettings.preferences.language, 'zh-tw');
-  for (const key of ['language', 'appNames', 'clock']) contains(traditionalSettings, key, 'zh-tw');
+  for (const key of ['appNames', 'clock']) contains(traditionalSettings, key, 'zh-tw');
+  contains(
+    await scenario('zh-tw-system', 'settings,down,down,down,down,down,down,down'),
+    'language',
+    'zh-tw',
+  );
   const traditionalWeather = await scenario(
     'zh-tw-weather',
     `${location},type:Vienna,back,enter,await-search,down,enter,home,await-weather`,
@@ -350,7 +369,10 @@ try {
   assert.ok(catalan.ui_text.includes('DIMECRES, 21 D’OCTUBRE'));
   assert.ok(catalan.ui_text.includes('Netflix'));
 
-  const catalanSettings = await scenario('ca-settings', 'settings,down');
+  const catalanSettings = await scenario(
+    'ca-settings',
+    'settings,down,down,down,down,down,down,down',
+  );
   assert.equal(catalanSettings.preferences.language, 'ca', 'Catalan survives a restart');
   assert.ok(catalanSettings.ui_text.includes('Català'));
   contains(catalanSettings, 'language', 'ca');

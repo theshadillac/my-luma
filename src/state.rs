@@ -8,9 +8,69 @@ use crate::weather::{self, Unit};
 use serde::Serialize;
 use std::time::{Duration, Instant};
 
+pub const HOME_SECTION: usize = 0;
+pub const BACKGROUND_SECTION: usize = 1;
 pub const WIDGETS_SECTION: usize = 2;
 pub const SYSTEM_SECTION: usize = 3;
-pub const SECTION_COUNT: usize = 4;
+pub const DRAWER_SECTION: usize = 4;
+pub const AMBIENT_SECTION: usize = 5;
+pub const CONTROLS_SECTION: usize = 6;
+/// Sidebar order, top to bottom. Section numbers stay stable; only their order is chosen here.
+pub const SECTION_ORDER: [usize; 7] = [
+    HOME_SECTION,
+    DRAWER_SECTION,
+    BACKGROUND_SECTION,
+    AMBIENT_SECTION,
+    WIDGETS_SECTION,
+    CONTROLS_SECTION,
+    SYSTEM_SECTION,
+];
+/// Sidebar labels, by section number.
+pub const SECTION_KEYS: [&str; 7] = [
+    "settingsHome",
+    "background",
+    "widgets",
+    "system",
+    "settingsDrawer",
+    "settingsAmbient",
+    "settingsControls",
+];
+
+/// The setting rows each list section shows, in order (System lists its own below the update card).
+pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
+    match section {
+        HOME_SECTION => vec![
+            0,
+            1,
+            GLASS_CLOCK_ROW,
+            LANDING_ROW,
+            TILE_LIFT_ROW,
+            MORE_APPS_ROW,
+        ],
+        DRAWER_SECTION => vec![DRAWER_TOOLBAR_ROW, APP_SORTING_ROW],
+        AMBIENT_SECTION => vec![
+            AMBIENT_ROW,
+            PIXEL_SHIFT_ROW,
+            DAY_NIGHT_ROW,
+            WEATHER_EFFECTS_ROW,
+        ],
+        CONTROLS_SECTION => {
+            let mut rows = vec![BACK_RECENTS_ROW, QUICK_PANEL_ROW, UI_SOUNDS_ROW];
+            if ui_sounds {
+                rows.push(UI_SOUND_LEVEL_ROW);
+            }
+            rows
+        }
+        _ => vec![],
+    }
+}
+
+fn section_position(section: usize) -> usize {
+    SECTION_ORDER
+        .iter()
+        .position(|&candidate| candidate == section)
+        .unwrap_or(0)
+}
 /// General settings row: whether the Back button opens Recent apps.
 pub const BACK_RECENTS_ROW: usize = 14;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
@@ -389,6 +449,8 @@ pub struct State {
     settle_focus: bool,
     /// Set when the TV refused the audio device for UI sounds; shown in Settings.
     pub ui_sounds_unavailable: bool,
+    /// What the TV did with the last UI sound, e.g. "pulseaudio · playing"; shown in Settings.
+    pub ui_sounds_detail: Option<String>,
     /// The focus the tile lift last saw, the one before it, and when it changed.
     lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
@@ -420,6 +482,7 @@ impl State {
             ambient_manual: false,
             settle_focus: true,
             ui_sounds_unavailable: false,
+            ui_sounds_detail: None,
             lift_focus: (
                 Target::Nav(0),
                 None,
@@ -653,6 +716,12 @@ impl State {
     }
 
     pub fn animating(&self) -> bool {
+        self.transitioning() || (self.precipitation().is_some() && !self.preferences.reduced_motion)
+    }
+
+    /// A one-off transition is running. Unlike `animating`, this ignores the endless
+    /// rain/snow effect, so wallpaper changes are not held back while it falls.
+    pub fn transitioning(&self) -> bool {
         ((self.recents_open() || self.recents.visibility > 0.)
             && (self.recents.visibility != if self.recents_open() { 1. } else { 0. }
                 || self.recents.cards_animating(self.pointer)))
@@ -662,7 +731,6 @@ impl State {
             || self.ambient_fading()
             || self.waking.is_some()
             || self.page_motion.is_some()
-            || (self.precipitation().is_some() && !self.preferences.reduced_motion)
             || self.lift_moving()
             || (!self.preferences.reduced_motion
                 && self
@@ -1481,6 +1549,20 @@ impl State {
 
     /// Whether it is night where the TV is: between today's sunset and sunrise from the
     /// weather service, or 7 pm to 7 am without it.
+    /// Today's sunrise and sunset for the weather location: the weather service's times
+    /// when it sent them, otherwise calculated from the place's coordinates.
+    pub fn sun_times(&self, now: time::OffsetDateTime) -> Option<(i64, i64)> {
+        let place = self.preferences.weather_location.as_ref()?;
+        self.weather
+            .reading(place)
+            .and_then(|reading| reading.sun)
+            .or_else(|| {
+                // The local calendar day, expressed as the UTC date the almanac expects.
+                let date = now.date();
+                crate::weather::solar_times(place.latitude, place.longitude, date)
+            })
+    }
+
     pub fn is_night(&self, now: time::OffsetDateTime) -> bool {
         let minutes = |at: time::OffsetDateTime| at.hour() as i32 * 60 + at.minute() as i32;
         let local = |unix: i64| {
@@ -1489,11 +1571,7 @@ impl State {
                 .map(|at| minutes(at.to_offset(now.offset())))
         };
         let sun = self
-            .preferences
-            .weather_location
-            .as_ref()
-            .and_then(|place| self.weather.reading(place))
-            .and_then(|reading| reading.sun)
+            .sun_times(now)
             .and_then(|(rise, set)| Some((local(rise)?, local(set)?)));
         let (rise, set) = sun.unwrap_or((7 * 60, 19 * 60));
         let now = minutes(now);
@@ -1701,7 +1779,12 @@ impl State {
             WIDGETS_SECTION => Target::Widget(4),
             SYSTEM_SECTION if self.available_update.is_some() => Target::InstallUpdate,
             SYSTEM_SECTION => Target::CheckUpdates,
-            _ => Target::Setting(0),
+            section => Target::Setting(
+                section_rows(section, self.preferences.ui_sounds)
+                    .first()
+                    .copied()
+                    .unwrap_or(0),
+            ),
         }
     }
 
@@ -1997,16 +2080,18 @@ impl State {
                         self.focus(entry, controls);
                     }
                     Direction::Up => self.focus(
-                        if index == 0 {
-                            Target::Nav(2)
-                        } else {
-                            Target::Sidebar(index - 1)
+                        match section_position(index) {
+                            0 => Target::Nav(2),
+                            position => Target::Sidebar(SECTION_ORDER[position - 1]),
                         },
                         controls,
                     ),
-                    Direction::Down => {
-                        self.focus(Target::Sidebar((index + 1) % SECTION_COUNT), controls)
-                    }
+                    Direction::Down => self.focus(
+                        Target::Sidebar(
+                            SECTION_ORDER[(section_position(index) + 1) % SECTION_ORDER.len()],
+                        ),
+                        controls,
+                    ),
                     Direction::Left => {}
                 }
                 return vec![];

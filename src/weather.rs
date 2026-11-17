@@ -516,3 +516,50 @@ impl Weather {
 #[cfg(test)]
 #[path = "weather-tests.rs"]
 mod tests;
+
+/// Sunrise and sunset (Unix seconds) for a place and UTC calendar day, from the standard
+/// almanac approximation (accurate to a couple of minutes). Used when the weather service
+/// didn't send today's times, so day and night never falls back to fixed hours for a known
+/// place. None during polar day or night.
+pub fn solar_times(latitude: f64, longitude: f64, date: time::Date) -> Option<(i64, i64)> {
+    let day = date.ordinal() as f64;
+    let hour_of = |rising: bool| -> Option<f64> {
+        let longitude_hour = longitude / 15.;
+        let t = day + ((if rising { 6. } else { 18. }) - longitude_hour) / 24.;
+        let mean_anomaly = 0.9856 * t - 3.289;
+        let true_longitude = (mean_anomaly
+            + 1.916 * mean_anomaly.to_radians().sin()
+            + 0.020 * (2. * mean_anomaly).to_radians().sin()
+            + 282.634)
+            .rem_euclid(360.);
+        let mut ascension = (0.91764 * true_longitude.to_radians().tan())
+            .atan()
+            .to_degrees()
+            .rem_euclid(360.);
+        ascension += (true_longitude / 90.).floor() * 90. - (ascension / 90.).floor() * 90.;
+        let ascension = ascension / 15.;
+        let sin_declination = 0.39782 * true_longitude.to_radians().sin();
+        let cos_declination = sin_declination.asin().cos();
+        let cos_hour = (90.833f64.to_radians().cos()
+            - sin_declination * latitude.to_radians().sin())
+            / (cos_declination * latitude.to_radians().cos());
+        if !(-1. ..=1.).contains(&cos_hour) {
+            return None;
+        }
+        let hour = if rising {
+            360. - cos_hour.acos().to_degrees()
+        } else {
+            cos_hour.acos().to_degrees()
+        } / 15.;
+        let local = hour + ascension - 0.06571 * t - 6.622;
+        Some((local - longitude_hour).rem_euclid(24.))
+    };
+    let midnight = date.midnight().assume_utc().unix_timestamp();
+    let rise = midnight + (hour_of(true)? * 3600.) as i64;
+    let mut set = midnight + (hour_of(false)? * 3600.) as i64;
+    // West of Greenwich, sunset in UTC often falls on the next UTC day.
+    if set < rise {
+        set += 86_400;
+    }
+    (set - rise < 86_400).then_some((rise, set))
+}

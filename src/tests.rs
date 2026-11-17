@@ -1052,16 +1052,16 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
             .iter()
             .any(|c| c.target == Target::Sidebar(crate::state::SYSTEM_SECTION))
     );
-    state.focus = Target::Sidebar(crate::state::SYSTEM_SECTION - 1);
+    state.focus = Target::Sidebar(crate::state::CONTROLS_SECTION);
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(crate::state::SYSTEM_SECTION));
     assert_eq!(state.section, crate::state::SYSTEM_SECTION);
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::CheckUpdates);
-    state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Setting(7));
-    state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Setting(3));
+    for row in [4, 2, 7, 3] {
+        state.direction(Direction::Down, &controls(&state));
+        assert_eq!(state.focus, Target::Setting(row));
+    }
     assert_eq!(state.activate(), vec![Effect::Reload]);
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Setting(9));
@@ -1882,6 +1882,7 @@ fn settings_order_language_sort_and_shortcut_empty_card() {
     }
     let mut state = ready();
     state.open(2);
+    state.section = crate::state::SYSTEM_SECTION;
     let general = controls(&state);
     let language = general
         .iter()
@@ -2519,7 +2520,7 @@ fn shortcut_settings_offer_qr_editing_and_a_test_remove_popup() {
 
 #[test]
 fn widgets_group_existing_settings_and_restore_each_parent_without_changing_preferences() {
-    use crate::state::{SECTION_COUNT, Subpage, WIDGETS_SECTION};
+    use crate::state::{SECTION_ORDER, Subpage, WIDGETS_SECTION};
     let mut state = ready();
     state.preferences.reduced_motion = true;
     state.preferences.greeting_name = "Ana".into();
@@ -2540,15 +2541,15 @@ fn widgets_group_existing_settings_and_restore_each_parent_without_changing_pref
     }]);
     let saved = serde_json::to_value(&state.preferences).unwrap();
     state.open(2);
-    assert_eq!(SECTION_COUNT, 4);
+    assert_eq!(SECTION_ORDER.len(), 7);
     assert!(
         !controls(&state)
             .iter()
             .any(|control| control.target == Target::Setting(6))
     );
-    state.direction(Direction::Down, &controls(&state));
-    state.direction(Direction::Down, &controls(&state));
-    state.direction(Direction::Down, &controls(&state));
+    for _ in 0..5 {
+        state.direction(Direction::Down, &controls(&state));
+    }
     assert_eq!(state.focus, Target::Sidebar(WIDGETS_SECTION));
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::Widget(4));
@@ -2634,7 +2635,7 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
                 .iter()
                 .filter(|c| matches!(c.target, Target::Sidebar(_)))
                 .count(),
-            4
+            7
         );
         assert_eq!(
             page.controls
@@ -2776,7 +2777,7 @@ fn language_list_scrolls_under_fixed_ui_without_clipping_or_fades() {
             )
         })
         .unwrap();
-    let label = state.preferences.language.t("interface");
+    let label = state.preferences.language.t("settingsHome");
     let fixed = rendered
         .draw
         .iter()
@@ -3248,7 +3249,11 @@ fn update_card_shows_both_versions_and_explicitly_starts_installation() {
             Some(Target::InstallUpdate)
         );
         state.direction(Direction::Down, &rendered.controls);
-        assert_eq!(state.focus, Target::Setting(7)); // Text rendering precedes maintenance actions.
+        assert_eq!(state.focus, Target::Setting(4)); // Language, then Reduced motion,
+        state.direction(Direction::Down, &rendered.controls);
+        assert_eq!(state.focus, Target::Setting(2));
+        state.direction(Direction::Down, &rendered.controls);
+        assert_eq!(state.focus, Target::Setting(7)); // then Text rendering, before maintenance actions.
         state.direction(Direction::Down, &rendered.controls);
         assert_eq!(state.focus, Target::Setting(3)); // Refresh apps & inputs.
         state.focus = Target::InstallUpdate;
@@ -4059,6 +4064,7 @@ fn ambient_screen_starts_after_idle_home_and_the_waking_input_only_wakes() {
     assert!(!state.ambient_holds_screen_saver());
     // General → Ambient screen cycles Off → 2 → 5 → 10 → Off.
     state.open(2);
+    state.section = crate::state::AMBIENT_SECTION;
     state.focus = Target::Setting(AMBIENT_ROW);
     for expected in [2, 5, 10, 0, 2] {
         assert_eq!(state.activate(), vec![Effect::Save]);
@@ -4711,4 +4717,33 @@ fn most_used_drawer_order_keeps_favourites_first_and_counts_only_real_launches()
         serde_json::from_slice(&serde_json::to_vec(&state.preferences).unwrap()).unwrap();
     assert_eq!(saved.app_launch_counts["z"], 3);
     assert_eq!(saved.app_sorting, AppSorting::Usage);
+}
+
+#[test]
+fn calculated_sun_times_match_fort_collins_in_november() {
+    // Fort Collins, 16 Nov 2026: sunrise about 6:50 and sunset about 16:40 local (UTC-7).
+    let date = time::Date::from_calendar_date(2026, time::Month::November, 16).unwrap();
+    let (rise, set) = crate::weather::solar_times(40.5853, -105.0844, date).unwrap();
+    let local = |unix: i64| {
+        let at = time::OffsetDateTime::from_unix_timestamp(unix)
+            .unwrap()
+            .to_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap());
+        at.hour() as i32 * 60 + at.minute() as i32
+    };
+    assert!((local(rise) - (6 * 60 + 50)).abs() <= 6, "{}", local(rise));
+    assert!((local(set) - (16 * 60 + 40)).abs() <= 6, "{}", local(set));
+    // Without the service's times, 6:30 pm in November is night.
+    let mut state = ready();
+    state.preferences.weather_location = Some(crate::weather::Location {
+        name: "Fort Collins".into(),
+        region: "Colorado".into(),
+        country: "United States".into(),
+        latitude: 40.5853,
+        longitude: -105.0844,
+    });
+    let evening = time::PrimitiveDateTime::new(date, time::Time::from_hms(18, 30, 0).unwrap())
+        .assume_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap());
+    assert!(state.is_night(evening));
+    let noon = evening.replace_hour(12).unwrap();
+    assert!(!state.is_night(noon));
 }
