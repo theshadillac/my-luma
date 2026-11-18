@@ -126,6 +126,27 @@ impl Client {
         Ok(photos)
     }
 
+    /// A search result's small preview, for drawing on the TV (about 400 px wide).
+    pub fn thumbnail(&self, photo: &Photo) -> Result<Vec<u8>, String> {
+        if !photo.thumb.starts_with("https://images.unsplash.com/") {
+            return Err("Unexpected preview link".into());
+        }
+        let mut response = self
+            .agent
+            .get(&photo.thumb)
+            .header("User-Agent", "MyLuma")
+            .call()
+            .map_err(|_| "The preview couldn't be downloaded")?;
+        let mut bytes = Vec::new();
+        response
+            .body_mut()
+            .as_reader()
+            .take(2 * 1024 * 1024)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "The preview couldn't be downloaded")?;
+        Ok(bytes)
+    }
+
     /// Downloads one result as a 1920 × 1080 JPEG and tells Unsplash it was used.
     pub fn fetch(&mut self, id: &str) -> Result<(Vec<u8>, Credit), String> {
         let key = self.key().ok_or("Add your Unsplash access key first")?;

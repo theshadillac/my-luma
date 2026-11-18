@@ -952,3 +952,89 @@ fn unsplash_wallpapers_credit_their_photographer_on_home() {
     state.open(2);
     assert!(!credited(&state), "Settings stays uncluttered");
 }
+
+#[test]
+fn discover_suggests_unsplash_photos_for_the_collection_and_adds_them() {
+    use crate::state::{Subpage, SuggestionStatus};
+    let mut state = ready();
+    state.open(2);
+    state.section = crate::state::BACKGROUND_SECTION;
+    let has = |state: &State, target: Target| {
+        controls(state)
+            .iter()
+            .any(|control| control.target == target)
+    };
+    assert!(!has(&state, Target::DiscoverOpen), "only with a key saved");
+    state.unsplash_ready = true;
+    assert!(has(&state, Target::DiscoverOpen));
+    state.focus = Target::WallpaperCollection;
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::DiscoverOpen);
+    // Photos searches for landscapes.
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Suggest {
+            query: "landscape".into(),
+            page: 1
+        }]
+    );
+    assert_eq!(state.subpage, Some(Subpage::Discover));
+    let suggestion = |index: usize| crate::wallpapers::Suggestion {
+        photo: crate::unsplash::Photo {
+            id: format!("p{index}"),
+            thumb: "https://images.unsplash.com/p".into(),
+            color: "#000".into(),
+            alt: String::new(),
+            name: format!("Photographer {index}"),
+            profile: String::new(),
+            page: String::new(),
+        },
+        thumbnail: PathBuf::from(format!("/preview/discover/p{index}.jpg")),
+    };
+    state.suggestions(1, Ok((0..24).map(suggestion).collect()));
+    assert_eq!(state.focus, Target::Suggestion(0));
+    for index in 0..24 {
+        assert!(has(&state, Target::Suggestion(index)));
+    }
+    assert!(has(&state, Target::MoreSuggestions));
+    // Right, then Down into the second row, then OK adds it to Photos.
+    state.direction(Direction::Right, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Suggestion(5));
+    assert_eq!(
+        state.activate(),
+        vec![Effect::AddSuggestion {
+            id: "p5".into(),
+            collection: crate::collections::PHOTOS.into()
+        }]
+    );
+    assert!(state.activate().is_empty(), "not twice while adding");
+    state.suggestion_added("p5", Ok(()));
+    assert_eq!(state.discover.photos[5].status, SuggestionStatus::Added);
+    // Down past the last row reaches More suggestions.
+    state.focus = Target::Suggestion(21);
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::MoreSuggestions);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Suggest {
+            query: "landscape".into(),
+            page: 2
+        }]
+    );
+    // A short page means nothing more to load; duplicates are skipped.
+    state.suggestions(2, Ok(vec![suggestion(0), suggestion(30)]));
+    assert_eq!(state.discover.photos.len(), 25);
+    assert!(state.discover.exhausted);
+    assert_eq!(
+        state.focus,
+        Target::Suggestion(24),
+        "focus moves to the first new photo"
+    );
+    state.focus = Target::MoreSuggestions;
+    assert!(state.activate().is_empty());
+    // Back returns to the Discover button.
+    state.back();
+    assert_eq!(state.subpage, None);
+    assert_eq!(state.focus, Target::DiscoverOpen);
+}

@@ -54,6 +54,7 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
             DAY_NIGHT_ROW,
             WALLPAPER_TINT_ROW,
             WEATHER_EFFECTS_ROW,
+            HOLIDAY_REMINDERS_ROW,
         ],
         CONTROLS_SECTION => {
             let mut rows = vec![BACK_RECENTS_ROW, QUICK_PANEL_ROW, UI_SOUNDS_ROW];
@@ -101,6 +102,7 @@ pub const APP_SORTING_ROW: usize = 25;
 pub const UI_SOUND_LEVEL_ROW: usize = 26;
 pub const UI_SOUND_OUTPUT_ROW: usize = 27;
 pub const WALLPAPER_TINT_ROW: usize = 28;
+pub const HOLIDAY_REMINDERS_ROW: usize = 29;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -245,6 +247,12 @@ pub enum Target {
     WallpaperCollection,
     /// A wallpaper's options: move it to another collection.
     MoveBackground,
+    /// The Background page's Discover button (with an Unsplash key saved).
+    DiscoverOpen,
+    /// An Unsplash suggestion on the Discover page.
+    Suggestion(usize),
+    /// Loads more Discover suggestions.
+    MoreSuggestions,
     WallpaperCycle,
     WallpaperGradient,
     UseBackground,
@@ -361,6 +369,8 @@ pub enum Subpage {
     Collections,
     /// Choose the collection for one wallpaper.
     MoveCollection(String),
+    /// Unsplash suggestions for the collection the gallery shows.
+    Discover,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -389,6 +399,16 @@ pub enum Effect {
     Launch(String),
     Uninstall(String),
     DeleteWallpaper(String),
+    /// Ask Unsplash for Discover suggestions.
+    Suggest {
+        query: String,
+        page: u32,
+    },
+    /// Save a Discover suggestion into a collection.
+    AddSuggestion {
+        id: String,
+        collection: String,
+    },
     Recent {
         generation: u64,
         command: crate::recents::Command,
@@ -473,6 +493,9 @@ pub struct State {
     pub collection: crate::collections::Active,
     /// The collection the Background gallery lists; None follows the active one.
     pub gallery_collection: Option<String>,
+    /// An Unsplash access key is saved on the TV, so Discover is offered.
+    pub unsplash_ready: bool,
+    pub discover: Discover,
     pub deleting_wallpaper: Option<String>,
     pub wallpaper_upload: Option<Result<crate::wallpapers::Session, String>>,
     pub tile_editor: Option<Result<crate::companion::Session, String>>,
@@ -544,6 +567,8 @@ impl State {
                 reason: crate::collections::Reason::Default,
             },
             gallery_collection: None,
+            unsplash_ready: false,
+            discover: Discover::default(),
             deleting_wallpaper: None,
             wallpaper_upload: None,
             tile_editor: None,
@@ -555,6 +580,41 @@ impl State {
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
         }
+    }
+
+    /// A week before a holiday whose collection is still empty, a longer notice on Home,
+    /// once a year per holiday, shown only while someone is using the TV.
+    pub fn remind_holiday(&mut self, now: time::OffsetDateTime) -> Vec<Effect> {
+        if !self.preferences.holiday_reminders
+            || self.page != Page::Home
+            || self.overlay.is_some()
+            || self.ambient.is_some()
+            || self.notice.is_some()
+            || self.last_input.elapsed() > Duration::from_secs(20)
+        {
+            return vec![];
+        }
+        let Some((id, start)) = crate::collections::upcoming_holiday(now.date()) else {
+            return vec![];
+        };
+        if self.collection_size(id) > 0
+            || self.preferences.holiday_reminded.get(id) == Some(&start.year())
+        {
+            return vec![];
+        }
+        self.preferences
+            .holiday_reminded
+            .insert(id.into(), start.year());
+        let text = format!(
+            "{} starts {} {}. Add some wallpapers to its collection from your phone or Discover.",
+            crate::collections::name(id),
+            crate::collections::month_name(start.month()),
+            start.day()
+        );
+        // Shown for about 12 seconds rather than the usual 5.
+        self.notice = Some((text, Instant::now() + Duration::from_secs(7)));
+        self.dirty = true;
+        vec![Effect::Save]
     }
 
     pub fn notify(&mut self, text: impl Into<String>) {
@@ -1799,6 +1859,66 @@ impl State {
             .collect()
     }
 
+    /// Discover results arrived (or failed) for a page of the current search.
+    pub fn suggestions(
+        &mut self,
+        page: u32,
+        result: Result<Vec<crate::wallpapers::Suggestion>, String>,
+    ) {
+        if page != self.discover.page {
+            return;
+        }
+        self.discover.loading = false;
+        match result {
+            Ok(found) => {
+                self.discover.exhausted = found.len() < 24;
+                let start = self.discover.photos.len();
+                for suggestion in found {
+                    if !self
+                        .discover
+                        .photos
+                        .iter()
+                        .any(|item| item.suggestion.photo.id == suggestion.photo.id)
+                    {
+                        self.discover.photos.push(SuggestionItem {
+                            suggestion,
+                            status: SuggestionStatus::Ready,
+                        });
+                    }
+                }
+                self.discover.error = None;
+                if self.focus == Target::MoreSuggestions
+                    && self.subpage == Some(Subpage::Discover)
+                    && start < self.discover.photos.len()
+                {
+                    self.focus = Target::Suggestion(start);
+                }
+            }
+            Err(error) => self.discover.error = Some(error),
+        }
+        self.dirty = true;
+    }
+
+    /// A Discover suggestion was saved as a wallpaper, or failed to be.
+    pub fn suggestion_added(&mut self, id: &str, result: Result<(), String>) {
+        if let Some(item) = self
+            .discover
+            .photos
+            .iter_mut()
+            .find(|item| item.suggestion.photo.id == id)
+        {
+            item.status = if result.is_ok() {
+                SuggestionStatus::Added
+            } else {
+                SuggestionStatus::Failed
+            };
+        }
+        if let Err(error) = result {
+            self.notify(error);
+        }
+        self.dirty = true;
+    }
+
     /// Custom collections, which can follow a schedule.
     pub fn custom_collections(&self) -> Vec<String> {
         self.collections()
@@ -2010,6 +2130,10 @@ impl State {
             Some(Subpage::Collections | Subpage::MoveCollection(_)) => {
                 self.subpage = None;
                 Target::WallpaperCollection
+            }
+            Some(Subpage::Discover) => {
+                self.subpage = None;
+                Target::DiscoverOpen
             }
             None => Target::Sidebar(self.section),
         };
@@ -2498,6 +2622,73 @@ impl State {
                     _ => {}
                 }
             }
+            if self.subpage == Some(Subpage::Discover)
+                && (matches!(self.focus, Target::Suggestion(_) | Target::MoreSuggestions)
+                    || (matches!(self.focus, Target::Nav(_))
+                        && matches!(direction, Direction::Down)))
+            {
+                let count = self.discover.photos.len();
+                match (self.focus.clone(), direction) {
+                    (Target::Suggestion(index), Direction::Left) if index % 4 == 0 => {
+                        self.close_subpage()
+                    }
+                    (Target::Suggestion(index), Direction::Left) => {
+                        self.focus(Target::Suggestion(index - 1), controls)
+                    }
+                    (Target::Suggestion(index), Direction::Right) => {
+                        if index % 4 < 3 && index + 1 < count {
+                            self.focus(Target::Suggestion(index + 1), controls)
+                        }
+                    }
+                    (Target::Suggestion(index), Direction::Up) => self.focus(
+                        if index < 4 {
+                            Target::Nav(2)
+                        } else {
+                            Target::Suggestion(index - 4)
+                        },
+                        controls,
+                    ),
+                    (Target::Suggestion(index), Direction::Down) => self.focus(
+                        if index + 4 < count {
+                            Target::Suggestion(index + 4)
+                        } else {
+                            Target::MoreSuggestions
+                        },
+                        controls,
+                    ),
+                    (Target::MoreSuggestions, Direction::Up) => self.focus(
+                        if count > 0 {
+                            Target::Suggestion(count - 1)
+                        } else {
+                            Target::Nav(2)
+                        },
+                        controls,
+                    ),
+                    (Target::MoreSuggestions, Direction::Left) => self.close_subpage(),
+                    (Target::Nav(_), _) => self.focus(
+                        if count > 0 {
+                            Target::Suggestion(0)
+                        } else {
+                            Target::MoreSuggestions
+                        },
+                        controls,
+                    ),
+                    _ => {}
+                }
+                return vec![];
+            }
+            if self.focus == Target::DiscoverOpen {
+                match direction {
+                    Direction::Down => self.focus(
+                        Target::Background(1.min(self.background_count().saturating_sub(1))),
+                        controls,
+                    ),
+                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Left => self.focus(Target::WallpaperCollection, controls),
+                    Direction::Right => self.focus(Target::UploadWallpaper, controls),
+                }
+                return vec![];
+            }
             if self.focus == Target::WallpaperCollection {
                 match direction {
                     Direction::Down => {
@@ -2507,7 +2698,14 @@ impl State {
                     }
                     Direction::Up => self.focus(Target::Nav(2), controls),
                     Direction::Left => self.focus(Target::Sidebar(1), controls),
-                    Direction::Right => self.focus(Target::UploadWallpaper, controls),
+                    Direction::Right => self.focus(
+                        if self.unsplash_ready {
+                            Target::DiscoverOpen
+                        } else {
+                            Target::UploadWallpaper
+                        },
+                        controls,
+                    ),
                 }
                 return vec![];
             }
@@ -2518,7 +2716,14 @@ impl State {
                         controls,
                     ),
                     Direction::Up => self.focus(Target::Nav(2), controls),
-                    Direction::Left => self.focus(Target::WallpaperCollection, controls),
+                    Direction::Left => self.focus(
+                        if self.unsplash_ready {
+                            Target::DiscoverOpen
+                        } else {
+                            Target::WallpaperCollection
+                        },
+                        controls,
+                    ),
                     Direction::Right => self.focus(Target::WallpaperGradient, controls),
                 }
                 return vec![];
@@ -3411,6 +3616,9 @@ impl State {
                         self.preferences.weather_effects = !self.preferences.weather_effects
                     }
                     UI_SOUNDS_ROW => self.preferences.ui_sounds = !self.preferences.ui_sounds,
+                    HOLIDAY_REMINDERS_ROW => {
+                        self.preferences.holiday_reminders = !self.preferences.holiday_reminders
+                    }
                     WALLPAPER_TINT_ROW => {
                         self.preferences.wallpaper_tint = self.preferences.wallpaper_tint.next()
                     }
@@ -3520,6 +3728,55 @@ impl State {
                 self.preferences.wallpaper_changed = unix_now();
                 self.back();
                 return vec![Effect::Save];
+            }
+            Target::DiscoverOpen => {
+                let collection = self.gallery_collection().to_owned();
+                self.subpage = Some(Subpage::Discover);
+                self.scroll = 0.;
+                self.dirty = true;
+                if self.discover.collection == collection && !self.discover.photos.is_empty() {
+                    self.focus = Target::Suggestion(0);
+                    return vec![];
+                }
+                let query = match collection.as_str() {
+                    crate::collections::PHOTOS => "landscape".to_string(),
+                    other => crate::collections::name(other),
+                };
+                self.discover = Discover {
+                    collection,
+                    query: query.clone(),
+                    page: 1,
+                    loading: true,
+                    ..Discover::default()
+                };
+                self.focus = Target::MoreSuggestions;
+                return vec![Effect::Suggest { query, page: 1 }];
+            }
+            Target::Suggestion(index) => {
+                if let Some(item) = self.discover.photos.get_mut(index)
+                    && matches!(
+                        item.status,
+                        SuggestionStatus::Ready | SuggestionStatus::Failed
+                    )
+                {
+                    item.status = SuggestionStatus::Adding;
+                    self.dirty = true;
+                    return vec![Effect::AddSuggestion {
+                        id: item.suggestion.photo.id.clone(),
+                        collection: self.discover.collection.clone(),
+                    }];
+                }
+            }
+            Target::MoreSuggestions => {
+                if !self.discover.loading && !self.discover.exhausted {
+                    self.discover.loading = true;
+                    self.discover.page += 1;
+                    self.dirty = true;
+                    return vec![Effect::Suggest {
+                        query: self.discover.query.clone(),
+                        page: self.discover.page,
+                    }];
+                }
             }
             Target::WallpaperCollection => {
                 let current = self.gallery_collection().to_owned();
@@ -3688,7 +3945,8 @@ impl State {
                         | Subpage::Clock
                         | Subpage::Weather
                         | Subpage::Shortcuts
-                        | Subpage::Inputs,
+                        | Subpage::Inputs
+                        | Subpage::Discover,
                     ) => {
                         return vec![];
                     }
@@ -3957,4 +4215,31 @@ fn mix(from: u32, to: u32, t: f32) -> u32 {
         ((a + (b - a) * t.clamp(0., 1.)).round() as u32) << shift
     };
     channel(16) | channel(8) | channel(0)
+}
+
+/// The TV's Discover page: Unsplash suggestions for one collection.
+#[derive(Clone, Debug, Default)]
+pub struct Discover {
+    pub collection: String,
+    pub query: String,
+    pub page: u32,
+    pub photos: Vec<SuggestionItem>,
+    pub loading: bool,
+    /// The last page came back short, so there is nothing more to load.
+    pub exhausted: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SuggestionItem {
+    pub suggestion: crate::wallpapers::Suggestion,
+    pub status: SuggestionStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuggestionStatus {
+    Ready,
+    Adding,
+    Added,
+    Failed,
 }

@@ -356,6 +356,8 @@ fn effects(
             Effect::DeleteWallpaper(id) => {
                 wallpapers.delete(id, state.preferences.background.clone())
             }
+            Effect::Suggest { query, page } => wallpapers.suggest(query, page),
+            Effect::AddSuggestion { id, collection } => wallpapers.add_suggestion(id, collection),
             Effect::Recent {
                 generation,
                 command,
@@ -1021,6 +1023,10 @@ fn run() -> Result<(), String> {
                     state.wallpaper_upload = Some(result);
                     state.dirty = true;
                 }
+                wallpapers::Event::Suggestions(page, result) => state.suggestions(page, result),
+                wallpapers::Event::SuggestionAdded(id, result) => {
+                    state.suggestion_added(&id, result)
+                }
                 wallpapers::Event::Ended(generation)
                     if generation == wallpaper_service.generation()
                         && matches!(state.overlay, Some(Overlay::WallpaperUpload)) =>
@@ -1078,9 +1084,27 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         let unix = state::unix_now();
+        let ready = wallpaper_service.unsplash_ready();
+        if state.unsplash_ready != ready {
+            state.unsplash_ready = ready;
+            state.dirty = true;
+        }
         // Collections are only known once the gallery has been scanned.
         if wallpapers_scanned {
             state.refresh_collection(now);
+            if focused && visible {
+                let pending = state.remind_holiday(now);
+                running &= effects(
+                    pending,
+                    &mut state,
+                    &platform,
+                    &preferences_path,
+                    &weather_service,
+                    &wallpaper_service,
+                    &webhook_service,
+                    &updates,
+                );
+            }
         }
         let startup_cycle = wallpaper_cycle::startup_due(
             state.preferences.wallpaper_cycle,

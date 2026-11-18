@@ -4825,3 +4825,71 @@ fn wallpaper_tint_follows_the_fort_collins_day() {
     state.preferences.wallpaper_tint = WallpaperTint::Medium;
     assert_eq!(state.wallpaper_tint(at(23, 0)).unwrap().1, 0.2);
 }
+
+#[test]
+fn an_empty_holiday_is_mentioned_once_a_week_before() {
+    let mut state = ready();
+    state.page = Page::Home;
+    state.note_input();
+    let day = |month, day| {
+        time::PrimitiveDateTime::new(
+            time::Date::from_calendar_date(2026, month, day).unwrap(),
+            time::Time::from_hms(19, 0, 0).unwrap(),
+        )
+        .assume_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap())
+    };
+    // Mid-November: Thanksgiving week starts Nov 23, five days away.
+    assert_eq!(
+        state.remind_holiday(day(time::Month::November, 18)),
+        [Effect::Save]
+    );
+    let (text, _) = state.notice.clone().unwrap();
+    assert!(
+        text.starts_with("Thanksgiving starts November 23."),
+        "{text}"
+    );
+    // Only once a year.
+    state.notice = None;
+    assert!(
+        state
+            .remind_holiday(day(time::Month::November, 19))
+            .is_empty()
+    );
+    // Christmas (Dec 1) is due on Nov 25, but not once it has wallpapers.
+    state
+        .preferences
+        .wallpaper_collections
+        .insert("dunes".into(), "christmas".into());
+    assert!(
+        state
+            .remind_holiday(day(time::Month::November, 25))
+            .is_empty()
+    );
+    state.preferences.wallpaper_collections.clear();
+    // Nor when switched off, or nobody is watching.
+    state.preferences.holiday_reminders = false;
+    assert!(
+        state
+            .remind_holiday(day(time::Month::November, 25))
+            .is_empty()
+    );
+    state.preferences.holiday_reminders = true;
+    state.last_input = std::time::Instant::now() - std::time::Duration::from_secs(60);
+    assert!(
+        state
+            .remind_holiday(day(time::Month::November, 25))
+            .is_empty()
+    );
+    state.note_input();
+    assert_eq!(
+        state.remind_holiday(day(time::Month::November, 25)),
+        [Effect::Save]
+    );
+    assert!(
+        state
+            .notice
+            .unwrap()
+            .0
+            .starts_with("Christmas starts December 1.")
+    );
+}

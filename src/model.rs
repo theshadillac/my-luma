@@ -558,6 +558,10 @@ pub struct Preferences {
     pub collection_pick: Option<crate::collections::Pick>,
     /// Custom collections that take over on their own on certain days.
     pub collection_schedules: std::collections::BTreeMap<String, crate::collections::Schedule>,
+    /// A week before a holiday, remind on Home if its collection is still empty.
+    pub holiday_reminders: bool,
+    /// The year each holiday was last reminded about, so it happens once a year.
+    pub holiday_reminded: std::collections::BTreeMap<String, i32>,
     /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
     pub app_sorting: AppSorting,
     /// Successful launches per app id, kept only on the TV, for the "Most used" order.
@@ -617,6 +621,8 @@ impl Default for Preferences {
             wallpaper_collections: Default::default(),
             collection_pick: None,
             collection_schedules: Default::default(),
+            holiday_reminders: true,
+            holiday_reminded: Default::default(),
             app_sorting: AppSorting::default(),
             app_launch_counts: Default::default(),
         }

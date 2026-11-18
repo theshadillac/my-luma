@@ -85,8 +85,19 @@ pub fn valid_id(id: &str) -> bool {
     })
 }
 
+/// An Unsplash suggestion for the TV's Discover page, with its preview saved locally.
+#[derive(Clone, Debug)]
+pub struct Suggestion {
+    pub photo: crate::unsplash::Photo,
+    pub thumbnail: PathBuf,
+}
+
 pub enum Event {
     Catalog(Vec<Wallpaper>),
+    /// Discover suggestions for a page of a search.
+    Suggestions(u32, Result<Vec<Suggestion>, String>),
+    /// A suggestion was saved as a wallpaper (or why not).
+    SuggestionAdded(String, Result<(), String>),
     Deleted(String, Result<(), String>),
     Session(u64, Result<Session, String>),
     Ended(u64),
@@ -95,10 +106,13 @@ pub enum Event {
 enum Command {
     Wake,
     Delete { id: String, selected: String },
+    Suggest { query: String, page: u32 },
+    AddSuggestion { id: String, collection: String },
 }
 
 pub struct Service {
     desired: Arc<AtomicU64>,
+    unsplash_ready: Arc<std::sync::atomic::AtomicBool>,
     wake: mpsc::Sender<Command>,
     pub receiver: mpsc::Receiver<Event>,
     active: bool,
@@ -113,6 +127,8 @@ impl Service {
             .join("wallpapers");
         let desired = Arc::new(AtomicU64::new(0));
         let worker_desired = desired.clone();
+        let unsplash_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_unsplash = unsplash_ready.clone();
         let (sender, receiver) = mpsc::sync_channel(4);
         let (wake, updates) = mpsc::channel();
         thread::Builder::new()
@@ -121,6 +137,7 @@ impl Service {
                 worker(
                     &directory,
                     &worker_desired,
+                    &worker_unsplash,
                     &sender,
                     &updates,
                     loopback_only,
@@ -129,6 +146,7 @@ impl Service {
             .map_err(|e| format!("Could not start wallpaper worker: {e}"))?;
         Ok(Self {
             desired,
+            unsplash_ready,
             wake,
             receiver,
             active: false,
@@ -157,6 +175,21 @@ impl Service {
 
     pub fn delete(&self, id: String, selected: String) {
         let _ = self.wake.send(Command::Delete { id, selected });
+    }
+
+    /// Whether an Unsplash access key is saved on the TV (Discover is offered).
+    pub fn unsplash_ready(&self) -> bool {
+        self.unsplash_ready.load(Ordering::Acquire)
+    }
+
+    /// Searches Unsplash for Discover; the answer arrives as `Event::Suggestions`.
+    pub fn suggest(&self, query: String, page: u32) {
+        let _ = self.wake.send(Command::Suggest { query, page });
+    }
+
+    /// Saves a Discover suggestion into a collection; answered by `Event::SuggestionAdded`.
+    pub fn add_suggestion(&self, id: String, collection: String) {
+        let _ = self.wake.send(Command::AddSuggestion { id, collection });
     }
 }
 
@@ -582,14 +615,17 @@ fn store_image(
 fn worker(
     directory: &Path,
     desired: &AtomicU64,
+    unsplash_ready: &std::sync::atomic::AtomicBool,
     sender: &mpsc::SyncSender<Event>,
     updates: &mpsc::Receiver<Command>,
     loopback_only: bool,
 ) {
     let mut unsplash = crate::unsplash::Client::new(directory.parent().unwrap_or(directory));
+    unsplash_ready.store(unsplash.has_key(), Ordering::Release);
     if sender.send(Event::Catalog(catalog(directory))).is_err() {
         return;
     }
+    let previews = directory.parent().unwrap_or(directory).join("discover");
     // Each imported image shows in the gallery as soon as it is ready.
     let import = || {
         import_folder(directory, || {
@@ -597,10 +633,31 @@ fn worker(
         });
     };
     import();
-    let update = |command| match command {
+    let update = |command, unsplash: &mut crate::unsplash::Client| match command {
         Command::Wake => {
             import();
             true
+        }
+        Command::Suggest { query, page } => {
+            let result = suggest(unsplash, &previews, &query, page);
+            sender.send(Event::Suggestions(page, result)).is_ok()
+        }
+        Command::AddSuggestion { id, collection } => {
+            let result = unsplash.fetch(&id).and_then(|(bytes, credit)| {
+                store_image(
+                    directory,
+                    decode(&bytes)?,
+                    || true,
+                    // Already a collection id, chosen on the TV.
+                    Some(collection.clone()).filter(|id| !id.is_empty()),
+                    Some(credit),
+                )
+            });
+            let added = result.is_ok();
+            sender
+                .send(Event::SuggestionAdded(id, result.map(|_| ())))
+                .is_ok()
+                && (!added || sender.send(Event::Catalog(catalog(directory))).is_ok())
         }
         Command::Delete { id, selected } => {
             let result = delete_wallpaper(directory, &id, &selected);
@@ -612,7 +669,7 @@ fn worker(
     loop {
         // Finish queued mutations before starting another upload session.
         for command in updates.try_iter() {
-            if !update(command) {
+            if !update(command, &mut unsplash) {
                 return;
             }
         }
@@ -623,7 +680,7 @@ fn worker(
         if generation == 0 || generation == handled {
             match updates.recv() {
                 Ok(command) => {
-                    if !update(command) {
+                    if !update(command, &mut unsplash) {
                         break;
                     }
                 }
@@ -680,6 +737,8 @@ fn worker(
                         Ok(false) => {}
                         Err(error) => eprintln!("Luma wallpaper upload: {error}"),
                     }
+                    // The phone may have saved or removed the Unsplash key.
+                    unsplash_ready.store(unsplash.has_key(), Ordering::Release);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(25))
@@ -908,6 +967,38 @@ fn serve(
             Ok(false)
         }
     }
+}
+
+/// Runs a Discover search and saves each result's preview where the TV can draw it.
+fn suggest(
+    unsplash: &mut crate::unsplash::Client,
+    previews: &Path,
+    query: &str,
+    page: u32,
+) -> Result<Vec<Suggestion>, String> {
+    if page <= 1 {
+        // A new search replaces the previews of the last one.
+        if let Ok(entries) = fs::read_dir(previews) {
+            for entry in entries.flatten() {
+                if entry.path().extension().is_some_and(|ext| ext == "jpg") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    fs::create_dir_all(previews).map_err(|_| "Previews couldn't be saved on the TV")?;
+    let photos = unsplash.search(query, page)?;
+    Ok(photos
+        .into_iter()
+        .filter_map(|photo| {
+            let thumbnail = previews.join(format!("{}.jpg", photo.id));
+            if !thumbnail.exists() {
+                let bytes = unsplash.thumbnail(&photo).ok()?;
+                fs::write(&thumbnail, bytes).ok()?;
+            }
+            Some(Suggestion { photo, thumbnail })
+        })
+        .collect())
 }
 
 /// Decodes `encodeURIComponent` output; None for malformed input or invalid UTF-8.

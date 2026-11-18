@@ -5,10 +5,10 @@ use crate::{
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
         AMBIENT_ROW, APP_SORTING_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control,
-        DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOME_FADE_LEFT, HOME_FADE_RIGHT,
-        HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
-        LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect,
-        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
+        DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOLIDAY_REMINDERS_ROW, HOME_FADE_LEFT,
+        HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS,
+        LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW,
+        Rect, SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
         UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW,
         WIDGETS_SECTION,
     },
@@ -2759,7 +2759,10 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         width + 24.2 + 24.
     } else if let Some(width) = measured_value_width {
         width + 40.
-    } else if matches!(row.target, Target::UploadWallpaper | Target::WallpaperCycle) {
+    } else if matches!(
+        row.target,
+        Target::UploadWallpaper | Target::WallpaperCycle | Target::DiscoverOpen
+    ) {
         24.2
     } else {
         64.
@@ -2833,7 +2836,11 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
     }
     let scrollable = !matches!(
         row.target,
-        Target::UploadWallpaper | Target::WallpaperCycle | Target::WallpaperGradient
+        Target::UploadWallpaper
+            | Target::WallpaperCycle
+            | Target::WallpaperGradient
+            | Target::WallpaperCollection
+            | Target::DiscoverOpen
     );
     out.control(row.target, row.rect, scrollable);
 }
@@ -3159,6 +3166,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::TextRendering) => language.t("textRendering"),
                 Some(Subpage::Collections) => language.t("collections"),
                 Some(Subpage::MoveCollection(_)) => language.t("moveToCollection"),
+                Some(Subpage::Discover) => language.t("discover"),
                 _ => "",
             };
             let mut path = vec![label];
@@ -3240,8 +3248,10 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                 | Subpage::AppNames
                 | Subpage::Clock
                 | Subpage::QuickPanel
+                | Subpage::Discover
         ) {
             match subpage {
+                Subpage::Discover => discover_page(out, state, assets),
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Weather => weather_settings(out, state, assets),
                 Subpage::Shortcuts => shortcut_settings(out, state, assets),
@@ -3413,7 +3423,8 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
             | Subpage::Date
             | Subpage::AppNames
             | Subpage::Clock
-            | Subpage::QuickPanel => {
+            | Subpage::QuickPanel
+            | Subpage::Discover => {
                 unreachable!()
             }
             Subpage::Language => Language::ALL
@@ -3588,6 +3599,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                         detail.as_str()
                     } else {
                         language.t("stateOn")
+                    }),
+                    false,
+                ),
+                (
+                    HOLIDAY_REMINDERS_ROW,
+                    "holidayReminders",
+                    "sparkles",
+                    Some(if state.preferences.holiday_reminders {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
                     }),
                     false,
                 ),
@@ -3767,7 +3789,25 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
             );
             // The collection the gallery lists, at the left above the first column.
             let collection_name = crate::collections::name(state.gallery_collection());
-            let collection_room = 1760. - cycle_width - 60. - gradient_width - upload_width - 640.;
+            let discover_label = language.t("discover");
+            let discover_width = if state.unsplash_ready {
+                (assets.width(discover_label, text(20.8, 550, -0.02)) + 88.)
+                    .ceil()
+                    .min(260.)
+            } else {
+                0.
+            };
+            let collection_room = 1760.
+                - cycle_width
+                - 60.
+                - gradient_width
+                - upload_width
+                - 640.
+                - if state.unsplash_ready {
+                    discover_width + 20.
+                } else {
+                    0.
+                };
             let collection_width = (assets.width(&collection_name, text(20.8, 550, -0.02)) + 156.)
                 .ceil()
                 .clamp(180., collection_room.max(180.));
@@ -3786,6 +3826,23 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     chevron: true,
                 },
             );
+            if state.unsplash_ready {
+                row(
+                    out,
+                    state,
+                    assets,
+                    Row {
+                        target: Target::DiscoverOpen,
+                        rect: Rect::new(640. + collection_width + 20., 164.8, discover_width, 64.),
+                        title: discover_label,
+                        icon: Some("search"),
+                        value: None,
+                        description: None,
+                        selected: false,
+                        chevron: false,
+                    },
+                );
+            }
             // Fixed actions sit above the gallery, without cutting off scrolling cards.
             let actions = out.draw.split_off(actions_start);
             for index in 0..state.background_count() {
@@ -5082,6 +5139,94 @@ fn short_month(month: time::Month) -> &'static str {
         November => "Nov",
         December => "Dec",
     }
+}
+
+/// The Discover page: Unsplash suggestions for the gallery's collection, four across.
+fn discover_page(out: &mut Scene, state: &State, assets: &Assets) {
+    use crate::state::SuggestionStatus;
+    let s = state.scroll;
+    let discover = &state.discover;
+    let heading = format!(
+        "Unsplash photos for \u{201c}{}\u{201d} · OK adds one to {}",
+        discover.query,
+        crate::collections::name(&discover.collection)
+    );
+    out.text(
+        &heading,
+        Rect::new(640., 164.8 - s, 1120., 28.),
+        text(19.2, 500, 0.),
+        c(0xffffff, 0.72),
+        false,
+    );
+    let (w, h, gap, pitch) = (265., 149., 20., 149. + 44.);
+    for (index, item) in discover.photos.iter().enumerate() {
+        let rect = Rect::new(
+            640. + (index % 4) as f32 * (w + gap),
+            212. + (index / 4) as f32 * pitch - s,
+            w,
+            h,
+        );
+        out.shadow(rect, 12., 12., 3., 0.13);
+        out.image(
+            item.suggestion.thumbnail.to_string_lossy().into_owned(),
+            rect,
+            12.,
+            false,
+        );
+        out.border(rect, 12., 1., c(0xffffff, 0.086));
+        if item.status == SuggestionStatus::Added {
+            out.shape(rect, 12., c(0x101213, 0.45));
+        }
+        let badge = match item.status {
+            SuggestionStatus::Ready => None,
+            SuggestionStatus::Adding => Some(("…", 0x101213, 0xffffff)),
+            SuggestionStatus::Added => Some(("✓", 0xcfe3d2, 0x17261b)),
+            SuggestionStatus::Failed => Some(("!", 0xe8a99d, 0x2b1511)),
+        };
+        if let Some((mark, fill, ink)) = badge {
+            let spot = Rect::new(rect.x + 10., rect.y + 10., 30., 30.);
+            out.shape(spot, 15., c(fill, 0.92));
+            out.text(mark, spot, text(17.6, 650, 0.), c(ink, 1.), true);
+        }
+        if state.focus == Target::Suggestion(index) {
+            out.border(rect.inset(-3.), 15., 3., WHITE);
+        }
+        out.text(
+            &item.suggestion.photo.name,
+            Rect::new(rect.x + 2., rect.y + h + 8., w - 4., 22.),
+            text(15.2, 500, 0.),
+            c(0xffffff, 0.6),
+            false,
+        );
+        out.control(Target::Suggestion(index), rect, false);
+    }
+    let rows = discover.photos.len().div_ceil(4) as f32;
+    let more = if discover.loading {
+        "Searching Unsplash…".to_string()
+    } else if let Some(error) = &discover.error {
+        error.clone()
+    } else if discover.photos.is_empty() {
+        "No photos found".to_string()
+    } else if discover.exhausted {
+        "No more suggestions".to_string()
+    } else {
+        "More suggestions".to_string()
+    };
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::MoreSuggestions,
+            rect: Rect::new(640., 212. + rows * pitch - s, 1120., 72.),
+            title: &more,
+            icon: Some("refresh"),
+            value: None,
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
 }
 
 #[cfg(test)]

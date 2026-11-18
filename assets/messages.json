@@ -5489,5 +5489,39 @@
     "sv": "Flytta till samling",
     "cs": "Přesunout do kolekce",
     "ca": "Mou a una col·lecció"
+  },
+  "holidayReminders": {
+    "en": "Holiday reminders",
+    "de": "Feiertagserinnerungen",
+    "es": "Recordatorios de fiestas",
+    "zh": "节日提醒",
+    "zh-tw": "節日提醒",
+    "pt": "Lembretes de feriados",
+    "it": "Promemoria festività",
+    "ru": "Напоминания о праздниках",
+    "pl": "Przypomnienia o świętach",
+    "fr": "Rappels des fêtes",
+    "vi": "Nhắc ngày lễ",
+    "nl": "Feestdagherinneringen",
+    "sv": "Helgdagspåminnelser",
+    "cs": "Připomínky svátků",
+    "ca": "Recordatoris de festes"
+  },
+  "discover": {
+    "en": "Discover",
+    "de": "Entdecken",
+    "es": "Descubrir",
+    "zh": "发现",
+    "zh-tw": "探索",
+    "pt": "Descobrir",
+    "it": "Scopri",
+    "ru": "Обзор",
+    "pl": "Odkrywaj",
+    "fr": "Découvrir",
+    "vi": "Khám phá",
+    "nl": "Ontdekken",
+    "sv": "Upptäck",
+    "cs": "Objevit",
+    "ca": "Descobreix"
   }
 }

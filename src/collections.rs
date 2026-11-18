@@ -155,6 +155,25 @@ pub fn holiday_window(id: &str, year: i32) -> Option<(Date, Date)> {
     })
 }
 
+/// A holiday starting within the next week (1 to 7 days ahead), with its first day.
+pub fn upcoming_holiday(today: Date) -> Option<(&'static str, Date)> {
+    HOLIDAYS.iter().find_map(|(id, _)| {
+        [today.year(), today.year() + 1]
+            .into_iter()
+            .find_map(|year| {
+                let (start, _) = holiday_window(id, year)?;
+                // New Year's opens on New Year's Eve.
+                let start = if *id == "new-year" {
+                    start.previous_day()?
+                } else {
+                    start
+                };
+                let days = (start - today).whole_days();
+                (1..=7).contains(&days).then_some((*id, start))
+            })
+    })
+}
+
 /// The holiday whose window contains `date`, with the first day of that window.
 fn holiday_on(date: Date) -> Option<(&'static str, Date)> {
     // New Year's Eve opens next year's New Year window.
@@ -170,6 +189,23 @@ fn holiday_on(date: Date) -> Option<(&'static str, Date)> {
         };
         (start..=end).contains(&date).then_some((*id, start))
     })
+}
+
+pub fn month_name(month: Month) -> &'static str {
+    match month {
+        Month::January => "January",
+        Month::February => "February",
+        Month::March => "March",
+        Month::April => "April",
+        Month::May => "May",
+        Month::June => "June",
+        Month::July => "July",
+        Month::August => "August",
+        Month::September => "September",
+        Month::October => "October",
+        Month::November => "November",
+        Month::December => "December",
+    }
 }
 
 /// Fourth Thursday of November.
