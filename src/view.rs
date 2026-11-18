@@ -599,6 +599,25 @@ pub fn scene_with_pill(
     if let Some((color, alpha)) = state.wallpaper_tint(now) {
         out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(color, alpha));
     }
+    // Unsplash photos credit their photographer, quietly, in the bottom-right corner.
+    if state.page == Page::Home
+        && let Some(credit) = state
+            .wallpapers
+            .iter()
+            .find(|item| item.id == state.preferences.background)
+            .and_then(|item| item.credit.as_ref())
+    {
+        let line = format!("Photo by {} on Unsplash", credit.name);
+        let style = text(15.2, 500, 0.);
+        let width = assets.width(&line, style).min(700.);
+        out.text(
+            &line,
+            Rect::new(1836. - width, 1036., width, 22.),
+            style,
+            c(0xffffff, 0.55),
+            false,
+        );
+    }
     weather_effect(&mut out, state, now);
     let content_start = out.draw.len();
     if recents_replaces_page(state) {

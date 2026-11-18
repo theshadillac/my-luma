@@ -4,6 +4,7 @@ use crate::{model::BACKGROUNDS, renderer::Draw, wallpapers::Wallpaper};
 fn custom(index: u32) -> Wallpaper {
     Wallpaper {
         collection: None,
+        credit: None,
         id: format!("custom-{index:032x}"),
         directory: PathBuf::from(format!("/preview/wallpapers/custom-{index:032x}")),
         has_original: true,
@@ -927,4 +928,27 @@ fn collections_split_the_gallery_and_the_rotation() {
     state.focus = Target::Choice(0);
     state.activate();
     assert!(state.preferences.wallpaper_collections.is_empty());
+}
+
+#[test]
+fn unsplash_wallpapers_credit_their_photographer_on_home() {
+    let mut state = ready();
+    let photo = Wallpaper {
+        credit: Some(crate::unsplash::Credit {
+            name: "Ana Lens".into(),
+            link: "https://unsplash.com/@ana".into(),
+        }),
+        ..custom(7)
+    };
+    let credited = |state: &State| {
+        scene(state).draw.iter().any(
+            |draw| matches!(draw, Draw::Text(text, ..) if text == "Photo by Ana Lens on Unsplash"),
+        )
+    };
+    state.set_wallpapers(vec![photo.clone()]);
+    assert!(!credited(&state), "not while another wallpaper shows");
+    state.preferences.background = photo.id.clone();
+    assert!(credited(&state));
+    state.open(2);
+    assert!(!credited(&state), "Settings stays uncluttered");
 }

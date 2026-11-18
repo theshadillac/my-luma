@@ -8,6 +8,7 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="app.css" />
     <script type="module" src="app.js"></script>
+    <script type="module" src="unsplash.js"></script>
   </head>
   <body>
     <main>
@@ -18,38 +19,50 @@
       <p class="intro" id="intro">
         Pick as many photos as you like. Each one is cropped to fill the TV.
       </p>
-      <label class="picker" id="picker">
-        <input id="file" type="file" accept="image/jpeg,image/png,image/webp" multiple />
-        <span class="picker-icon" aria-hidden="true">↑</span>
-        <span class="picker-title">Choose photos</span>
-        <span class="picker-hint">Select several at once <i>·</i> JPG, PNG or WebP</span>
+      <label class="collection-picker" for="collection">
+        <span>Add to</span>
+        <select id="collection">
+          <option value="Photos">Photos</option>
+        </select>
       </label>
-      <label class="folder" id="folder-picker" hidden>
-        <input id="folder" type="file" multiple webkitdirectory />
-        <span>Or choose a whole folder</span>
-      </label>
-      <section id="queue" hidden>
-        <div class="queue-head">
-          <strong id="queue-count"></strong>
-          <span id="queue-room"></span>
-        </div>
-        <label class="collection-picker" for="collection">
-          <span>Add to</span>
-          <select id="collection">
-            <option value="Photos">Photos</option>
-          </select>
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-photos" aria-selected="true">My photos</button>
+        <button type="button" role="tab" id="tab-unsplash" aria-selected="false">Unsplash</button>
+      </nav>
+      <div id="mine">
+        <label class="picker" id="picker">
+          <input id="file" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+          <span class="picker-icon" aria-hidden="true">↑</span>
+          <span class="picker-title">Choose photos</span>
+          <span class="picker-hint">Select several at once <i>·</i> JPG, PNG or WebP</span>
         </label>
-        <p class="queue-tip">Tap a photo to adjust its crop.</p>
-        <ul id="grid" class="grid"></ul>
-        <div class="progress" id="progress" hidden><span id="progress-bar"></span></div>
-        <div class="actions">
-          <label class="button secondary" id="more">
-            <input id="more-file" type="file" accept="image/jpeg,image/png,image/webp" multiple />
-            Add more
+        <label class="folder" id="folder-picker" hidden>
+          <input id="folder" type="file" multiple webkitdirectory />
+          <span>Or choose a whole folder</span>
+        </label>
+        <section id="queue" hidden>
+          <div class="queue-head">
+            <strong id="queue-count"></strong>
+            <span id="queue-room"></span>
+          </div>
+          <label class="collection-picker" for="collection">
+            <span>Add to</span>
+            <select id="collection">
+              <option value="Photos">Photos</option>
+            </select>
           </label>
-          <button id="submit" type="button">Save to TV</button>
-        </div>
-      </section>
+          <p class="queue-tip">Tap a photo to adjust its crop.</p>
+          <ul id="grid" class="grid"></ul>
+          <div class="progress" id="progress" hidden><span id="progress-bar"></span></div>
+          <div class="actions">
+            <label class="button secondary" id="more">
+              <input id="more-file" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+              Add more
+            </label>
+            <button id="submit" type="button">Save to TV</button>
+          </div>
+        </section>
+      </div>
       <dialog id="editor">
         <form method="dialog">
           <div class="preview">
@@ -71,6 +84,50 @@
           </div>
         </form>
       </dialog>
+      <section id="unsplash" hidden>
+        <form id="unsplash-key" class="unsplash-key" hidden>
+          <p>
+            Paste your Unsplash <strong>Access Key</strong> (not the Secret). It is saved on the TV
+            only and used just to search Unsplash.
+          </p>
+          <input
+            id="unsplash-key-input"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Access Key"
+          />
+          <button type="submit">Save key</button>
+        </form>
+        <form id="unsplash-search" class="unsplash-search" hidden>
+          <input
+            id="unsplash-query"
+            type="search"
+            enterkeyhint="search"
+            placeholder="Search Unsplash, e.g. vintage porsche"
+          />
+          <button type="submit">Search</button>
+        </form>
+        <p class="queue-tip" id="unsplash-tip" hidden>
+          Tap photos to choose them, then add them to the TV.
+        </p>
+        <ul id="unsplash-grid" class="grid unsplash-grid"></ul>
+        <button id="unsplash-more" type="button" class="secondary" hidden>More results</button>
+        <div class="actions" id="unsplash-actions" hidden>
+          <button id="unsplash-add" type="button">Add to TV</button>
+        </div>
+        <p class="unsplash-footer" id="unsplash-footer" hidden>
+          Photos from
+          <a
+            href="https://unsplash.com/?utm_source=my_luma&amp;utm_medium=referral"
+            target="_blank"
+            rel="noopener"
+            >Unsplash</a
+          >
+          ·
+          <button type="button" id="unsplash-forget" class="link">Remove key</button>
+        </p>
+      </section>
       <section id="success" class="success" aria-live="polite" hidden>
         <span class="success-mark" aria-hidden="true">✓</span>
         <h2 id="success-title">Success</h2>

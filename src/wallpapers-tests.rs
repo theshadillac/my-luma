@@ -42,7 +42,15 @@ fn http(path: &Path, request: impl FnOnce(&str) -> Vec<u8>) -> (String, bool) {
     let path = path.to_owned();
     let worker = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
-        serve(&mut socket, &address.to_string(), "secret", &path, || true).unwrap_or(false)
+        serve(
+            &mut socket,
+            &address.to_string(),
+            "secret",
+            &path,
+            &mut crate::unsplash::Client::new(&std::env::temp_dir().join("luma-no-unsplash")),
+            || true,
+        )
+        .unwrap_or(false)
     });
     let mut socket = TcpStream::connect(address).unwrap();
     socket
@@ -241,6 +249,7 @@ fn gallery_capacity_is_checked_before_decoding_or_creating_another_upload() {
             &serde_json::to_vec(&Wallpaper {
                 id,
                 collection: None,
+                credit: None,
                 directory: directory.clone(),
                 has_original: false,
             })
@@ -381,6 +390,7 @@ fn browser_assets_are_local_and_a_real_http_upload_needs_no_name() {
         "app.js",
         "crop.js",
         "queue.js",
+        "unsplash.js",
         "storage.js",
         "app.css",
         "luma-mark.svg",

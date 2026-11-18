@@ -41,6 +41,9 @@ pub struct Wallpaper {
     /// The collection chosen on the phone when uploading (Photos when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
+    /// The photographer, for photos added from Unsplash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit: Option<crate::unsplash::Credit>,
     #[serde(skip)]
     pub directory: PathBuf,
     #[serde(skip)]
@@ -440,7 +443,7 @@ fn import_folder(directory: &Path, mut added: impl FnMut()) -> usize {
                 }
             })
             .and_then(|bytes| decode_import(&bytes))
-            .and_then(|image| store_image(directory, image, || true, None));
+            .and_then(|image| store_image(directory, image, || true, None, None));
         match result {
             Ok(_) => {
                 let _ = fs::remove_file(&path);
@@ -504,7 +507,7 @@ fn store(
             "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
         ));
     }
-    store_image(directory, decode(bytes)?, valid, collection)
+    store_image(directory, decode(bytes)?, valid, collection, None)
 }
 
 fn store_image(
@@ -512,6 +515,7 @@ fn store_image(
     mut image: image::RgbImage,
     valid: impl Fn() -> bool,
     collection: Option<String>,
+    credit: Option<crate::unsplash::Credit>,
 ) -> Result<Wallpaper, String> {
     if catalog(directory).len() >= MAX_WALLPAPERS {
         return Err(format!(
@@ -543,6 +547,7 @@ fn store_image(
     let item = Wallpaper {
         id: id.clone(),
         collection: collection.filter(|id| id != crate::collections::PHOTOS),
+        credit,
         directory: directory.join(&id),
         has_original: true,
     };
@@ -581,6 +586,7 @@ fn worker(
     updates: &mpsc::Receiver<Command>,
     loopback_only: bool,
 ) {
+    let mut unsplash = crate::unsplash::Client::new(directory.parent().unwrap_or(directory));
     if sender.send(Event::Catalog(catalog(directory))).is_err() {
         return;
     }
@@ -658,7 +664,14 @@ fn worker(
                     let valid = || {
                         desired.load(Ordering::Acquire) == generation && Instant::now() < deadline
                     };
-                    match serve(&mut stream, &address.to_string(), &token, directory, valid) {
+                    match serve(
+                        &mut stream,
+                        &address.to_string(),
+                        &token,
+                        directory,
+                        &mut unsplash,
+                        valid,
+                    ) {
                         Ok(true) => {
                             if sender.send(Event::Catalog(catalog(directory))).is_err() {
                                 return;
@@ -697,6 +710,7 @@ fn serve(
     host: &str,
     token: &str,
     directory: &Path,
+    unsplash: &mut crate::unsplash::Client,
     valid: impl Fn() -> bool,
 ) -> Result<bool, String> {
     stream
@@ -754,6 +768,7 @@ fn serve(
                 "path": directory.to_string_lossy(),
                 "free": free,
                 "collections": collections,
+                "unsplash": unsplash.has_key(),
             })
             .to_string();
             response(
@@ -785,6 +800,10 @@ fn serve(
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/queue.js"),
             ),
+            "unsplash.js" => (
+                "text/javascript; charset=utf-8",
+                include_bytes!("../assets/wallpaper-upload/unsplash.js"),
+            ),
             "storage.js" => (
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/storage.js"),
@@ -797,6 +816,53 @@ fn serve(
         };
         response(stream, "200 OK", kind, body)?;
         return Ok(false);
+    }
+    if request.method == "POST"
+        && route.starts_with("unsplash/")
+        && request.headers.get("x-luma-upload").map(String::as_str) == Some(token)
+    {
+        if request.length > 4096 {
+            error_response(stream, "413 Content Too Large", "Request too large")?;
+            return Ok(false);
+        }
+        let mut body = vec![0; request.length];
+        read_exact(&mut reader, &mut body, &valid, deadline)?;
+        drop(reader);
+        let input: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let text = |name: &str| input[name].as_str().unwrap_or_default().to_owned();
+        let (result, changed) = match route {
+            "unsplash/key" => (
+                unsplash
+                    .set_key(&text("key"))
+                    .map(|()| serde_json::json!({"ok": true})),
+                false,
+            ),
+            "unsplash/search" => (
+                unsplash
+                    .search(&text("query"), input["page"].as_u64().unwrap_or(1) as u32)
+                    .map(|photos| serde_json::json!({"photos": photos})),
+                false,
+            ),
+            "unsplash/add" => {
+                let collection = crate::collections::custom_id(&text("collection"));
+                let added = unsplash.fetch(&text("id")).and_then(|(bytes, credit)| {
+                    store_image(directory, decode(&bytes)?, &valid, collection, Some(credit))
+                });
+                let ok = added.is_ok();
+                (added.map(|item| serde_json::json!({"id": item.id})), ok)
+            }
+            _ => (Err("Not found".to_string()), false),
+        };
+        match result {
+            Ok(value) => response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                value.to_string().as_bytes(),
+            )?,
+            Err(error) => error_response(stream, "422 Unprocessable Content", &error)?,
+        }
+        return Ok(changed);
     }
     if request.method != "POST"
         || route != "upload"

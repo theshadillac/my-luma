@@ -30,6 +30,7 @@ mod storage;
 mod text_rendering;
 #[path = "tile-editor.rs"]
 mod tile_editor;
+mod unsplash;
 mod update;
 mod vector;
 mod view;
