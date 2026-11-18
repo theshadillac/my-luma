@@ -174,7 +174,7 @@ try {
   assert.deepEqual(saved.preferences.favorites.slice(0, 2), ['youtube.leanback.v4', 'netflix']);
   const upload = await scenario(
     'wallpaper-upload',
-    'settings,down,down,down,enter,up,up,up,enter,await-upload',
+    'settings,down,down,down,enter,up,up,up,right,enter,await-upload',
   );
   assert.equal(upload.modal, true);
   assert.equal(upload.focus, 'CloseDialog');
@@ -189,7 +189,7 @@ try {
   );
   const uploadClosed = await scenario(
     'wallpaper-upload-closed',
-    'settings,down,down,down,enter,up,up,up,enter,await-upload,back',
+    'settings,down,down,down,enter,up,up,up,right,enter,await-upload,back',
   );
   assert.equal(uploadClosed.modal, false);
   assert.equal(uploadClosed.focus, 'UploadWallpaper');
@@ -555,7 +555,7 @@ try {
   assert.equal(heldWithRecents.modal, true);
   const gradientDisabled = await scenario(
     'wallpaper-gradient-disabled',
-    'settings,down,down,down,enter,up,up,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,enter',
   );
   assert.equal(gradientDisabled.focus, 'WallpaperGradient');
   assert.equal(gradientDisabled.preferences.wallpaper_gradient, false);
@@ -564,12 +564,12 @@ try {
   assert.equal(gradientRestored.preferences.wallpaper_gradient, false);
   const gradientEnabled = await scenario(
     'wallpaper-gradient-enabled',
-    'settings,down,down,down,enter,up,up,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,enter',
   );
   assert.equal(gradientEnabled.preferences.wallpaper_gradient, true);
   const cycleEnabled = await scenario(
     'wallpaper-cycle-enabled',
-    'settings,down,down,down,enter,up,up,right,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,right,enter',
   );
   assert.equal(cycleEnabled.subpage, null);
   assert.equal(cycleEnabled.focus, 'WallpaperCycle');
@@ -583,7 +583,7 @@ try {
   );
   const cycleDisabled = await scenario(
     'wallpaper-cycle-disabled',
-    'settings,down,down,down,enter,up,up,right,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,right,enter',
   );
   assert.equal(cycleDisabled.preferences.wallpaper_cycle, false);
   assert.ok(cycleDisabled.ui_text.includes('Rotation'));

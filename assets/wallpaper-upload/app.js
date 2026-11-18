@@ -24,10 +24,48 @@ const info = loadInfo(fetch).catch(() => {
   element('storage-path').textContent = 'Storage path unavailable';
   return null;
 });
+const NEW_COLLECTION = '\u0000new';
+const picker_collection = element('collection');
+function fillCollections(names, chosen) {
+  const list = names.length ? names : ['Photos'];
+  picker_collection.replaceChildren(
+    ...list.map((name) => new Option(name, name)),
+    new Option('New collection…', NEW_COLLECTION),
+  );
+  picker_collection.value = list.includes(chosen) ? chosen : list[0];
+}
+let lastCollection = 'Photos';
+try {
+  lastCollection = localStorage.getItem('luma-collection') || 'Photos';
+} catch {
+  /* private browsing */
+}
+picker_collection.addEventListener('change', () => {
+  if (picker_collection.value !== NEW_COLLECTION) {
+    lastCollection = picker_collection.value;
+    return;
+  }
+  const name = (prompt('Name the new collection, e.g. Vintage Porsche') || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32);
+  const names = [...picker_collection.options]
+    .map((option) => option.value)
+    .filter((value) => value !== NEW_COLLECTION);
+  if (!name) {
+    picker_collection.value = lastCollection;
+    return;
+  }
+  const existing = names.find((item) => item.toLowerCase() === name.toLowerCase());
+  if (!existing) names.splice(1, 0, name);
+  lastCollection = existing || name;
+  fillCollections(names, lastCollection);
+});
 info.then((value) => {
   if (!value) return;
   element('storage-path').textContent = value.path;
   free = value.free;
+  fillCollections(value.collections, lastCollection);
   render();
 });
 
@@ -247,7 +285,11 @@ async function send(item) {
   try {
     const response = await fetch('upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'image/jpeg', 'X-Luma-Upload': token },
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'X-Luma-Upload': token,
+        'X-Luma-Collection': encodeURIComponent(lastCollection),
+      },
       body: blob,
       signal: controller.signal,
     });
@@ -315,6 +357,15 @@ submit.addEventListener('click', async () => {
   const waiting = items.filter((item) => item.state === 'ready');
   if (!failed.length && !waiting.length) {
     element('success-title').textContent = `${plural(sent, 'background')} added`;
+    element('success-detail').textContent =
+      lastCollection === 'Photos'
+        ? 'Your backgrounds were uploaded to'
+        : `Added to ${lastCollection}. Stored on the TV in`;
+    try {
+      localStorage.setItem('luma-collection', lastCollection);
+    } catch {
+      /* private browsing */
+    }
     element('success-path').textContent = destination.path;
     element('success').hidden = false;
     queueView.hidden = true;

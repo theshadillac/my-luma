@@ -3138,6 +3138,8 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::QuickPanel) => language.t("quickSettings"),
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::TextRendering) => language.t("textRendering"),
+                Some(Subpage::Collections) => language.t("collections"),
+                Some(Subpage::MoveCollection(_)) => language.t("moveToCollection"),
                 _ => "",
             };
             let mut path = vec![label];
@@ -3237,7 +3239,78 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
             }
             return;
         }
+        // Collection rows own their text; the list below borrows it.
+        let collection_rows: Vec<(String, String, bool)> = match subpage {
+            Subpage::Collections | Subpage::MoveCollection(_) => {
+                let current = match subpage {
+                    Subpage::MoveCollection(id) => state.wallpaper_collection(id).to_owned(),
+                    _ => state.collection.id.clone(),
+                };
+                let mut rows: Vec<(String, String, bool)> = state
+                    .collections()
+                    .into_iter()
+                    .map(|(id, size)| {
+                        let mut parts = vec![if size == 1 {
+                            "1 wallpaper".to_string()
+                        } else {
+                            format!("{size} wallpapers")
+                        }];
+                        if let Some((start, end)) = crate::collections::holiday_window(
+                            &id,
+                            time::OffsetDateTime::now_utc().year(),
+                        ) {
+                            parts.push(format!(
+                                "{} {} – {} {}",
+                                short_month(start.month()),
+                                start.day(),
+                                short_month(end.month()),
+                                end.day()
+                            ));
+                        }
+                        if let Some(schedule) = state.preferences.collection_schedules.get(&id) {
+                            parts.push(schedule.label().into());
+                        }
+                        if matches!(subpage, Subpage::Collections) && id == state.collection.id {
+                            parts.push(match state.collection.reason {
+                                crate::collections::Reason::Manual => "Showing now".into(),
+                                crate::collections::Reason::Default => "Showing now".into(),
+                                crate::collections::Reason::Holiday(end) => format!(
+                                    "Showing for the holiday until {} {}",
+                                    short_month(end.month()),
+                                    end.day()
+                                ),
+                                crate::collections::Reason::Scheduled(_) => {
+                                    "Showing on its schedule".into()
+                                }
+                            });
+                        }
+                        let selected = id == current;
+                        (crate::collections::name(&id), parts.join(" · "), selected)
+                    })
+                    .collect();
+                if matches!(subpage, Subpage::Collections) {
+                    rows.extend(state.custom_collections().into_iter().map(|id| {
+                        let schedule = state.preferences.collection_schedules.get(&id);
+                        (
+                            format!("{} schedule", crate::collections::name(&id)),
+                            schedule.map_or("Only when chosen".into(), |schedule| {
+                                format!("Shows on its own: {}", schedule.label())
+                            }),
+                            false,
+                        )
+                    }));
+                }
+                rows
+            }
+            _ => vec![],
+        };
         let options: Vec<(&str, Option<&str>, bool)> = match subpage {
+            Subpage::Collections | Subpage::MoveCollection(_) => collection_rows
+                .iter()
+                .map(|(title, description, selected)| {
+                    (title.as_str(), Some(description.as_str()), *selected)
+                })
+                .collect(),
             Subpage::DateFormat => crate::model::DateFormat::ALL
                 .iter()
                 .map(|format| {
@@ -3671,6 +3744,27 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     description: None,
                     selected: false,
                     chevron: false,
+                },
+            );
+            // The collection the gallery lists, at the left above the first column.
+            let collection_name = crate::collections::name(state.gallery_collection());
+            let collection_room = 1760. - cycle_width - 60. - gradient_width - upload_width - 640.;
+            let collection_width = (assets.width(&collection_name, text(20.8, 550, -0.02)) + 156.)
+                .ceil()
+                .clamp(180., collection_room.max(180.));
+            row(
+                out,
+                state,
+                assets,
+                Row {
+                    target: Target::WallpaperCollection,
+                    rect: Rect::new(640., 164.8, collection_width, 64.),
+                    title: &collection_name,
+                    icon: Some("grid"),
+                    value: None,
+                    description: None,
+                    selected: false,
+                    chevron: true,
                 },
             );
             // Fixed actions sit above the gallery, without cutting off scrolling cards.
@@ -4558,7 +4652,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     let height = if shortcut {
         176.
     } else if background {
-        if deletable { 252.8 } else { 176. }
+        if deletable { 329.6 } else { 252.8 }
     } else if deletable {
         329.6
     } else {
@@ -4617,6 +4711,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
                 Target::NightBackground,
                 language.t(if night { "useInDaytime" } else { "useAtNight" }),
             ),
+            (Target::MoveBackground, language.t("moveToCollection")),
         ];
         if deletable {
             actions.push((Target::DeleteBackground, language.t("deleteBackground")));
@@ -4949,6 +5044,24 @@ fn full_screen_fill(draw: &Draw) -> bool {
         Draw::Shape(rect, radius, border, _) => whole(rect) && *radius <= 0. && *border <= 0.,
         Draw::RoundedGradient(rect, radius, ..) => whole(rect) && *radius <= 0.,
         _ => false,
+    }
+}
+
+fn short_month(month: time::Month) -> &'static str {
+    use time::Month::*;
+    match month {
+        January => "Jan",
+        February => "Feb",
+        March => "Mar",
+        April => "Apr",
+        May => "May",
+        June => "Jun",
+        July => "Jul",
+        August => "Aug",
+        September => "Sep",
+        October => "Oct",
+        November => "Nov",
+        December => "Dec",
     }
 }
 

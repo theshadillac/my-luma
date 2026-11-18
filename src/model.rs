@@ -289,16 +289,24 @@ pub enum QuickKey {
     Ambient,
     Inputs,
     TvSettings,
+    /// Switch wallpaper collections (fork).
+    Collections,
 }
 
 impl QuickKey {
-    pub const ALL: [Self; 3] = [Self::Ambient, Self::Inputs, Self::TvSettings];
+    pub const ALL: [Self; 4] = [
+        Self::Ambient,
+        Self::Inputs,
+        Self::Collections,
+        Self::TvSettings,
+    ];
     /// Stable name kept in preferences.
     pub fn key(self) -> &'static str {
         match self {
             Self::Ambient => "ambient",
             Self::Inputs => "inputs",
             Self::TvSettings => "tv-settings",
+            Self::Collections => "collections",
         }
     }
     pub fn label_key(self) -> &'static str {
@@ -306,6 +314,7 @@ impl QuickKey {
             Self::Ambient => "ambientNow",
             Self::Inputs => "inputs",
             Self::TvSettings => "tvSettings",
+            Self::Collections => "collections",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -313,6 +322,7 @@ impl QuickKey {
             Self::Ambient => "clock",
             Self::Inputs => "input-hdmi",
             Self::TvSettings => "settings",
+            Self::Collections => "grid",
         }
     }
 }
@@ -542,6 +552,12 @@ pub struct Preferences {
     pub ui_sound_output: Option<String>,
     /// Faint time-of-day colour over the wallpaper (fork option).
     pub wallpaper_tint: WallpaperTint,
+    /// Collections chosen on the TV for wallpapers, overriding what the upload set.
+    pub wallpaper_collections: std::collections::BTreeMap<String, String>,
+    /// The collection last chosen by hand, and when.
+    pub collection_pick: Option<crate::collections::Pick>,
+    /// Custom collections that take over on their own on certain days.
+    pub collection_schedules: std::collections::BTreeMap<String, crate::collections::Schedule>,
     /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
     pub app_sorting: AppSorting,
     /// Successful launches per app id, kept only on the TV, for the "Most used" order.
@@ -598,6 +614,9 @@ impl Default for Preferences {
             ui_sound_level: UiSoundLevel::default(),
             ui_sound_output: None,
             wallpaper_tint: WallpaperTint::default(),
+            wallpaper_collections: Default::default(),
+            collection_pick: None,
+            collection_schedules: Default::default(),
             app_sorting: AppSorting::default(),
             app_launch_counts: Default::default(),
         }

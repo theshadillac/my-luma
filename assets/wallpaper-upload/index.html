@@ -33,6 +33,12 @@
           <strong id="queue-count"></strong>
           <span id="queue-room"></span>
         </div>
+        <label class="collection-picker" for="collection">
+          <span>Add to</span>
+          <select id="collection">
+            <option value="Photos">Photos</option>
+          </select>
+        </label>
         <p class="queue-tip">Tap a photo to adjust its crop.</p>
         <ul id="grid" class="grid"></ul>
         <div class="progress" id="progress" hidden><span id="progress-bar"></span></div>
@@ -68,7 +74,7 @@
       <section id="success" class="success" aria-live="polite" hidden>
         <span class="success-mark" aria-hidden="true">✓</span>
         <h2 id="success-title">Success</h2>
-        <p>Your backgrounds were uploaded to</p>
+        <p id="success-detail">Your backgrounds were uploaded to</p>
         <code id="success-path"></code>
         <button id="another" type="button">Add more</button>
       </section>

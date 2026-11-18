@@ -46,6 +46,7 @@ test('upload page needs no name and retains its storage-path success view', asyn
   assert.doesNotMatch(html, /id="name"|success-name|Background name/);
   assert.match(html, /Your backgrounds were uploaded to/);
   assert.match(html, /id="success-path"/);
+  assert.match(html, /id="collection"/);
   assert.match(html, /id="file"[^>]*multiple/);
   assert.match(html, /webkitdirectory/);
   assert.match(script, /fetch\('upload',/);
@@ -79,9 +80,18 @@ test('storage path resolves to the exact absolute directory and rejects unavaila
 test('info reports free gallery slots and tolerates older TVs without them', async () => {
   const path = '/media/internal/wallpapers';
   const reply = (body) => async () => ({ ok: true, json: async () => body });
-  assert.deepEqual(await loadInfo(reply({ path, free: 12 })), { path, free: 12 });
-  assert.deepEqual(await loadInfo(reply({ path })), { path, free: null });
-  assert.deepEqual(await loadInfo(reply({ path, free: -3 })), { path, free: null });
+  assert.deepEqual(await loadInfo(reply({ path, free: 12 })), { path, free: 12, collections: [] });
+  assert.deepEqual(await loadInfo(reply({ path })), { path, free: null, collections: [] });
+  assert.deepEqual(await loadInfo(reply({ path, free: -3 })), {
+    path,
+    free: null,
+    collections: [],
+  });
+  assert.deepEqual(
+    (await loadInfo(reply({ path, collections: ['Photos', 'Vintage Porsche', 3, ' '] })))
+      .collections,
+    ['Photos', 'Vintage Porsche'],
+  );
 });
 
 const photo = (name, type = 'image/jpeg', size = 1000, lastModified = 1) => ({

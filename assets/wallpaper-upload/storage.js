@@ -6,7 +6,10 @@ export async function loadInfo(fetcher) {
     throw new Error('Invalid storage location');
   }
   const free = Number.isInteger(info.free) && info.free >= 0 ? info.free : null;
-  return { path: info.path, free };
+  const collections = Array.isArray(info.collections)
+    ? info.collections.filter((name) => typeof name === 'string' && name.trim())
+    : [];
+  return { path: info.path, free, collections };
 }
 
 export async function loadStoragePath(fetcher) {

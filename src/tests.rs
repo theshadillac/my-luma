@@ -558,6 +558,7 @@ fn preferences_round_trip_and_corrupt_data_is_not_silently_overwritten() {
 fn gallery_and_grid_navigation_scroll_to_keep_focus_visible() {
     let mut state = ready();
     state.set_wallpapers(vec![crate::wallpapers::Wallpaper {
+        collection: None,
         id: "custom-00000000000000000000000000000001".into(),
         directory: PathBuf::from("/preview/wallpapers/custom-00000000000000000000000000000001"),
         has_original: true,
@@ -1218,6 +1219,8 @@ fn background_sidebar_right_focuses_upload_and_ok_restores_the_applied_backgroun
     assert_eq!(state.focus, Target::WallpaperGradient);
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::UploadWallpaper);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::WallpaperCollection);
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(1));
     state.direction(Direction::Right, &controls(&state));
@@ -2715,6 +2718,7 @@ fn settings_lists_keep_bottom_padding_for_remote_and_wheel_scrolling() {
             state.set_wallpapers(
                 (1..=8)
                     .map(|index| crate::wallpapers::Wallpaper {
+                        collection: None,
                         id: format!("custom-{index:032x}"),
                         directory: std::path::PathBuf::from(".build/padding-fixture"),
                         has_original: true,
@@ -3025,7 +3029,7 @@ fn the_gear_sits_alone_at_the_top_right_and_opens_the_quick_panel() {
     );
     // Spatial moves inside the panel; Back closes it onto the gear.
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Quick(QuickKey::TvSettings));
+    assert_eq!(state.focus, Target::Quick(QuickKey::Collections));
     state.focus = Target::Quick(QuickKey::TvSettings);
     assert_eq!(
         state.activate(),

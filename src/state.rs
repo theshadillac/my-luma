@@ -241,6 +241,10 @@ pub enum Target {
     ClockSize,
     Background(usize),
     UploadWallpaper,
+    /// The Background page's collection button.
+    WallpaperCollection,
+    /// A wallpaper's options: move it to another collection.
+    MoveBackground,
     WallpaperCycle,
     WallpaperGradient,
     UseBackground,
@@ -353,6 +357,10 @@ pub enum Subpage {
     Temperature,
     Language,
     TextRendering,
+    /// Wallpaper collections: choose the active one, then each custom one's schedule.
+    Collections,
+    /// Choose the collection for one wallpaper.
+    MoveCollection(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -461,6 +469,10 @@ pub struct State {
     lift_focus: (Target, Option<Target>, Instant),
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
+    /// The wallpaper collection showing now (see `refresh_collection`).
+    pub collection: crate::collections::Active,
+    /// The collection the Background gallery lists; None follows the active one.
+    pub gallery_collection: Option<String>,
     pub deleting_wallpaper: Option<String>,
     pub wallpaper_upload: Option<Result<crate::wallpapers::Session, String>>,
     pub tile_editor: Option<Result<crate::companion::Session, String>>,
@@ -527,6 +539,11 @@ impl State {
             previous_background: None,
             background_fade: BACKGROUND_FADE,
             wallpapers: vec![],
+            collection: crate::collections::Active {
+                id: crate::collections::PHOTOS.into(),
+                reason: crate::collections::Reason::Default,
+            },
+            gallery_collection: None,
             deleting_wallpaper: None,
             wallpaper_upload: None,
             tile_editor: None,
@@ -1652,11 +1669,19 @@ impl State {
     /// Wallpapers for this time of day, or all of them when day and night is off or a set
     /// is empty.
     fn wallpapers_for(&self, night: Option<bool>) -> Vec<String> {
-        let all: Vec<String> = self
-            .background_ids()
-            .filter(|id| self.deleting_wallpaper.as_deref() != Some(*id))
+        let usable = |id: &&str| self.deleting_wallpaper.as_deref() != Some(*id);
+        let mut all: Vec<String> = self
+            .collection_ids(&self.collection.id)
+            .filter(usable)
             .map(str::to_owned)
             .collect();
+        if all.is_empty() {
+            all = self
+                .all_background_ids()
+                .filter(usable)
+                .map(str::to_owned)
+                .collect();
+        }
         let Some(night) = night.filter(|_| self.preferences.day_night) else {
             return all;
         };
@@ -1714,7 +1739,105 @@ impl State {
         self.background_ids().nth(index)
     }
 
+    /// The collection a wallpaper belongs to: a choice made on the TV, else the one chosen
+    /// when it was uploaded, else Photos (always for the built-in wallpapers).
+    pub fn wallpaper_collection(&self, id: &str) -> &str {
+        if let Some(collection) = self.preferences.wallpaper_collections.get(id) {
+            return collection;
+        }
+        self.wallpapers
+            .iter()
+            .find(|item| item.id == id)
+            .and_then(|item| item.collection.as_deref())
+            .unwrap_or(crate::collections::PHOTOS)
+    }
+
+    /// The collection the Background gallery shows.
+    pub fn gallery_collection(&self) -> &str {
+        self.gallery_collection
+            .as_deref()
+            .unwrap_or(&self.collection.id)
+    }
+
+    fn collection_ids<'a>(&'a self, collection: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.all_background_ids()
+            .filter(move |id| self.wallpaper_collection(id) == collection)
+    }
+
+    pub fn collection_size(&self, collection: &str) -> usize {
+        self.collection_ids(collection).count()
+    }
+
+    /// Every collection to list: Photos, custom ones (known from wallpapers and schedules),
+    /// then the holidays in calendar order, each with its number of wallpapers.
+    pub fn collections(&self) -> Vec<(String, usize)> {
+        let mut custom: Vec<String> = self
+            .all_background_ids()
+            .map(|id| self.wallpaper_collection(id))
+            .chain(
+                self.preferences
+                    .collection_schedules
+                    .keys()
+                    .map(String::as_str),
+            )
+            .filter(|id| crate::collections::is_custom(id))
+            .map(str::to_owned)
+            .collect();
+        custom.sort_by_key(|id| id.to_lowercase());
+        custom.dedup();
+        std::iter::once(crate::collections::PHOTOS.to_string())
+            .chain(custom)
+            .chain(
+                crate::collections::HOLIDAYS
+                    .iter()
+                    .map(|(id, _)| (*id).to_string()),
+            )
+            .map(|id| {
+                let size = self.collection_size(&id);
+                (id, size)
+            })
+            .collect()
+    }
+
+    /// Custom collections, which can follow a schedule.
+    pub fn custom_collections(&self) -> Vec<String> {
+        self.collections()
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| crate::collections::is_custom(id))
+            .collect()
+    }
+
+    /// Works out which collection should be showing; true when that changed.
+    pub fn refresh_collection(&mut self, now: time::OffsetDateTime) -> bool {
+        let active = crate::collections::active(
+            now,
+            self.preferences.collection_pick.as_ref(),
+            self.preferences.collection_schedules.iter(),
+            |id| self.collection_size(id) > 0,
+        );
+        if active == self.collection {
+            return false;
+        }
+        self.collection = active;
+        self.dirty = true;
+        true
+    }
+
+    /// The wallpaper on screen isn't from the active collection, which has some to show.
+    pub fn collection_due(&self) -> bool {
+        self.wallpaper_collection(&self.preferences.background) != self.collection.id
+            && self.collection_size(&self.collection.id) > 0
+    }
+
+    /// The gallery: wallpapers of the collection it shows.
     fn background_ids(&self) -> impl Iterator<Item = &str> {
+        let collection = self.gallery_collection();
+        self.all_background_ids()
+            .filter(move |id| self.wallpaper_collection(id) == collection)
+    }
+
+    fn all_background_ids(&self) -> impl Iterator<Item = &str> {
         BACKGROUNDS
             .iter()
             .map(|(id, _)| *id)
@@ -1884,6 +2007,10 @@ impl State {
             }
             Some(Subpage::Language) => Target::Setting(4),
             Some(Subpage::TextRendering) => Target::Setting(7),
+            Some(Subpage::Collections | Subpage::MoveCollection(_)) => {
+                self.subpage = None;
+                Target::WallpaperCollection
+            }
             None => Target::Sidebar(self.section),
         };
         self.scroll = 0.;
@@ -2054,6 +2181,10 @@ impl State {
                     ) => 2,
                     Some(Subpage::InputIcons(_)) => crate::model::INPUT_ICONS.len() + 1,
                     Some(Subpage::Language) => Language::ALL.len(),
+                    Some(Subpage::Collections) => {
+                        self.collections().len() + self.custom_collections().len()
+                    }
+                    Some(Subpage::MoveCollection(_)) => self.collections().len(),
                     Some(Subpage::ClockSize) => crate::model::ClockSize::ALL.len(),
                     Some(Subpage::DateFormat) => crate::model::DateFormat::ALL.len(),
                     _ => 3,
@@ -2345,9 +2476,9 @@ impl State {
                             if index == 2 {
                                 Target::WallpaperCycle
                             } else if index == 1 {
-                                Target::WallpaperGradient
-                            } else if index < 3 {
                                 Target::UploadWallpaper
+                            } else if index == 0 {
+                                Target::WallpaperCollection
                             } else {
                                 Target::Background(index - 3)
                             },
@@ -2367,11 +2498,27 @@ impl State {
                     _ => {}
                 }
             }
-            if self.focus == Target::UploadWallpaper {
+            if self.focus == Target::WallpaperCollection {
                 match direction {
-                    Direction::Down => self.focus(Target::Background(0), controls),
+                    Direction::Down => {
+                        if self.background_count() > 0 {
+                            self.focus(Target::Background(0), controls)
+                        }
+                    }
                     Direction::Up => self.focus(Target::Nav(2), controls),
                     Direction::Left => self.focus(Target::Sidebar(1), controls),
+                    Direction::Right => self.focus(Target::UploadWallpaper, controls),
+                }
+                return vec![];
+            }
+            if self.focus == Target::UploadWallpaper {
+                match direction {
+                    Direction::Down => self.focus(
+                        Target::Background(1.min(self.background_count().saturating_sub(1))),
+                        controls,
+                    ),
+                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Left => self.focus(Target::WallpaperCollection, controls),
                     Direction::Right => self.focus(Target::WallpaperGradient, controls),
                 }
                 return vec![];
@@ -2521,6 +2668,14 @@ impl State {
             QuickKey::TvSettings => {
                 self.close_quick();
                 vec![Effect::Launch("com.palm.app.settings".into())]
+            }
+            QuickKey::Collections => {
+                self.close_quick();
+                self.open(2);
+                self.section = BACKGROUND_SECTION;
+                self.gallery_collection = None;
+                self.focus = Target::WallpaperCollection;
+                self.activate()
             }
         }
     }
@@ -3366,6 +3521,34 @@ impl State {
                 self.back();
                 return vec![Effect::Save];
             }
+            Target::WallpaperCollection => {
+                let current = self.gallery_collection().to_owned();
+                let index = self
+                    .collections()
+                    .iter()
+                    .position(|(id, _)| *id == current)
+                    .unwrap_or(0);
+                self.subpage = Some(Subpage::Collections);
+                self.focus = Target::Choice(index);
+                self.scroll = 0.;
+                self.dirty = true;
+            }
+            Target::MoveBackground => {
+                if let Some(Overlay::BackgroundOptions { id, .. }) = self.overlay.clone() {
+                    let current = self.wallpaper_collection(&id).to_owned();
+                    let index = self
+                        .collections()
+                        .iter()
+                        .position(|(collection, _)| *collection == current)
+                        .unwrap_or(0);
+                    self.overlay = None;
+                    self.panel_started = None;
+                    self.subpage = Some(Subpage::MoveCollection(id));
+                    self.focus = Target::Choice(index);
+                    self.scroll = 0.;
+                    self.dirty = true;
+                }
+            }
             Target::NightBackground => {
                 if let Some(Overlay::BackgroundOptions { id, .. }) = &self.overlay {
                     let night = &mut self.preferences.night_wallpapers;
@@ -3409,6 +3592,48 @@ impl State {
             }
             Target::Choice(index) => {
                 match self.subpage.clone() {
+                    Some(Subpage::Collections) => {
+                        let collections = self.collections();
+                        if let Some((id, _)) = collections.get(index) {
+                            self.preferences.collection_pick = Some(crate::collections::Pick {
+                                id: id.clone(),
+                                at: unix_now() as i64,
+                            });
+                            self.gallery_collection = Some(id.clone());
+                            self.close_subpage();
+                        } else if let Some(id) =
+                            self.custom_collections().get(index - collections.len())
+                        {
+                            let schedules = &mut self.preferences.collection_schedules;
+                            match crate::collections::Schedule::next(schedules.get(id).copied()) {
+                                Some(next) => schedules.insert(id.clone(), next),
+                                None => schedules.remove(id),
+                            };
+                            self.dirty = true;
+                        }
+                        return vec![Effect::Save];
+                    }
+                    Some(Subpage::MoveCollection(wallpaper)) => {
+                        let Some((collection, _)) = self.collections().into_iter().nth(index)
+                        else {
+                            return vec![];
+                        };
+                        let uploaded = self
+                            .wallpapers
+                            .iter()
+                            .find(|item| item.id == wallpaper)
+                            .and_then(|item| item.collection.clone())
+                            .unwrap_or_else(|| crate::collections::PHOTOS.into());
+                        if collection == uploaded {
+                            self.preferences.wallpaper_collections.remove(&wallpaper);
+                        } else {
+                            self.preferences
+                                .wallpaper_collections
+                                .insert(wallpaper, collection);
+                        }
+                        self.close_subpage();
+                        return vec![Effect::Save];
+                    }
                     Some(Subpage::ClockFormat) => self.preferences.hour_24 = index == 1,
                     Some(Subpage::TimeFormat) => self.preferences.show_seconds = index == 1,
                     Some(Subpage::ClockSize) => {

@@ -21,7 +21,8 @@ use std::{
 };
 
 const MAX_BODY: usize = 12 * 1024 * 1024;
-const MAX_WALLPAPERS: usize = 60;
+// Room for a Photos library plus theme and holiday collections; files are 1080p JPEGs.
+const MAX_WALLPAPERS: usize = 150;
 /// Images dropped here (e.g. with webOS Dev Manager's file browser) are imported into the
 /// gallery at start and whenever the gallery is opened, then removed (fork option).
 pub const IMPORT_FOLDER: &str = "import";
@@ -37,6 +38,9 @@ const STOP: u64 = u64::MAX;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Wallpaper {
     pub id: String,
+    /// The collection chosen on the phone when uploading (Photos when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
     #[serde(skip)]
     pub directory: PathBuf,
     #[serde(skip)]
@@ -194,7 +198,7 @@ fn catalog(directory: &Path) -> Vec<Wallpaper> {
     };
     let mut result = Vec::new();
     // Bound discovery even if someone manually populates this private directory.
-    for entry in entries.take(128).flatten() {
+    for entry in entries.take(256).flatten() {
         let path = entry.path();
         let id = entry.file_name().to_string_lossy().into_owned();
         if !valid_id(&id) || !real_directory(&path) {
@@ -436,7 +440,7 @@ fn import_folder(directory: &Path, mut added: impl FnMut()) -> usize {
                 }
             })
             .and_then(|bytes| decode_import(&bytes))
-            .and_then(|image| store_image(directory, image, || true));
+            .and_then(|image| store_image(directory, image, || true, None));
         match result {
             Ok(_) => {
                 let _ = fs::remove_file(&path);
@@ -489,19 +493,25 @@ fn jpeg(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wallpaper, String> {
+fn store(
+    directory: &Path,
+    bytes: &[u8],
+    valid: impl Fn() -> bool,
+    collection: Option<String>,
+) -> Result<Wallpaper, String> {
     if catalog(directory).len() >= MAX_WALLPAPERS {
         return Err(format!(
             "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
         ));
     }
-    store_image(directory, decode(bytes)?, valid)
+    store_image(directory, decode(bytes)?, valid, collection)
 }
 
 fn store_image(
     directory: &Path,
     mut image: image::RgbImage,
     valid: impl Fn() -> bool,
+    collection: Option<String>,
 ) -> Result<Wallpaper, String> {
     if catalog(directory).len() >= MAX_WALLPAPERS {
         return Err(format!(
@@ -532,6 +542,7 @@ fn store_image(
     create_directory(&staging)?;
     let item = Wallpaper {
         id: id.clone(),
+        collection: collection.filter(|id| id != crate::collections::PHOTOS),
         directory: directory.join(&id),
         has_original: true,
     };
@@ -720,9 +731,31 @@ fn serve(
     };
     if request.method == "GET" && request.length == 0 {
         if route == "info.json" {
-            let free = MAX_WALLPAPERS.saturating_sub(catalog(directory).len());
-            let body =
-                serde_json::json!({"path": directory.to_string_lossy(), "free": free}).to_string();
+            let items = catalog(directory);
+            let free = MAX_WALLPAPERS.saturating_sub(items.len());
+            // Collection names for the phone's picker: Photos, custom ones, then holidays.
+            let mut custom: Vec<String> = items
+                .iter()
+                .filter_map(|item| item.collection.as_deref())
+                .filter(|id| crate::collections::is_custom(id))
+                .map(crate::collections::name)
+                .collect();
+            custom.sort_by_key(|name| name.to_lowercase());
+            custom.dedup();
+            let collections: Vec<String> = std::iter::once("Photos".to_string())
+                .chain(custom)
+                .chain(
+                    crate::collections::HOLIDAYS
+                        .iter()
+                        .map(|(_, name)| (*name).to_string()),
+                )
+                .collect();
+            let body = serde_json::json!({
+                "path": directory.to_string_lossy(),
+                "free": free,
+                "collections": collections,
+            })
+            .to_string();
             response(
                 stream,
                 "200 OK",
@@ -787,7 +820,13 @@ fn serve(
     let mut body = vec![0; request.length];
     read_exact(&mut reader, &mut body, &valid, deadline)?;
     drop(reader);
-    match store(directory, &body, valid) {
+    // The phone sends the collection name percent-encoded, as headers are ASCII.
+    let collection = request
+        .headers
+        .get("x-luma-collection")
+        .and_then(|name| percent_decode(name))
+        .and_then(|name| crate::collections::custom_id(&name));
+    match store(directory, &body, valid, collection) {
         Ok(item) => {
             // The commit succeeded even if the phone disconnects before receiving its reply.
             let _ = response(
@@ -803,6 +842,27 @@ fn serve(
             Ok(false)
         }
     }
+}
+
+/// Decodes `encodeURIComponent` output; None for malformed input or invalid UTF-8.
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                index += 3;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ mod app_artwork;
 #[path = "app-subscription.rs"]
 mod app_subscription;
 mod branding;
+mod collections;
 mod companion;
 mod damage;
 mod diagnostics;
@@ -1076,6 +1077,10 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         let unix = state::unix_now();
+        // Collections are only known once the gallery has been scanned.
+        if wallpapers_scanned {
+            state.refresh_collection(now);
+        }
         let startup_cycle = wallpaper_cycle::startup_due(
             state.preferences.wallpaper_cycle,
             startup_cycle_pending,
@@ -1089,6 +1094,7 @@ fn run() -> Result<(), String> {
             && state.deleting_wallpaper.is_none()
             && !state.transitioning()
             && (startup_cycle
+                || (wallpapers_scanned && state.collection_due())
                 || state.day_night_due(now)
                 || wallpaper_cycle::due(
                     state.preferences.wallpaper_cycle,

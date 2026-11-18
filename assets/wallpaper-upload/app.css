@@ -336,6 +336,25 @@ footer code {
 .queue-tip {
   margin: 4px 0 14px;
 }
+.collection-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: #a9b2ad;
+  font-size: 14px;
+}
+.collection-picker select {
+  flex: 1;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #2f3633;
+  border-radius: 10px;
+  background: #171a19;
+  color: #f0f2ee;
+  font: inherit;
+  font-size: 15px;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

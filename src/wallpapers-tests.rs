@@ -93,7 +93,7 @@ fn upload_tokens_are_eight_unbiased_alphanumeric_characters() {
 #[test]
 fn uploads_retain_full_resolution_unshaded_images_and_discover_legacy_fallbacks() {
     let fixture = Fixture::new();
-    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true).unwrap();
+    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true, None).unwrap();
     assert!(item.has_original);
     let original = image::open(item.unshaded_image()).unwrap().to_rgb8();
     let shaded = image::open(item.image()).unwrap().to_rgb8();
@@ -111,8 +111,8 @@ fn uploads_retain_full_resolution_unshaded_images_and_discover_legacy_fallbacks(
 fn deletion_protects_selected_and_bundled_backgrounds_and_only_removes_the_requested_upload() {
     let fixture = Fixture::new();
     let bytes = image(1920, 1080);
-    let first = store(&fixture.wallpapers(), &bytes, || true).unwrap();
-    let second = store(&fixture.wallpapers(), &bytes, || true).unwrap();
+    let first = store(&fixture.wallpapers(), &bytes, || true, None).unwrap();
+    let second = store(&fixture.wallpapers(), &bytes, || true, None).unwrap();
     assert!(delete_wallpaper(&fixture.wallpapers(), &first.id, &first.id).is_err());
     for id in ["dunes", "../preferences.json", "custom-../../other"] {
         assert!(delete_wallpaper(&fixture.wallpapers(), id, "dunes").is_err());
@@ -151,7 +151,7 @@ fn deletion_rejects_symlink_roots_and_entries_and_never_follows_internal_symlink
 #[test]
 fn worker_reports_deletion_before_the_updated_catalog() {
     let fixture = Fixture::new();
-    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true).unwrap();
+    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true, None).unwrap();
     let service = Service::new(&fixture.0.join("preferences.json"), true).unwrap();
     assert!(
         matches!(service.receiver.recv_timeout(Duration::from_secs(5)).unwrap(), Event::Catalog(items) if items.len() == 1)
@@ -170,8 +170,8 @@ fn worker_reports_deletion_before_the_updated_catalog() {
 fn uploads_are_unnamed_normalized_immutable_and_discoverable_after_restart() {
     let fixture = Fixture::new();
     let bytes = image(1920, 1080);
-    let first = store(&fixture.wallpapers(), &bytes, || true).unwrap();
-    let second = store(&fixture.wallpapers(), &bytes, || true).unwrap();
+    let first = store(&fixture.wallpapers(), &bytes, || true, None).unwrap();
+    let second = store(&fixture.wallpapers(), &bytes, || true, None).unwrap();
     assert_ne!(first.id, second.id);
     let found = catalog(&fixture.wallpapers());
     assert_eq!(found.len(), 2);
@@ -195,9 +195,9 @@ fn uploads_are_unnamed_normalized_immutable_and_discoverable_after_restart() {
 fn validation_and_cancellation_leave_no_partial_gallery_entries() {
     let fixture = Fixture::new();
     let root = fixture.wallpapers();
-    assert!(store(&root, b"<svg></svg>", || true).is_err());
-    assert!(store(&root, &image(320, 240), || true).is_err());
-    assert!(store(&root, &image(1920, 1080), || false).is_err());
+    assert!(store(&root, b"<svg></svg>", || true, None).is_err());
+    assert!(store(&root, &image(320, 240), || true, None).is_err());
+    assert!(store(&root, &image(1920, 1080), || false, None).is_err());
     assert!(catalog(&root).is_empty());
     assert!(!root.exists());
     let mut reader = Cursor::new(b"unfinished");
@@ -217,9 +217,12 @@ fn validation_and_cancellation_leave_no_partial_gallery_entries() {
 fn cancellation_before_commit_cleans_only_the_new_staging_files() {
     let fixture = Fixture::new();
     let checks = AtomicUsize::new(0);
-    let result = store(&fixture.wallpapers(), &image(1920, 1080), || {
-        checks.fetch_add(1, Ordering::Relaxed) == 0
-    });
+    let result = store(
+        &fixture.wallpapers(),
+        &image(1920, 1080),
+        || checks.fetch_add(1, Ordering::Relaxed) == 0,
+        None,
+    );
     assert!(result.is_err());
     assert_eq!(checks.load(Ordering::Relaxed), 2);
     assert!(fs::read_dir(fixture.wallpapers()).unwrap().next().is_none());
@@ -237,6 +240,7 @@ fn gallery_capacity_is_checked_before_decoding_or_creating_another_upload() {
             &directory.join("metadata.json"),
             &serde_json::to_vec(&Wallpaper {
                 id,
+                collection: None,
                 directory: directory.clone(),
                 has_original: false,
             })
@@ -248,7 +252,7 @@ fn gallery_capacity_is_checked_before_decoding_or_creating_another_upload() {
     }
     assert_eq!(catalog(&fixture.wallpapers()).len(), MAX_WALLPAPERS);
     assert!(
-        store(&fixture.wallpapers(), b"not decoded", || true)
+        store(&fixture.wallpapers(), b"not decoded", || true, None)
             .unwrap_err()
             .contains("full")
     );
@@ -397,7 +401,8 @@ fn browser_assets_are_local_and_a_real_http_upload_needs_no_name() {
         if route == "info.json" {
             assert!(response.starts_with("HTTP/1.1 200"));
             assert!(response.contains(&fixture.wallpapers().to_string_lossy().to_string()));
-            assert!(response.contains("\"free\":60"), "{response}");
+            assert!(response.contains("\"free\":150"), "{response}");
+            assert!(response.contains("\"Christmas\""), "{response}");
         }
     }
     let bytes = image(1920, 1080);
@@ -420,7 +425,7 @@ fn browser_assets_are_local_and_a_real_http_upload_needs_no_name() {
 #[test]
 fn legacy_named_uploads_keep_their_ids_and_load_without_names() {
     let fixture = Fixture::new();
-    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true).unwrap();
+    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true, None).unwrap();
     assert!(item.directory.starts_with(fixture.wallpapers()));
     assert!(valid_id(&item.id));
     fs::write(
@@ -442,7 +447,7 @@ fn symlink_storage_and_gallery_entries_are_never_followed() {
     let elsewhere = fixture.0.join("elsewhere");
     fs::create_dir(&elsewhere).unwrap();
     symlink(&elsewhere, fixture.wallpapers()).unwrap();
-    assert!(store(&fixture.wallpapers(), &image(1920, 1080), || true).is_err());
+    assert!(store(&fixture.wallpapers(), &image(1920, 1080), || true, None).is_err());
     assert!(fs::read_dir(&elsewhere).unwrap().next().is_none());
     assert!(catalog(&fixture.wallpapers()).is_empty());
 }
@@ -611,4 +616,28 @@ fn import_stops_when_the_gallery_is_full() {
             .join(format!("photo-{:03}.jpg", MAX_WALLPAPERS))
             .exists()
     );
+}
+
+#[test]
+fn uploads_remember_the_collection_chosen_on_the_phone() {
+    assert_eq!(
+        percent_decode("Vintage%20Porsche%20%E2%80%99356").as_deref(),
+        Some("Vintage Porsche ’356")
+    );
+    assert_eq!(percent_decode("%ZZ"), None);
+    let fixture = Fixture::new();
+    let id = crate::collections::custom_id("Vintage Porsche");
+    let item = store(&fixture.wallpapers(), &image(1920, 1080), || true, id).unwrap();
+    let scanned = catalog(&fixture.wallpapers());
+    let found = scanned.iter().find(|other| other.id == item.id).unwrap();
+    assert_eq!(found.collection.as_deref(), Some("c:Vintage Porsche"));
+    // Photos is the default and isn't written down.
+    let plain = store(
+        &fixture.wallpapers(),
+        &image(1920, 1080),
+        || true,
+        Some("photos".into()),
+    )
+    .unwrap();
+    assert_eq!(plain.collection, None);
 }
