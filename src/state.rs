@@ -52,6 +52,7 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
             AMBIENT_ROW,
             PIXEL_SHIFT_ROW,
             DAY_NIGHT_ROW,
+            WALLPAPER_TINT_ROW,
             WEATHER_EFFECTS_ROW,
         ],
         CONTROLS_SECTION => {
@@ -99,6 +100,7 @@ pub const UI_SOUNDS_ROW: usize = 24;
 pub const APP_SORTING_ROW: usize = 25;
 pub const UI_SOUND_LEVEL_ROW: usize = 26;
 pub const UI_SOUND_OUTPUT_ROW: usize = 27;
+pub const WALLPAPER_TINT_ROW: usize = 28;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1545,6 +1547,55 @@ impl State {
 
     /// Whether it is night where the TV is: between today's sunset and sunrise from the
     /// weather service, or 7 pm to 7 am without it.
+    /// The time-of-day wash over the wallpaper as colour and opacity: rose around sunrise,
+    /// nothing through the day, amber in the golden hour, violet at dusk and deep blue at
+    /// night. Follows real sunrise and sunset for the weather location (7:00 and 19:00
+    /// without one) and blends smoothly between those moments.
+    pub fn wallpaper_tint(&self, now: time::OffsetDateTime) -> Option<(u32, f32)> {
+        let strength = self.preferences.wallpaper_tint.alpha();
+        if strength == 0. {
+            return None;
+        }
+        let minutes = |unix: i64| {
+            time::OffsetDateTime::from_unix_timestamp(unix)
+                .ok()
+                .map(|at| at.to_offset(now.offset()))
+                .map(|at| at.hour() as f32 * 60. + at.minute() as f32)
+        };
+        let (rise, set) = self
+            .sun_times(now)
+            .and_then(|(rise, set)| Some((minutes(rise)?, minutes(set)?)))
+            .unwrap_or((7. * 60., 19. * 60.));
+        const NIGHT: u32 = 0x1b2a6b;
+        const ROSE: u32 = 0xff8a8a;
+        const AMBER: u32 = 0xffa646;
+        const VIOLET: u32 = 0x7b5cc8;
+        // (minute of day, colour, share of the full strength), in order through the day.
+        let keys = [
+            (rise - 50., NIGHT, 1.),
+            (rise + 5., ROSE, 0.8),
+            (rise + 80., ROSE, 0.),
+            (set - 100., AMBER, 0.),
+            (set - 25., AMBER, 0.9),
+            (set + 20., VIOLET, 0.75),
+            (set + 70., NIGHT, 1.),
+        ];
+        let now = now.hour() as f32 * 60. + now.minute() as f32 + now.second() as f32 / 60.;
+        let (color, share) = match keys
+            .windows(2)
+            .find(|pair| (pair[0].0..pair[1].0).contains(&now))
+        {
+            Some(pair) => {
+                let (from, to) = (pair[0], pair[1]);
+                let t = (now - from.0) / (to.0 - from.0);
+                // Fade colour across a change of hue; keep it while only the strength moves.
+                (mix(from.1, to.1, t), from.2 + (to.2 - from.2) * t)
+            }
+            None => (NIGHT, 1.),
+        };
+        (share > 0.005).then_some((color, strength * share))
+    }
+
     /// Today's sunrise and sunset for the weather location: the weather service's times
     /// when it sent them, otherwise calculated from the place's coordinates.
     pub fn sun_times(&self, now: time::OffsetDateTime) -> Option<(i64, i64)> {
@@ -3205,6 +3256,9 @@ impl State {
                         self.preferences.weather_effects = !self.preferences.weather_effects
                     }
                     UI_SOUNDS_ROW => self.preferences.ui_sounds = !self.preferences.ui_sounds,
+                    WALLPAPER_TINT_ROW => {
+                        self.preferences.wallpaper_tint = self.preferences.wallpaper_tint.next()
+                    }
                     UI_SOUND_LEVEL_ROW => {
                         self.preferences.ui_sound_level = self.preferences.ui_sound_level.next()
                     }
@@ -3668,4 +3722,14 @@ impl State {
 /// Smooth start and finish for a 0–1 progress.
 pub(crate) fn ease(t: f32) -> f32 {
     t * t * (3. - 2. * t)
+}
+
+/// Linear blend of two 0xRRGGBB colours.
+fn mix(from: u32, to: u32, t: f32) -> u32 {
+    let channel = |shift: u32| {
+        let a = ((from >> shift) & 0xff) as f32;
+        let b = ((to >> shift) & 0xff) as f32;
+        ((a + (b - a) * t.clamp(0., 1.)).round() as u32) << shift
+    };
+    channel(16) | channel(8) | channel(0)
 }

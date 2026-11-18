@@ -345,6 +345,43 @@ impl UiSoundLevel {
     }
 }
 
+/// Strength of the time-of-day wallpaper tint (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WallpaperTint {
+    #[default]
+    Off,
+    Subtle,
+    Medium,
+}
+
+impl WallpaperTint {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Off => "stateOff",
+            Self::Subtle => "tintSubtle",
+            Self::Medium => "tintMedium",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Subtle,
+            Self::Subtle => Self::Medium,
+            Self::Medium => Self::Off,
+        }
+    }
+
+    /// Opacity of the wash at full strength (night, or the peak of dawn or golden hour).
+    pub fn alpha(self) -> f32 {
+        match self {
+            Self::Off => 0.,
+            Self::Subtle => 0.1,
+            Self::Medium => 0.2,
+        }
+    }
+}
+
 /// How the app drawer orders apps after the favourites (fork option, from upstream 3.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -503,6 +540,8 @@ pub struct Preferences {
     pub ui_sound_level: UiSoundLevel,
     /// Audio output for UI sounds by its driver name; None plays to the default.
     pub ui_sound_output: Option<String>,
+    /// Faint time-of-day colour over the wallpaper (fork option).
+    pub wallpaper_tint: WallpaperTint,
     /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
     pub app_sorting: AppSorting,
     /// Successful launches per app id, kept only on the TV, for the "Most used" order.
@@ -558,6 +597,7 @@ impl Default for Preferences {
             ui_sounds: false,
             ui_sound_level: UiSoundLevel::default(),
             ui_sound_output: None,
+            wallpaper_tint: WallpaperTint::default(),
             app_sorting: AppSorting::default(),
             app_launch_counts: Default::default(),
         }

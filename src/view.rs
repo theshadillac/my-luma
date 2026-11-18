@@ -9,7 +9,8 @@ use crate::{
         HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, LANDING_DROP,
         LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW, Rect,
         SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
-        UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW,
+        WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -594,6 +595,9 @@ pub fn scene_with_pill(
             0.,
             false,
         );
+    }
+    if let Some((color, alpha)) = state.wallpaper_tint(now) {
+        out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(color, alpha));
     }
     weather_effect(&mut out, state, now);
     let content_start = out.draw.len();
@@ -3493,6 +3497,13 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     } else {
                         language.t("stateOn")
                     }),
+                    false,
+                ),
+                (
+                    WALLPAPER_TINT_ROW,
+                    "wallpaperTint",
+                    "weather-sun",
+                    Some(language.t(state.preferences.wallpaper_tint.label_key())),
                     false,
                 ),
                 (

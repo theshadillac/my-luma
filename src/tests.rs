@@ -4782,3 +4782,40 @@ fn sound_output_cycles_default_then_each_tv_output_and_back() {
             .any(|control| control.target == Target::Setting(UI_SOUND_OUTPUT_ROW))
     );
 }
+
+#[test]
+fn wallpaper_tint_follows_the_fort_collins_day() {
+    use crate::model::WallpaperTint;
+    let mut state = ready();
+    state.preferences.weather_location = Some(crate::weather::Location {
+        name: "Fort Collins".into(),
+        region: "Colorado".into(),
+        country: "United States".into(),
+        latitude: 40.5853,
+        longitude: -105.0844,
+    });
+    let date = time::Date::from_calendar_date(2026, time::Month::November, 16).unwrap();
+    let at = |hour: u8, minute: u8| {
+        time::PrimitiveDateTime::new(date, time::Time::from_hms(hour, minute, 0).unwrap())
+            .assume_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap())
+    };
+    assert_eq!(state.wallpaper_tint(at(12, 0)), None, "Off by default");
+    state.preferences.wallpaper_tint = WallpaperTint::Subtle;
+    let (night, night_alpha) = state.wallpaper_tint(at(23, 0)).unwrap();
+    assert_eq!((night, night_alpha), (0x1b2a6b, 0.1));
+    let (dawn, _) = state.wallpaper_tint(at(6, 55)).unwrap();
+    assert!(
+        dawn >> 16 > 0xe0,
+        "rose just after a 6:47 sunrise: {dawn:06x}"
+    );
+    assert_eq!(state.wallpaper_tint(at(12, 0)), None, "nothing at midday");
+    let (golden, _) = state.wallpaper_tint(at(16, 15)).unwrap();
+    assert!(
+        golden >> 16 > 0xe0 && (golden >> 8) & 0xff > 0x80,
+        "amber before a 4:40 sunset: {golden:06x}"
+    );
+    let (dusk, _) = state.wallpaper_tint(at(17, 0)).unwrap();
+    assert!(dusk & 0xff > 0x90, "violet after sunset: {dusk:06x}");
+    state.preferences.wallpaper_tint = WallpaperTint::Medium;
+    assert_eq!(state.wallpaper_tint(at(23, 0)).unwrap().1, 0.2);
+}
