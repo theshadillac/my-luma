@@ -89,8 +89,7 @@ impl Client {
             return Err("That doesn't look like an Unsplash access key".into());
         }
         // One cheap call proves the key works before it is kept.
-        self.get_json(key, "/photos", &[("per_page", "1")])
-            .map_err(|_| "Unsplash didn't accept that key. Copy the Access Key, not the Secret.")?;
+        self.get_json(key, "/photos", &[("per_page", "1")])?;
         write_private(&self.key_path, key.as_bytes())
     }
 
@@ -201,13 +200,7 @@ impl Client {
         for (name, value) in query {
             request = request.query(name, value);
         }
-        let mut response = request.call().map_err(|error| match error {
-            ureq::Error::StatusCode(403) => {
-                "Unsplash's hourly limit was reached. Try again later.".to_string()
-            }
-            ureq::Error::StatusCode(401) => "Unsplash didn't accept the access key.".to_string(),
-            _ => "Unsplash is unavailable. Try again shortly.".to_string(),
-        })?;
+        let mut response = request.call().map_err(describe)?;
         let mut bytes = Vec::new();
         response
             .body_mut()
@@ -219,6 +212,23 @@ impl Client {
             return Err("Unsplash's reply was too large".into());
         }
         serde_json::from_slice(&bytes).map_err(|_| "Unsplash's reply couldn't be read".into())
+    }
+}
+
+/// Says plainly what went wrong, so a rejected key can be told apart from a TV that can't
+/// reach Unsplash. Never includes the key (it travels only in a header).
+fn describe(error: ureq::Error) -> String {
+    match error {
+        ureq::Error::StatusCode(401) => {
+            "Unsplash rejected the key (401). Copy the Access Key, not the Secret key.".into()
+        }
+        ureq::Error::StatusCode(403) => {
+            "Unsplash refused (403): the hourly limit was reached, or the app isn't allowed yet."
+                .into()
+        }
+        ureq::Error::StatusCode(code) => format!("Unsplash answered with an error ({code})."),
+        ureq::Error::Timeout(_) => "The TV couldn't reach Unsplash in time.".into(),
+        other => format!("The TV couldn't reach Unsplash: {other}"),
     }
 }
 
