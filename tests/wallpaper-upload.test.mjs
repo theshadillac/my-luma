@@ -80,18 +80,36 @@ test('storage path resolves to the exact absolute directory and rejects unavaila
 test('info reports free gallery slots and tolerates older TVs without them', async () => {
   const path = '/media/internal/wallpapers';
   const reply = (body) => async () => ({ ok: true, json: async () => body });
-  assert.deepEqual(await loadInfo(reply({ path, free: 12 })), { path, free: 12, collections: [] });
-  assert.deepEqual(await loadInfo(reply({ path })), { path, free: null, collections: [] });
+  assert.deepEqual(await loadInfo(reply({ path, free: 12 })), {
+    path,
+    free: 12,
+    collections: [],
+    unsplash: false,
+  });
+  assert.deepEqual(await loadInfo(reply({ path })), {
+    path,
+    free: null,
+    collections: [],
+    unsplash: false,
+  });
   assert.deepEqual(await loadInfo(reply({ path, free: -3 })), {
     path,
     free: null,
     collections: [],
+    unsplash: false,
   });
   assert.deepEqual(
     (await loadInfo(reply({ path, collections: ['Photos', 'Vintage Porsche', 3, ' '] })))
       .collections,
     ['Photos', 'Vintage Porsche'],
   );
+});
+
+test('a saved Unsplash key is remembered when the page opens again', async () => {
+  const path = '/media/internal/wallpapers';
+  const reply = (body) => async () => ({ ok: true, json: async () => body });
+  assert.equal((await loadInfo(reply({ path, unsplash: true }))).unsplash, true);
+  assert.equal((await loadInfo(reply({ path, unsplash: 'yes' }))).unsplash, false);
 });
 
 const photo = (name, type = 'image/jpeg', size = 1000, lastModified = 1) => ({
