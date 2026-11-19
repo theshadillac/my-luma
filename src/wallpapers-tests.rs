@@ -651,3 +651,13 @@ fn uploads_remember_the_collection_chosen_on_the_phone() {
     .unwrap();
     assert_eq!(plain.collection, None);
 }
+
+#[test]
+fn the_upload_page_may_show_unsplash_previews_but_nothing_else_external() {
+    let source = include_str!("companion.rs");
+    assert!(source.contains("img-src 'self' blob: data: https://images.unsplash.com;"));
+    assert!(
+        source.contains("connect-src 'self';"),
+        "only the TV is ever called"
+    );
+}
