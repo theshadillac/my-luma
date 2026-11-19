@@ -1,21 +1,22 @@
 {
   "note": "Items already reviewed with Stephen. Keys are URLs or repo@version.",
   "repos": {
-    "Seagey/couch-tv": "4f1df37dbca2e2973eb966f04e297c843093b4a4",
+    "Seagey/couch-tv": "65dbfc851d8c17934cc216c8967e80faecb6cc77",
     "techgenius1/tvOS-Launcher": "ddfd2531fd3cc5fd1d6790d7fad21cf71389b4dc",
-    "aabytt/custom-screensaver-aerial": "f6447e94f2dd8ca26711c66baa27792e1b289503",
+    "aabytt/custom-screensaver-aerial": "fc229e5744e76073ee0ef8f36e40d1af3fa5a6cd",
     "kitsuned/AltHome": "a67385151486347394c6ac6e8af8da61e6c72685",
     "mareklarek/webos10-homescreen-customization": "80e39c822097a933fd49c2a23ff5cdfbf9e54763",
     "webosbrew/custom-screensaver": "90666c19112ec77d6c2b1b84ae7db7d914285e92",
     "cocombee/glass-tv": "ce164b650818249f89725ed8070c911b3958df30",
-    "ecklf/lg-luma@main": "bb0224a24dc7a654419e66f2df7de3e344ee78b9",
+    "ecklf/lg-luma@main": "a9b5d10f758d571637f24ef5644eb916c1f0f9d2",
     "ipatek420/halcyon": "22476f67a1083aad16a2e20c55b197140d9e0f4b",
     "ratelimits/atlauncher": "66dc1369f7713f380d3f7e515596b2cfed5fba1d",
     "SikeXML/glasshouse-dock": "40cb4bd0bcce6c76a21c41cf20c0561cc90ebfda",
     "ViieeS/mytvlauncher": "d984d04ac894791ca14563088a9a445a7c5a55c6"
   },
   "releases": {
-    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16; main to a3e4234 reviewed 2026-11-17; 3.5.0-3.6.2 reviewed 2026-11-18 (latest v3.6.2)"
+    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16; main to a3e4234 reviewed 2026-11-17; 3.5.0-3.6.2 reviewed 2026-11-18 (latest v3.6.2); 3.7.0-3.10.0 reviewed 2026-11-19 (latest v3.10.0)",
+    "aabytt/custom-screensaver-aerial": "v3.1.1 reviewed 2026-11-19"
   },
   "items": [
     "https://repo.webosbrew.org/apps/org.aabytt.webos.custom-screensaver-aerial/",
@@ -50,6 +51,19 @@
     "https://github.com/gustavo-koerich/tv-inicio",
     "https://github.com/Sensationy2k/WebOS-Sensation-VN",
     "https://github.com/championsnet/wmp-visualizer",
-    "https://github.com/aabytt/custom-screensaver-aerial/pull/100"
+    "https://github.com/aabytt/custom-screensaver-aerial/pull/100",
+    "https://github.com/benosss/molakaz-tv",
+    "https://github.com/Shaku-Med/lg-tv-launcher",
+    "https://github.com/ConnysCode/novOS",
+    "https://github.com/nphil/lumatv",
+    "https://github.com/WMSDev1/TeleDash-Pro",
+    "https://github.com/ZIPender/zipDash",
+    "https://github.com/swenz/webos-custom-launcher",
+    "https://github.com/DVOpenLabs/dv-freedom-launcher",
+    "https://github.com/aabytt/custom-screensaver-aerial/pull/98",
+    "https://github.com/ecklf/lg-luma/pull/339",
+    "https://github.com/ecklf/lg-luma/pull/340",
+    "https://github.com/ecklf/lg-luma/pull/347",
+    "https://github.com/ecklf/lg-luma/pull/351"
   ]
 }
