@@ -169,9 +169,33 @@ fn gradient_toggle_is_saved_stable_and_switches_bundled_and_uploaded_images() {
         let saved = serde_json::to_string(&state.preferences).unwrap();
         let restored: crate::model::Preferences = serde_json::from_str(&saved).unwrap();
         assert!(!restored.wallpaper_gradient);
+        // Off, then Light and Medium lay the shaded image over the plain one, then Strong.
+        for (strength, amount) in [
+            (crate::model::GradientStrength::Light, 0.35),
+            (crate::model::GradientStrength::Medium, 0.65),
+        ] {
+            assert_eq!(state.activate(), vec![Effect::Save]);
+            assert!(state.preferences.wallpaper_gradient);
+            assert_eq!(state.preferences.gradient_strength, strength);
+            let rendered = scene(&state);
+            assert!(
+                matches!(&rendered.draw[0], Draw::Image(path, ..) if path.ends_with("dunes-plain.jpg"))
+            );
+            assert!(matches!(
+                &rendered.draw[1],
+                Draw::TintedImage(path, _, _, _, tint)
+                    if path.ends_with("dunes.jpg") && tint[3] == amount
+            ));
+        }
         assert_eq!(state.activate(), vec![Effect::Save]);
+        assert_eq!(
+            state.preferences.gradient_strength,
+            crate::model::GradientStrength::Strong
+        );
+        let rendered = scene(&state);
+        assert!(matches!(&rendered.draw[0], Draw::Image(path, ..) if path.ends_with("dunes.jpg")));
         assert!(
-            matches!(&scene(&state).draw[0], Draw::Image(path, ..) if path.ends_with("dunes.jpg"))
+            !matches!(&rendered.draw[1], Draw::TintedImage(path, ..) if path.contains("dunes"))
         );
     }
     state.direction(Direction::Down, &controls(&state));

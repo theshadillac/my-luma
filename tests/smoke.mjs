@@ -567,6 +567,8 @@ try {
     'settings,down,down,down,enter,up,up,right,right,enter',
   );
   assert.equal(gradientEnabled.preferences.wallpaper_gradient, true);
+  assert.equal(gradientEnabled.preferences.gradient_strength, 'light');
+  assert.ok(gradientEnabled.ui_text.includes('Light'));
   const cycleEnabled = await scenario(
     'wallpaper-cycle-enabled',
     'settings,down,down,down,enter,up,up,right,right,right,enter',

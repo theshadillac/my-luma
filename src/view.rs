@@ -55,25 +55,33 @@ impl Assets {
         self.root.join(path).to_string_lossy().into_owned()
     }
 
-    fn background(&self, state: &State, id: &str) -> String {
-        if let Some(item) = state.wallpapers.iter().find(|item| item.id == id) {
-            return if state.preferences.wallpaper_gradient {
-                item.image()
+    /// The wallpaper as drawn: the plain photo, then (when the gradient is on) the shaded
+    /// one over it at the chosen strength. Strong is the shaded image alone.
+    fn background(&self, state: &State, id: &str) -> (String, Option<(String, f32)>) {
+        let (plain, shaded) = if let Some(item) = state.wallpapers.iter().find(|item| item.id == id)
+        {
+            (item.unshaded_image(), item.image())
+        } else {
+            let id = if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
+                id
             } else {
-                item.unshaded_image()
+                "dunes"
             };
+            (
+                self.path(format!("wallpapers/{id}-plain.jpg")),
+                self.path(format!("wallpapers/{id}.jpg")),
+            )
+        };
+        if !state.preferences.wallpaper_gradient {
+            return (plain, None);
         }
-        let id = if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
-            id
+        let amount = state.preferences.gradient_strength.amount();
+        // Older uploads kept only the shaded image; it is shown as it is.
+        if amount >= 1. || plain == shaded {
+            (shaded, None)
         } else {
-            "dunes"
-        };
-        let suffix = if state.preferences.wallpaper_gradient {
-            ""
-        } else {
-            "-plain"
-        };
-        self.path(format!("wallpapers/{id}{suffix}.jpg"))
+            (plain, Some((shaded, amount)))
+        }
     }
 
     fn width(&self, value: &str, style: TextStyle) -> f32 {
@@ -573,28 +581,36 @@ pub fn scene_with_pill(
     now: OffsetDateTime,
 ) -> Scene {
     let mut out = Scene::new();
+    let screen = Rect::new(0., 0., 1920., 1080.);
+    let mut layers = |id: &str, alpha: f32| {
+        let (base, shade) = assets.background(state, id);
+        if alpha >= 1. {
+            out.image(base, screen, 0., false);
+        } else {
+            out.draw.push(Draw::TintedImage(
+                base,
+                screen,
+                0.,
+                false,
+                [1., 1., 1., alpha],
+            ));
+        }
+        if let Some((shaded, amount)) = shade {
+            out.draw.push(Draw::TintedImage(
+                shaded,
+                screen,
+                0.,
+                false,
+                [1., 1., 1., alpha * amount],
+            ));
+        }
+    };
     if let Some((previous, start)) = &state.previous_background {
-        out.image(
-            assets.background(state, previous),
-            Rect::new(0., 0., 1920., 1080.),
-            0.,
-            false,
-        );
+        layers(previous, 1.);
         let alpha = (start.elapsed().as_secs_f32() / state.background_fade).min(1.);
-        out.draw.push(Draw::TintedImage(
-            assets.background(state, &state.preferences.background),
-            Rect::new(0., 0., 1920., 1080.),
-            0.,
-            false,
-            [1., 1., 1., alpha],
-        ));
+        layers(&state.preferences.background, alpha);
     } else {
-        out.image(
-            assets.background(state, &state.preferences.background),
-            Rect::new(0., 0., 1920., 1080.),
-            0.,
-            false,
-        );
+        layers(&state.preferences.background, 1.);
     }
     if let Some((color, alpha)) = state.wallpaper_tint(now) {
         out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(color, alpha));
@@ -609,13 +625,15 @@ pub fn scene_with_pill(
     {
         let line = format!("Photo by {} on Unsplash", credit.name);
         let style = text(15.2, 500, 0.);
+        // Centred in a roomier box so a slightly short measurement can't wrap "Unsplash"
+        // out of sight; the right edge still lands at 1836.
         let width = assets.width(&line, style).min(700.);
         out.text(
             &line,
-            Rect::new(1836. - width, 1036., width, 22.),
+            Rect::new(1836. - width - 60., 1036., width + 120., 22.),
             style,
             c(0xffffff, 0.55),
-            false,
+            true,
         );
     }
     weather_effect(&mut out, state, now);
@@ -2706,6 +2724,19 @@ fn rotation_value_width(assets: &Assets, language: Language) -> f32 {
         .ceil()
 }
 
+fn gradient_value_width(assets: &Assets, language: Language) -> f32 {
+    [
+        "stateOff",
+        "gradientLight",
+        "gradientMedium",
+        "gradientStrong",
+    ]
+    .into_iter()
+    .map(|key| assets.width(language.t(key), text(18.4, 450, 0.)))
+    .fold(0., f32::max)
+    .ceil()
+}
+
 fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
     let focused = state.focus == row.target;
     let bright = focused;
@@ -2745,11 +2776,11 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         } else {
             (row.rect.h - 29.12) / 2.
         };
-    let compact_value_width = matches!(
-        row.target,
-        Target::WallpaperCycle | Target::WallpaperGradient
-    )
-    .then(|| rotation_value_width(assets, state.preferences.language));
+    let compact_value_width = match row.target {
+        Target::WallpaperCycle => Some(rotation_value_width(assets, state.preferences.language)),
+        Target::WallpaperGradient => Some(gradient_value_width(assets, state.preferences.language)),
+        _ => None,
+    };
     // Values size to their text (at least the classic 170 px, at most 420 px), so longer
     // ones like "Night until 6:47 AM" or "pulseaudio · playing" are never cut off.
     let measured_value_width = row
@@ -3707,10 +3738,10 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
             let cycle_label = language.t("wallpaperCycle");
             let gradient_label = language.t("wallpaperGradient");
             let gradient_width = (assets.width(gradient_label, text(20.8, 550, -0.02))
-                + rotation_value_width(assets, language)
+                + gradient_value_width(assets, language)
                 + 111.6)
                 .ceil()
-                .min(360.);
+                .min(400.);
             let cycle_width = (assets.width(cycle_label, text(20.8, 550, -0.02))
                 + rotation_value_width(assets, language)
                 + 111.6)
@@ -3758,7 +3789,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                         "eye-off"
                     }),
                     value: Some(language.t(if state.preferences.wallpaper_gradient {
-                        "stateOn"
+                        state.preferences.gradient_strength.label_key()
                     } else {
                         "stateOff"
                     })),

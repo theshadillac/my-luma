@@ -392,6 +392,36 @@ impl WallpaperTint {
     }
 }
 
+/// How strongly the darkening gradient shades the wallpaper when it is on (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientStrength {
+    Light,
+    Medium,
+    /// The original look: the fully shaded wallpaper.
+    #[default]
+    Strong,
+}
+
+impl GradientStrength {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Light => "gradientLight",
+            Self::Medium => "gradientMedium",
+            Self::Strong => "gradientStrong",
+        }
+    }
+
+    /// How much of the shaded wallpaper is laid over the plain one.
+    pub fn amount(self) -> f32 {
+        match self {
+            Self::Light => 0.35,
+            Self::Medium => 0.65,
+            Self::Strong => 1.,
+        }
+    }
+}
+
 /// How the app drawer orders apps after the favourites (fork option, from upstream 3.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -512,6 +542,8 @@ pub struct Preferences {
     #[serde(deserialize_with = "crate::wallpaper_cycle::deserialize")]
     pub wallpaper_cycle: bool,
     pub wallpaper_gradient: bool,
+    /// Used while the gradient is on.
+    pub gradient_strength: GradientStrength,
     /// Unix seconds of the last automatic or chosen wallpaper change, for the timed modes.
     pub wallpaper_changed: u64,
     /// Back on Home, or holding Back, opens Recent apps (#175).
@@ -599,6 +631,7 @@ impl Default for Preferences {
             landing_layout: false,
             wallpaper_cycle: false,
             wallpaper_gradient: true,
+            gradient_strength: GradientStrength::default(),
             wallpaper_changed: 0,
             back_recents: true,
             clock_size: ClockSize::Medium,

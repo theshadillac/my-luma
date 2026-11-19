@@ -3701,7 +3701,20 @@ impl State {
                 return vec![Effect::Save];
             }
             Target::WallpaperGradient => {
-                self.preferences.wallpaper_gradient = !self.preferences.wallpaper_gradient;
+                use crate::model::GradientStrength::{Light, Medium, Strong};
+                let preferences = &mut self.preferences;
+                (
+                    preferences.wallpaper_gradient,
+                    preferences.gradient_strength,
+                ) = match (
+                    preferences.wallpaper_gradient,
+                    preferences.gradient_strength,
+                ) {
+                    (false, _) => (true, Light),
+                    (true, Light) => (true, Medium),
+                    (true, Medium) => (true, Strong),
+                    (true, Strong) => (false, Strong),
+                };
                 return vec![Effect::Save];
             }
             Target::UseBackground => {
