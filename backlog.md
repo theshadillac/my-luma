@@ -10,6 +10,22 @@ Type: **Stability** (keeps Luma from breaking or getting stuck) · **Performance
 
 Risk: how likely it is to break something that works today, conflict with My Luma's own changes, or change how things feel. **Low** small and self-contained · **Medium** touches shared code or changes behaviour, needs a test on the TV · **High** large, conflicts likely, or goes against a rule (system controls, losing features).
 
+## Guiding principles (go-forward, set by Stephen 2026-11-20)
+
+Every item is weighed against these, in this order:
+
+1. **Stability is critical.** Nothing may introduce stability issues; weigh every item against that first.
+2. **Performance.** No noticeable slowdowns. Items that improve performance are strongly considered.
+3. **Simplicity.** Avoid adding too many complex features.
+4. **Never lose what works today.** New things are opt-in and off by default; existing behaviour only changes if Stephen chooses.
+5. **Offline first, nothing new to keep secret.** Prefer items with no network need. Anything online fails quietly, caches, and keeps keys out of logs and backups.
+6. **Easy to back out.** Every change can be undone with a setting or by rolling back a release.
+7. **Keep upstream merges cheap.** Prefer small, self-contained cherry-picks over rewrites of shared code.
+8. **Gentle on the OLED.** No new bright static elements; ambient stays dim at night with pixel shift; idle animations rest.
+9. **No LG system controls.** (Standing rule.)
+
+Scoring guide: Priority 1 is for Low or Medium risk stability/performance items and small features that add no complexity. High-risk features are 3 at most, and 4 if they also add complexity or cost performance. Network-dependent features are 3 at most unless Stephen raises them.
+
 ## 1. Features
 
 Things you see or use on the TV.
