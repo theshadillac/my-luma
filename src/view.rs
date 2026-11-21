@@ -8,9 +8,9 @@ use crate::{
         DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOLIDAY_REMINDERS_ROW, HOLIDAYS_ROW,
         HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
         HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW,
-        Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target,
-        TextField, UI_SOUND_LEVEL_ROW, UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WALLPAPER_TINT_ROW,
-        WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        POWER_ON_ROW, Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW,
+        Target, TextField, UI_SOUND_LEVEL_ROW, UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW,
+        WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -1286,16 +1286,25 @@ fn tile(
             24.,
         );
         out.shape(indicator, 16., c(0x101318, 0.79));
+        // Both arrows sit the same distance from their edge of the badge (upstream #367).
+        let arrow_size = 16.;
+        let arrow_padding = 14.;
+        let arrow_y = indicator.y + (indicator.h - arrow_size) / 2.;
         out.icon(
             assets,
             "left",
-            Rect::new(indicator.x + 8.8, indicator.y + 4., 16., 16.),
+            Rect::new(indicator.x + arrow_padding, arrow_y, arrow_size, arrow_size),
             c(0xededed, 1.),
         );
         out.icon(
             assets,
             "arrow",
-            Rect::new(indicator.x + 40., indicator.y + 4., 16., 16.),
+            Rect::new(
+                indicator.x + indicator.w - arrow_padding - arrow_size,
+                arrow_y,
+                arrow_size,
+                arrow_size,
+            ),
             c(0xededed, 1.),
         );
     }
@@ -3641,6 +3650,13 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     } else {
                         language.t("stateOn")
                     }),
+                    false,
+                ),
+                (
+                    POWER_ON_ROW,
+                    "powerOn",
+                    "clock",
+                    Some(language.t(state.preferences.power_on.label_key())),
                     false,
                 ),
                 (

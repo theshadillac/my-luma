@@ -50,6 +50,7 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
         DRAWER_SECTION => vec![DRAWER_TOOLBAR_ROW, APP_SORTING_ROW],
         AMBIENT_SECTION => vec![
             AMBIENT_ROW,
+            POWER_ON_ROW,
             PIXEL_SHIFT_ROW,
             DAY_NIGHT_ROW,
             WALLPAPER_TINT_ROW,
@@ -105,6 +106,7 @@ pub const UI_SOUND_OUTPUT_ROW: usize = 27;
 pub const WALLPAPER_TINT_ROW: usize = 28;
 pub const HOLIDAY_REMINDERS_ROW: usize = 29;
 pub const HOLIDAYS_ROW: usize = 30;
+pub const POWER_ON_ROW: usize = 31;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -884,6 +886,33 @@ impl State {
             return None;
         }
         Some(Duration::from_secs(u64::from(minutes) * 60).saturating_sub(self.last_input.elapsed()))
+    }
+
+    /// The TV came back on from standby with Luma in front: show Home or the ambient screen,
+    /// as chosen, whatever was showing when it went off.
+    pub fn powered_on(&mut self) {
+        self.overlay = None;
+        self.panel_started = None;
+        self.moving = None;
+        self.waking = None;
+        if self.page != Page::Home {
+            self.open(0);
+        }
+        self.focus = self.first_content();
+        self.last_input = Instant::now();
+        match self.preferences.power_on {
+            crate::model::PowerOn::Home => {
+                self.ambient = None;
+                self.ambient_manual = false;
+            }
+            crate::model::PowerOn::Ambient => {
+                self.ambient = Some(Instant::now());
+                // Like the quick panel's Ambient button: shown even with the timer off.
+                self.ambient_manual = true;
+                self.pointer = false;
+            }
+        }
+        self.dirty = true;
     }
 
     /// Starts the ambient screen once Home has been idle long enough; only while Luma is seen.
@@ -3653,6 +3682,7 @@ impl State {
                     HOLIDAY_REMINDERS_ROW => {
                         self.preferences.holiday_reminders = !self.preferences.holiday_reminders
                     }
+                    POWER_ON_ROW => self.preferences.power_on = self.preferences.power_on.next(),
                     HOLIDAYS_ROW => {
                         self.preferences.holiday_mode = self.preferences.holiday_mode.next()
                     }

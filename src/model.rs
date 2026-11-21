@@ -447,6 +447,31 @@ impl AppSorting {
     }
 }
 
+/// What Luma shows when the TV comes back on from standby (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerOn {
+    #[default]
+    Home,
+    Ambient,
+}
+
+impl PowerOn {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Home => Self::Ambient,
+            Self::Ambient => Self::Home,
+        }
+    }
+
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Home => "powerOnHome",
+            Self::Ambient => "powerOnAmbient",
+        }
+    }
+}
+
 /// When Home shows the faint "More apps" hint under its last row (fork option).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -556,6 +581,8 @@ pub struct Preferences {
     pub show_forecast: bool,
     /// Minutes without input on Home before the ambient screen; 0 is off (fork option).
     pub ambient_minutes: u8,
+    /// Home or the ambient screen when the TV comes back on.
+    pub power_on: PowerOn,
     /// The selected app tile grows and lifts a little (fork option, on by default).
     pub tile_lift: bool,
     /// Where Home's clock block sits (fork option).
@@ -640,6 +667,7 @@ impl Default for Preferences {
             glass_clock: false,
             show_forecast: false,
             ambient_minutes: 0,
+            power_on: PowerOn::default(),
             tile_lift: true,
             clock_position: ClockPosition::Default,
             more_apps_hint: MoreAppsHint::Always,

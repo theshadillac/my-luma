@@ -2186,6 +2186,65 @@ fn keyboard_done_saves_a_typed_input_name() {
 }
 
 #[test]
+fn home_preload_launches_start_hidden() {
+    for key in ["nid", "appId"] {
+        for id in [crate::platform::HOME_ID, crate::platform::FULL_HOME_ID] {
+            for mode in [
+                "full",
+                "semi-full",
+                "partial",
+                "minimal",
+                "criu",
+                "future-mode",
+            ] {
+                let mut options = crate::Options::default();
+                options.apply_launch_metadata(&json!({
+                    "@system_native_app": true,
+                    (key): id,
+                    "preload": mode,
+                }));
+                assert!(options.webos_home);
+                assert_eq!(options.preload.as_deref(), Some(mode));
+                assert!(options.start_hidden(), "{key}={id}, preload={mode}");
+            }
+        }
+    }
+}
+
+#[test]
+fn ordinary_home_launches_do_not_start_hidden() {
+    for metadata in [
+        json!({"nid": crate::platform::HOME_ID}),
+        json!({"nid": crate::platform::HOME_ID, "preload": ""}),
+        json!({"nid": crate::platform::HOME_ID, "preload": true}),
+        json!({"nid": crate::platform::HOME_ID, "preload": null}),
+        json!({"nid": crate::platform::HOME_ID, "preload": 1}),
+    ] {
+        let mut options = crate::Options::default();
+        options.apply_launch_metadata(&metadata);
+        assert!(options.webos_home);
+        assert_eq!(options.preload, None);
+        assert!(!options.start_hidden(), "{metadata}");
+    }
+}
+
+#[test]
+fn normal_app_preload_does_not_change_startup_visibility() {
+    for metadata in [
+        json!({"nid": crate::platform::APP_ID, "preload": "full"}),
+        json!({"appId": crate::platform::APP_ID, "preload": "full"}),
+        json!({"preload": "full"}),
+        json!({}),
+    ] {
+        let mut options = crate::Options::default();
+        options.apply_launch_metadata(&metadata);
+        assert!(!options.webos_home);
+        assert_eq!(options.preload, None);
+        assert!(!options.start_hidden(), "{metadata}");
+    }
+}
+
+#[test]
 fn home_lifecycle_replies_map_for_both_registration_versions() {
     use crate::platform::Lifecycle;
     // Lifecycle v2 (registerApp, in place of LG's Home executable) names it in "event".
@@ -2219,6 +2278,44 @@ fn home_lifecycle_replies_map_for_both_registration_versions() {
     ] {
         assert_eq!(Lifecycle::from_reply(&reply), None, "{reply}");
     }
+}
+
+#[test]
+fn home_lifecycle_fallback_retries_legacy_and_other_versions_but_not_current_failures() {
+    use crate::platform::{disable_home_lifecycle, home_lifecycle_disabled};
+    let directory = std::env::temp_dir().join(format!(
+        "luma-lifecycle-fallback-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let marker = directory.join("no-lifecycle");
+    assert!(!home_lifecycle_disabled(&marker, "3.6.2"));
+
+    // A legacy empty marker no longer disables registration indefinitely.
+    std::fs::write(&marker, b"").unwrap();
+    assert!(!home_lifecycle_disabled(&marker, "3.6.2"));
+
+    // A failed retry records this release. Repeated launches retain the safety fallback.
+    disable_home_lifecycle(&marker, "3.6.2").unwrap();
+    assert!(home_lifecycle_disabled(&marker, "3.6.2"));
+    assert!(home_lifecycle_disabled(&marker, "3.6.2"));
+
+    // Upgrades (and switching releases) retry; merely reading does not erase the marker.
+    assert!(!home_lifecycle_disabled(&marker, "3.6.3"));
+    assert!(!home_lifecycle_disabled(&marker, "3.6.1"));
+    assert!(home_lifecycle_disabled(&marker, "3.6.2"));
+    disable_home_lifecycle(&marker, "3.6.3").unwrap();
+    assert!(home_lifecycle_disabled(&marker, "3.6.3"));
+
+    // Malformed, unknown and unreadable markers fail safe instead of retrying endlessly.
+    for contents in ["broken", "{}", r#"{"version":null}"#, r#"{"version":""}"#] {
+        std::fs::write(&marker, contents).unwrap();
+        assert!(home_lifecycle_disabled(&marker, "3.6.3"), "{contents}");
+    }
+    assert!(home_lifecycle_disabled(&directory, "3.6.3"));
+    assert!(disable_home_lifecycle(&directory, "3.6.3").is_err());
+    std::fs::remove_file(marker).unwrap();
+    std::fs::remove_dir(directory).unwrap();
 }
 
 #[test]
@@ -4892,4 +4989,58 @@ fn an_empty_holiday_is_mentioned_once_a_week_before() {
             .0
             .starts_with("Christmas starts December 1.")
     );
+}
+
+#[test]
+fn standby_is_noticed_from_the_clocks_and_restarts_are_not() {
+    use std::time::{Duration, Instant, SystemTime};
+    let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+    let monotonic = Instant::now();
+    let mut clock = crate::platform::PowerClock::new(wall, monotonic);
+    // Ordinary frames and a slow minute: both clocks agree.
+    assert!(!clock.check(
+        wall + Duration::from_secs(1),
+        monotonic + Duration::from_secs(1)
+    ));
+    assert!(!clock.check(
+        wall + Duration::from_secs(91),
+        monotonic + Duration::from_secs(91)
+    ));
+    // Eight hours of standby: the wall clock moved, the monotonic one barely did.
+    let wall = wall + Duration::from_secs(91 + 8 * 3600);
+    assert!(clock.check(wall, monotonic + Duration::from_secs(92)));
+    // Only once, and a clock set backwards never counts.
+    assert!(!clock.check(
+        wall + Duration::from_secs(1),
+        monotonic + Duration::from_secs(93)
+    ));
+    assert!(!clock.check(
+        wall - Duration::from_secs(3600),
+        monotonic + Duration::from_secs(94)
+    ));
+}
+
+#[test]
+fn power_on_shows_home_or_the_ambient_screen() {
+    let mut state = State::new(Preferences::default());
+    // Ambient was showing (or Settings was open) when the TV went off: Home comes back.
+    state.ambient = Some(std::time::Instant::now());
+    state.powered_on();
+    assert_eq!(state.page, Page::Home);
+    assert!(state.ambient.is_none());
+    state.open(2);
+    state.powered_on();
+    assert_eq!(state.page, Page::Home);
+    // Ambient: shown at once, even with the ambient timer off, and kept by the tick.
+    state.preferences.power_on = crate::model::PowerOn::Ambient;
+    state.open(2);
+    state.powered_on();
+    assert_eq!(state.page, Page::Home);
+    assert!(state.ambient.is_some());
+    assert_eq!(state.preferences.ambient_minutes, 0);
+    state.ambient_tick(true);
+    assert!(state.ambient.is_some());
+    // Any key wakes it as usual.
+    assert!(state.note_input());
+    assert!(state.ambient.is_none());
 }
