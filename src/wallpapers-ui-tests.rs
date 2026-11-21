@@ -3,6 +3,8 @@ use crate::{model::BACKGROUNDS, renderer::Draw, wallpapers::Wallpaper};
 
 fn custom(index: u32) -> Wallpaper {
     Wallpaper {
+        collection: None,
+        credit: None,
         id: format!("custom-{index:032x}"),
         directory: PathBuf::from(format!("/preview/wallpapers/custom-{index:032x}")),
         has_original: true,
@@ -167,14 +169,40 @@ fn gradient_toggle_is_saved_stable_and_switches_bundled_and_uploaded_images() {
         let saved = serde_json::to_string(&state.preferences).unwrap();
         let restored: crate::model::Preferences = serde_json::from_str(&saved).unwrap();
         assert!(!restored.wallpaper_gradient);
+        // Off, then Light and Medium lay the shaded image over the plain one, then Strong.
+        for (strength, amount) in [
+            (crate::model::GradientStrength::Light, 0.35),
+            (crate::model::GradientStrength::Medium, 0.65),
+        ] {
+            assert_eq!(state.activate(), vec![Effect::Save]);
+            assert!(state.preferences.wallpaper_gradient);
+            assert_eq!(state.preferences.gradient_strength, strength);
+            let rendered = scene(&state);
+            assert!(
+                matches!(&rendered.draw[0], Draw::Image(path, ..) if path.ends_with("dunes-plain.jpg"))
+            );
+            assert!(matches!(
+                &rendered.draw[1],
+                Draw::TintedImage(path, _, _, _, tint)
+                    if path.ends_with("dunes.jpg") && tint[3] == amount
+            ));
+        }
         assert_eq!(state.activate(), vec![Effect::Save]);
+        assert_eq!(
+            state.preferences.gradient_strength,
+            crate::model::GradientStrength::Strong
+        );
+        let rendered = scene(&state);
+        assert!(matches!(&rendered.draw[0], Draw::Image(path, ..) if path.ends_with("dunes.jpg")));
         assert!(
-            matches!(&scene(&state).draw[0], Draw::Image(path, ..) if path.ends_with("dunes.jpg"))
+            !matches!(&rendered.draw[1], Draw::TintedImage(path, ..) if path.contains("dunes"))
         );
     }
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Background(1));
     state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::UploadWallpaper);
+    state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperGradient);
     let item = custom(1);
     state.preferences.background = item.id.clone();
@@ -270,7 +298,7 @@ fn upload_is_modal_and_close_restores_its_exact_parent() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
-    state.focus = Target::Background(0);
+    state.focus = Target::Background(1);
     state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::UploadWallpaper);
     assert!(state.activate().is_empty());
@@ -287,7 +315,7 @@ fn upload_is_modal_and_close_restores_its_exact_parent() {
     assert_eq!(state.focus, Target::UploadWallpaper);
     assert_eq!(state.section, 1);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(0));
+    assert_eq!(state.focus, Target::Background(1));
 }
 
 #[test]
@@ -459,7 +487,7 @@ fn gallery_scrolls_behind_fixed_controls_without_clipping_or_fades() {
             )
         })
         .unwrap();
-    for key in ["uploadWallpaper", "wallpaperCycle", "interface"] {
+    for key in ["uploadWallpaper", "wallpaperCycle", "settingsHome"] {
         let label = state.preferences.language.t(key);
         let fixed = scrolled
             .draw
@@ -496,7 +524,7 @@ fn scrolled_backgrounds_cannot_capture_upload_or_sidebar_pointer_hits() {
     );
     assert_eq!(state.hit_test(&gallery, 1000., 200.), None);
     assert_eq!(
-        state.hit_test(&gallery, 300., 280.),
+        state.hit_test(&gallery, 300., 368.),
         Some(Target::Sidebar(1))
     );
     assert_eq!(
@@ -650,10 +678,19 @@ fn background_popup_is_modal_lifts_the_same_thumbnail_and_restores_its_parent() 
             .iter()
             .map(|c| c.target.clone())
             .collect::<Vec<_>>(),
-        vec![Target::UseBackground, Target::DeleteBackground]
+        vec![
+            Target::UseBackground,
+            Target::NightBackground,
+            Target::MoveBackground,
+            Target::DeleteBackground
+        ]
     );
     assert!(popup.draw.iter().any(|draw| matches!(draw, Draw::Image(_, rect, ..) if rect.x == before.x && rect.y == before.y && rect.w == before.w && rect.h == 202.5)));
     state.direction(Direction::Down, &popup.controls);
+    assert_eq!(state.focus, Target::NightBackground);
+    state.direction(Direction::Down, &scene(&state).controls);
+    assert_eq!(state.focus, Target::MoveBackground);
+    state.direction(Direction::Down, &scene(&state).controls);
     assert_eq!(state.focus, Target::DeleteBackground);
     state.activate();
     assert_eq!(state.focus, Target::CancelDelete);
@@ -679,7 +716,8 @@ fn selected_background_has_no_delete_action_and_rejects_forced_confirmation() {
         .unwrap();
     state.focus = Target::Background(index);
     state.options();
-    assert_eq!(scene(&state).controls.len(), 1);
+    // Use, Use at night and Move; no delete for the wallpaper in use.
+    assert_eq!(scene(&state).controls.len(), 3);
     assert!(!state.can_delete_background(&selected));
     state.focus = Target::DeleteBackground;
     state.activate();
@@ -826,4 +864,263 @@ fn removed_popup_entry_closes_safely_and_preference_sanitizing_protects_the_sele
             .any(|id| id == "dunes" || id == "../bad")
     );
     assert!(state.preferences.deleted_backgrounds.len() <= 1);
+}
+
+#[test]
+fn collections_split_the_gallery_and_the_rotation() {
+    let mut state = State::new(Preferences::default());
+    let porsche = |index| Wallpaper {
+        collection: Some("c:Vintage Porsche".into()),
+        ..custom(index)
+    };
+    state.set_wallpapers(vec![custom(1), porsche(2), porsche(3)]);
+    let sunday = time::PrimitiveDateTime::new(
+        time::Date::from_calendar_date(2026, time::Month::November, 15).unwrap(),
+        time::Time::from_hms(12, 0, 0).unwrap(),
+    )
+    .assume_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap());
+    let wednesday = sunday + time::Duration::days(3);
+    // Photos holds the built-ins and the untagged upload; Porsche holds two.
+    state.refresh_collection(wednesday);
+    assert_eq!(state.collection.id, crate::collections::PHOTOS);
+    assert_eq!(state.collection_size("c:Vintage Porsche"), 2);
+    assert_eq!(state.background_count(), BACKGROUNDS.len() + 1);
+    assert!(!state.collection_due());
+    // The Collections page lists Photos, Porsche, the holidays, then Porsche's schedule.
+    state.open(2);
+    state.section = crate::state::BACKGROUND_SECTION;
+    state.focus = Target::WallpaperCollection;
+    state.activate();
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Collections));
+    let listed = state.collections();
+    assert_eq!(listed[1], ("c:Vintage Porsche".to_string(), 2));
+    assert_eq!(listed.len(), 2 + crate::collections::HOLIDAYS.len());
+    // Its schedule row cycles Saturdays, Sundays, ...
+    state.focus = Target::Choice(listed.len());
+    state.activate();
+    state.activate();
+    assert_eq!(
+        state.preferences.collection_schedules["c:Vintage Porsche"],
+        crate::collections::Schedule::Sundays
+    );
+    // On Sunday it takes over, and only its wallpapers rotate.
+    assert!(state.refresh_collection(sunday));
+    assert_eq!(state.collection.id, "c:Vintage Porsche");
+    assert!(state.collection_due());
+    assert!(state.cycle_wallpaper_at(sunday));
+    assert_eq!(
+        state.wallpaper_collection(&state.preferences.background),
+        "c:Vintage Porsche"
+    );
+    assert!(!state.collection_due());
+    // Choosing Photos by hand wins for the rest of the run.
+    state.focus = Target::Choice(0);
+    state.activate();
+    assert_eq!(state.subpage, None);
+    assert_eq!(state.focus, Target::WallpaperCollection);
+    state.preferences.collection_pick.as_mut().unwrap().at = sunday.unix_timestamp() + 60;
+    assert!(state.refresh_collection(sunday + time::Duration::hours(2)));
+    assert_eq!(state.collection.id, crate::collections::PHOTOS);
+    // Moving the last Photos upload into Christmas; moving it back clears the override.
+    state.gallery_collection = None;
+    let photo = custom(1).id;
+    state.overlay = Some(Overlay::BackgroundOptions {
+        id: photo.clone(),
+        restore: Target::Background(0),
+    });
+    state.focus = Target::MoveBackground;
+    state.activate();
+    assert_eq!(
+        state.subpage,
+        Some(crate::state::Subpage::MoveCollection(photo.clone()))
+    );
+    let christmas = state
+        .collections()
+        .iter()
+        .position(|(id, _)| id == "christmas")
+        .unwrap();
+    state.focus = Target::Choice(christmas);
+    state.activate();
+    assert_eq!(state.wallpaper_collection(&photo), "christmas");
+    assert_eq!(state.collection_size("christmas"), 1);
+    state.overlay = Some(Overlay::BackgroundOptions {
+        id: photo.clone(),
+        restore: Target::Background(0),
+    });
+    state.focus = Target::MoveBackground;
+    state.activate();
+    state.focus = Target::Choice(0);
+    state.activate();
+    assert!(state.preferences.wallpaper_collections.is_empty());
+}
+
+#[test]
+fn unsplash_wallpapers_credit_their_photographer_on_home() {
+    let mut state = ready();
+    let photo = Wallpaper {
+        credit: Some(crate::unsplash::Credit {
+            name: "Ana Lens".into(),
+            link: "https://unsplash.com/@ana".into(),
+        }),
+        ..custom(7)
+    };
+    let credited = |state: &State| {
+        scene(state).draw.iter().any(
+            |draw| matches!(draw, Draw::Text(text, ..) if text == "Photo by Ana Lens on Unsplash"),
+        )
+    };
+    state.set_wallpapers(vec![photo.clone()]);
+    assert!(!credited(&state), "not while another wallpaper shows");
+    state.preferences.background = photo.id.clone();
+    assert!(credited(&state));
+    state.open(2);
+    assert!(!credited(&state), "Settings stays uncluttered");
+}
+
+#[test]
+fn discover_suggests_unsplash_photos_for_the_collection_and_adds_them() {
+    use crate::state::{Subpage, SuggestionStatus};
+    let mut state = ready();
+    state.open(2);
+    state.section = crate::state::BACKGROUND_SECTION;
+    let has = |state: &State, target: Target| {
+        controls(state)
+            .iter()
+            .any(|control| control.target == target)
+    };
+    assert!(!has(&state, Target::DiscoverOpen), "only with a key saved");
+    state.unsplash_ready = true;
+    assert!(has(&state, Target::DiscoverOpen));
+    state.focus = Target::WallpaperCollection;
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::DiscoverOpen);
+    // Photos searches for landscapes.
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Suggest {
+            query: "landscape".into(),
+            page: 1
+        }]
+    );
+    assert_eq!(state.subpage, Some(Subpage::Discover));
+    let suggestion = |index: usize| crate::wallpapers::Suggestion {
+        photo: crate::unsplash::Photo {
+            id: format!("p{index}"),
+            thumb: "https://images.unsplash.com/p".into(),
+            color: "#000".into(),
+            alt: String::new(),
+            name: format!("Photographer {index}"),
+            profile: String::new(),
+            page: String::new(),
+        },
+        thumbnail: PathBuf::from(format!("/preview/discover/p{index}.jpg")),
+    };
+    state.suggestions(1, Ok((0..24).map(suggestion).collect()));
+    assert_eq!(state.focus, Target::Suggestion(0));
+    for index in 0..24 {
+        assert!(has(&state, Target::Suggestion(index)));
+    }
+    assert!(has(&state, Target::MoreSuggestions));
+    // Right, then Down into the second row, then OK adds it to Photos.
+    state.direction(Direction::Right, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Suggestion(5));
+    assert_eq!(
+        state.activate(),
+        vec![Effect::AddSuggestion {
+            id: "p5".into(),
+            collection: crate::collections::PHOTOS.into()
+        }]
+    );
+    assert!(state.activate().is_empty(), "not twice while adding");
+    state.suggestion_added("p5", Ok(()));
+    assert_eq!(state.discover.photos[5].status, SuggestionStatus::Added);
+    // Down past the last row reaches More suggestions.
+    state.focus = Target::Suggestion(21);
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::MoreSuggestions);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Suggest {
+            query: "landscape".into(),
+            page: 2
+        }]
+    );
+    // A short page means nothing more to load; duplicates are skipped.
+    state.suggestions(2, Ok(vec![suggestion(0), suggestion(30)]));
+    assert_eq!(state.discover.photos.len(), 25);
+    assert!(state.discover.exhausted);
+    assert_eq!(
+        state.focus,
+        Target::Suggestion(24),
+        "focus moves to the first new photo"
+    );
+    state.focus = Target::MoreSuggestions;
+    assert!(state.activate().is_empty());
+    // Back returns to the Discover button.
+    state.back();
+    assert_eq!(state.subpage, None);
+    assert_eq!(state.focus, Target::DiscoverOpen);
+}
+
+#[test]
+fn holidays_can_alternate_with_photos_or_be_hidden() {
+    let mut state = State::new(Preferences {
+        holiday_mode: crate::collections::HolidayMode::MixIn,
+        ..Preferences::default()
+    });
+    let christmas = |index| Wallpaper {
+        collection: Some("christmas".into()),
+        ..custom(index)
+    };
+    state.set_wallpapers(vec![custom(1), christmas(2), christmas(3)]);
+    let december = time::PrimitiveDateTime::new(
+        time::Date::from_calendar_date(2026, time::Month::December, 16).unwrap(),
+        time::Time::from_hms(12, 0, 0).unwrap(),
+    )
+    .assume_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap());
+    // Photos stays the collection; Christmas mixes in and shows straight away.
+    assert!(state.refresh_collection(december));
+    assert_eq!(state.collection.id, crate::collections::PHOTOS);
+    assert!(state.collection_due());
+    assert!(state.cycle_wallpaper_at(december));
+    assert_eq!(
+        state.wallpaper_collection(&state.preferences.background),
+        "christmas"
+    );
+    assert!(!state.collection_due());
+    // Then every change alternates between Photos and Christmas.
+    let mut seen = vec![];
+    for _ in 0..6 {
+        assert!(state.cycle_wallpaper_at(december));
+        seen.push(
+            state
+                .wallpaper_collection(&state.preferences.background)
+                .to_owned(),
+        );
+    }
+    assert_eq!(
+        seen,
+        [
+            "photos",
+            "christmas",
+            "photos",
+            "christmas",
+            "photos",
+            "christmas"
+        ]
+    );
+    // A Photos wallpaper on screen isn't "wrong" while mixing.
+    assert!(state.cycle_wallpaper_at(december));
+    assert!(!state.collection_due());
+    // Off: no holiday, no holiday collections listed, nothing lost.
+    state.preferences.holiday_mode = crate::collections::HolidayMode::Off;
+    assert!(state.refresh_collection(december));
+    assert_eq!(state.collection.mix, None);
+    assert!(!state.collections().iter().any(|(id, _)| id == "christmas"));
+    assert_eq!(state.collection_size("christmas"), 2);
+    // Take over: Christmas replaces Photos.
+    state.preferences.holiday_mode = crate::collections::HolidayMode::TakeOver;
+    assert!(state.refresh_collection(december));
+    assert_eq!(state.collection.id, "christmas");
 }

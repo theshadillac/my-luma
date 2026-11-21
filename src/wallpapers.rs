@@ -21,15 +21,29 @@ use std::{
 };
 
 const MAX_BODY: usize = 12 * 1024 * 1024;
-const MAX_WALLPAPERS: usize = 20;
+// Room for a Photos library plus theme and holiday collections; files are 1080p JPEGs.
+const MAX_WALLPAPERS: usize = 150;
+/// Images dropped here (e.g. with webOS Dev Manager's file browser) are imported into the
+/// gallery at start and whenever the gallery is opened, then removed (fork option).
+pub const IMPORT_FOLDER: &str = "import";
+/// Import accepts full-size photos: up to 40 MiB and 48 megapixels each.
+const MAX_IMPORT_FILE: u64 = 40 * 1024 * 1024;
+const MAX_IMPORT_PIXELS: u64 = 48_000_000;
 const SESSION_TIME: Duration = Duration::from_secs(600);
-const SESSION_REQUEST_LIMIT: usize = 64;
+// Room for the page's own files plus a full gallery's worth of uploads and retries.
+const SESSION_REQUEST_LIMIT: usize = 160;
 const REQUEST_TIME: Duration = Duration::from_secs(20);
 const STOP: u64 = u64::MAX;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Wallpaper {
     pub id: String,
+    /// The collection chosen on the phone when uploading (Photos when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
+    /// The photographer, for photos added from Unsplash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit: Option<crate::unsplash::Credit>,
     #[serde(skip)]
     pub directory: PathBuf,
     #[serde(skip)]
@@ -71,8 +85,19 @@ pub fn valid_id(id: &str) -> bool {
     })
 }
 
+/// An Unsplash suggestion for the TV's Discover page, with its preview saved locally.
+#[derive(Clone, Debug)]
+pub struct Suggestion {
+    pub photo: crate::unsplash::Photo,
+    pub thumbnail: PathBuf,
+}
+
 pub enum Event {
     Catalog(Vec<Wallpaper>),
+    /// Discover suggestions for a page of a search.
+    Suggestions(u32, Result<Vec<Suggestion>, String>),
+    /// A suggestion was saved as a wallpaper (or why not).
+    SuggestionAdded(String, Result<(), String>),
     Deleted(String, Result<(), String>),
     Session(u64, Result<Session, String>),
     Ended(u64),
@@ -81,10 +106,13 @@ pub enum Event {
 enum Command {
     Wake,
     Delete { id: String, selected: String },
+    Suggest { query: String, page: u32 },
+    AddSuggestion { id: String, collection: String },
 }
 
 pub struct Service {
     desired: Arc<AtomicU64>,
+    unsplash_ready: Arc<std::sync::atomic::AtomicBool>,
     wake: mpsc::Sender<Command>,
     pub receiver: mpsc::Receiver<Event>,
     active: bool,
@@ -99,6 +127,8 @@ impl Service {
             .join("wallpapers");
         let desired = Arc::new(AtomicU64::new(0));
         let worker_desired = desired.clone();
+        let unsplash_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_unsplash = unsplash_ready.clone();
         let (sender, receiver) = mpsc::sync_channel(4);
         let (wake, updates) = mpsc::channel();
         thread::Builder::new()
@@ -107,6 +137,7 @@ impl Service {
                 worker(
                     &directory,
                     &worker_desired,
+                    &worker_unsplash,
                     &sender,
                     &updates,
                     loopback_only,
@@ -115,6 +146,7 @@ impl Service {
             .map_err(|e| format!("Could not start wallpaper worker: {e}"))?;
         Ok(Self {
             desired,
+            unsplash_ready,
             wake,
             receiver,
             active: false,
@@ -136,8 +168,28 @@ impl Service {
         self.generation
     }
 
+    /// Looks for new images in the import folder.
+    pub fn refresh(&self) {
+        let _ = self.wake.send(Command::Wake);
+    }
+
     pub fn delete(&self, id: String, selected: String) {
         let _ = self.wake.send(Command::Delete { id, selected });
+    }
+
+    /// Whether an Unsplash access key is saved on the TV (Discover is offered).
+    pub fn unsplash_ready(&self) -> bool {
+        self.unsplash_ready.load(Ordering::Acquire)
+    }
+
+    /// Searches Unsplash for Discover; the answer arrives as `Event::Suggestions`.
+    pub fn suggest(&self, query: String, page: u32) {
+        let _ = self.wake.send(Command::Suggest { query, page });
+    }
+
+    /// Saves a Discover suggestion into a collection; answered by `Event::SuggestionAdded`.
+    pub fn add_suggestion(&self, id: String, collection: String) {
+        let _ = self.wake.send(Command::AddSuggestion { id, collection });
     }
 }
 
@@ -182,7 +234,7 @@ fn catalog(directory: &Path) -> Vec<Wallpaper> {
     };
     let mut result = Vec::new();
     // Bound discovery even if someone manually populates this private directory.
-    for entry in entries.take(128).flatten() {
+    for entry in entries.take(256).flatten() {
         let path = entry.path();
         let id = entry.file_name().to_string_lossy().into_owned();
         if !valid_id(&id) || !real_directory(&path) {
@@ -329,6 +381,119 @@ fn decode(bytes: &[u8]) -> Result<image::RgbImage, String> {
     }))
 }
 
+/// Decodes a full-size photo of any shape, applies its orientation, and fills 1920 × 1080:
+/// centre-cropped to 16:9, then resized. Transparency is composited like uploads.
+fn decode_import(bytes: &[u8]) -> Result<image::RgbImage, String> {
+    let format = image::guess_format(bytes).map_err(|_| "Not a JPEG, PNG or WebP image")?;
+    if !matches!(
+        format,
+        image::ImageFormat::Jpeg | image::ImageFormat::Png | image::ImageFormat::WebP
+    ) {
+        return Err("Not a JPEG, PNG or WebP image".into());
+    }
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(12_000);
+    limits.max_image_height = Some(12_000);
+    limits.max_alloc = Some(MAX_IMPORT_PIXELS * 4 + 16 * 1024 * 1024);
+    reader.limits(limits);
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|e| format!("Invalid image: {e}"))?;
+    use image::ImageDecoder;
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > MAX_IMPORT_PIXELS {
+        return Err("Image is larger than 48 megapixels".into());
+    }
+    if width < 640 || height < 360 {
+        return Err("Image is smaller than 640 × 360".into());
+    }
+    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    image.apply_orientation(orientation);
+    let (width, height) = (image.width(), image.height());
+    // The largest centred 16:9 region.
+    let (crop_w, crop_h) = if u64::from(width) * 9 > u64::from(height) * 16 {
+        ((u64::from(height) * 16 / 9) as u32, height)
+    } else {
+        (width, (u64::from(width) * 9 / 16) as u32)
+    };
+    let cropped = image.crop_imm((width - crop_w) / 2, (height - crop_h) / 2, crop_w, crop_h);
+    let rgba = cropped
+        .resize_exact(1920, 1080, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    Ok(image::RgbImage::from_fn(1920, 1080, |x, y| {
+        let p = rgba.get_pixel(x, y).0;
+        let alpha = p[3] as f32 / 255.;
+        image::Rgb(std::array::from_fn(|i| {
+            (p[i] as f32 * alpha + [23., 25., 28.][i] * (1. - alpha)).round() as u8
+        }))
+    }))
+}
+
+/// Imports the images waiting in the import folder, oldest name first, until the gallery is
+/// full. Each imported file is removed; one that cannot be read is renamed `*.failed` so it
+/// is not retried. Returns how many were added.
+fn import_folder(directory: &Path, mut added: impl FnMut()) -> usize {
+    let folder = directory.join(IMPORT_FOLDER);
+    if !folder.exists() {
+        // Create it, so the folder is there to drop images into.
+        if create_directory(directory).is_ok() {
+            let _ = create_directory(&folder);
+        }
+        return 0;
+    }
+    if !real_directory(&folder) {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(&folder) else {
+        return 0;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .take(512)
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                ["jpg", "jpeg", "png", "webp"].contains(&e.to_ascii_lowercase().as_str())
+            }) && fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+        })
+        .collect();
+    files.sort();
+    let mut count = 0;
+    for path in files {
+        if catalog(directory).len() >= MAX_WALLPAPERS {
+            eprintln!("Luma wallpaper import: the gallery is full ({MAX_WALLPAPERS} images)");
+            break;
+        }
+        let result = fs::symlink_metadata(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|m| {
+                if m.len() > MAX_IMPORT_FILE {
+                    Err("Image exceeds 40 MiB".into())
+                } else {
+                    fs::read(&path).map_err(|e| e.to_string())
+                }
+            })
+            .and_then(|bytes| decode_import(&bytes))
+            .and_then(|image| store_image(directory, image, || true, None, None));
+        match result {
+            Ok(_) => {
+                let _ = fs::remove_file(&path);
+                count += 1;
+                added();
+            }
+            Err(error) => {
+                eprintln!("Luma wallpaper import: {}: {error}", path.display());
+                let mut failed = path.clone().into_os_string();
+                failed.push(".failed");
+                let _ = fs::rename(&path, failed);
+            }
+        }
+    }
+    count
+}
+
 fn shade(image: &mut image::RgbImage) {
     // Same base, image opacity and gradients as tools/assets.mjs. Only source-specific
     // saturation adjustments are omitted for owner-supplied photographs.
@@ -364,11 +529,32 @@ fn jpeg(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wallpaper, String> {
+fn store(
+    directory: &Path,
+    bytes: &[u8],
+    valid: impl Fn() -> bool,
+    collection: Option<String>,
+) -> Result<Wallpaper, String> {
     if catalog(directory).len() >= MAX_WALLPAPERS {
-        return Err("The wallpaper gallery is full (20 images)".into());
+        return Err(format!(
+            "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
+        ));
     }
-    let mut image = decode(bytes)?;
+    store_image(directory, decode(bytes)?, valid, collection, None)
+}
+
+fn store_image(
+    directory: &Path,
+    mut image: image::RgbImage,
+    valid: impl Fn() -> bool,
+    collection: Option<String>,
+    credit: Option<crate::unsplash::Credit>,
+) -> Result<Wallpaper, String> {
+    if catalog(directory).len() >= MAX_WALLPAPERS {
+        return Err(format!(
+            "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
+        ));
+    }
     let original = jpeg(&image, 94)?;
     let thumbnail =
         image::imageops::resize(&image, 480, 270, image::imageops::FilterType::Triangle);
@@ -393,6 +579,8 @@ fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wal
     create_directory(&staging)?;
     let item = Wallpaper {
         id: id.clone(),
+        collection: collection.filter(|id| id != crate::collections::PHOTOS),
+        credit,
         directory: directory.join(&id),
         has_original: true,
     };
@@ -427,15 +615,50 @@ fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wal
 fn worker(
     directory: &Path,
     desired: &AtomicU64,
+    unsplash_ready: &std::sync::atomic::AtomicBool,
     sender: &mpsc::SyncSender<Event>,
     updates: &mpsc::Receiver<Command>,
     loopback_only: bool,
 ) {
+    let mut unsplash = crate::unsplash::Client::new(directory.parent().unwrap_or(directory));
+    unsplash_ready.store(unsplash.has_key(), Ordering::Release);
     if sender.send(Event::Catalog(catalog(directory))).is_err() {
         return;
     }
-    let update = |command| match command {
-        Command::Wake => true,
+    let previews = directory.parent().unwrap_or(directory).join("discover");
+    // Each imported image shows in the gallery as soon as it is ready.
+    let import = || {
+        import_folder(directory, || {
+            let _ = sender.send(Event::Catalog(catalog(directory)));
+        });
+    };
+    import();
+    let update = |command, unsplash: &mut crate::unsplash::Client| match command {
+        Command::Wake => {
+            import();
+            true
+        }
+        Command::Suggest { query, page } => {
+            let result = suggest(unsplash, &previews, &query, page);
+            sender.send(Event::Suggestions(page, result)).is_ok()
+        }
+        Command::AddSuggestion { id, collection } => {
+            let result = unsplash.fetch(&id).and_then(|(bytes, credit)| {
+                store_image(
+                    directory,
+                    decode(&bytes)?,
+                    || true,
+                    // Already a collection id, chosen on the TV.
+                    Some(collection.clone()).filter(|id| !id.is_empty()),
+                    Some(credit),
+                )
+            });
+            let added = result.is_ok();
+            sender
+                .send(Event::SuggestionAdded(id, result.map(|_| ())))
+                .is_ok()
+                && (!added || sender.send(Event::Catalog(catalog(directory))).is_ok())
+        }
         Command::Delete { id, selected } => {
             let result = delete_wallpaper(directory, &id, &selected);
             sender.send(Event::Deleted(id, result)).is_ok()
@@ -446,7 +669,7 @@ fn worker(
     loop {
         // Finish queued mutations before starting another upload session.
         for command in updates.try_iter() {
-            if !update(command) {
+            if !update(command, &mut unsplash) {
                 return;
             }
         }
@@ -457,7 +680,7 @@ fn worker(
         if generation == 0 || generation == handled {
             match updates.recv() {
                 Ok(command) => {
-                    if !update(command) {
+                    if !update(command, &mut unsplash) {
                         break;
                     }
                 }
@@ -498,7 +721,14 @@ fn worker(
                     let valid = || {
                         desired.load(Ordering::Acquire) == generation && Instant::now() < deadline
                     };
-                    match serve(&mut stream, &address.to_string(), &token, directory, valid) {
+                    match serve(
+                        &mut stream,
+                        &address.to_string(),
+                        &token,
+                        directory,
+                        &mut unsplash,
+                        valid,
+                    ) {
                         Ok(true) => {
                             if sender.send(Event::Catalog(catalog(directory))).is_err() {
                                 return;
@@ -507,6 +737,8 @@ fn worker(
                         Ok(false) => {}
                         Err(error) => eprintln!("Luma wallpaper upload: {error}"),
                     }
+                    // The phone may have saved or removed the Unsplash key.
+                    unsplash_ready.store(unsplash.has_key(), Ordering::Release);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(25))
@@ -537,6 +769,7 @@ fn serve(
     host: &str,
     token: &str,
     directory: &Path,
+    unsplash: &mut crate::unsplash::Client,
     valid: impl Fn() -> bool,
 ) -> Result<bool, String> {
     stream
@@ -571,7 +804,32 @@ fn serve(
     };
     if request.method == "GET" && request.length == 0 {
         if route == "info.json" {
-            let body = serde_json::json!({"path": directory.to_string_lossy()}).to_string();
+            let items = catalog(directory);
+            let free = MAX_WALLPAPERS.saturating_sub(items.len());
+            // Collection names for the phone's picker: Photos, custom ones, then holidays.
+            let mut custom: Vec<String> = items
+                .iter()
+                .filter_map(|item| item.collection.as_deref())
+                .filter(|id| crate::collections::is_custom(id))
+                .map(crate::collections::name)
+                .collect();
+            custom.sort_by_key(|name| name.to_lowercase());
+            custom.dedup();
+            let collections: Vec<String> = std::iter::once("Photos".to_string())
+                .chain(custom)
+                .chain(
+                    crate::collections::HOLIDAYS
+                        .iter()
+                        .map(|(_, name)| (*name).to_string()),
+                )
+                .collect();
+            let body = serde_json::json!({
+                "path": directory.to_string_lossy(),
+                "free": free,
+                "collections": collections,
+                "unsplash": unsplash.has_key(),
+            })
+            .to_string();
             response(
                 stream,
                 "200 OK",
@@ -597,6 +855,14 @@ fn serve(
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/crop.js"),
             ),
+            "queue.js" => (
+                "text/javascript; charset=utf-8",
+                include_bytes!("../assets/wallpaper-upload/queue.js"),
+            ),
+            "unsplash.js" => (
+                "text/javascript; charset=utf-8",
+                include_bytes!("../assets/wallpaper-upload/unsplash.js"),
+            ),
             "storage.js" => (
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/storage.js"),
@@ -609,6 +875,53 @@ fn serve(
         };
         response(stream, "200 OK", kind, body)?;
         return Ok(false);
+    }
+    if request.method == "POST"
+        && route.starts_with("unsplash/")
+        && request.headers.get("x-luma-upload").map(String::as_str) == Some(token)
+    {
+        if request.length > 4096 {
+            error_response(stream, "413 Content Too Large", "Request too large")?;
+            return Ok(false);
+        }
+        let mut body = vec![0; request.length];
+        read_exact(&mut reader, &mut body, &valid, deadline)?;
+        drop(reader);
+        let input: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let text = |name: &str| input[name].as_str().unwrap_or_default().to_owned();
+        let (result, changed) = match route {
+            "unsplash/key" => (
+                unsplash
+                    .set_key(&text("key"))
+                    .map(|()| serde_json::json!({"ok": true})),
+                false,
+            ),
+            "unsplash/search" => (
+                unsplash
+                    .search(&text("query"), input["page"].as_u64().unwrap_or(1) as u32)
+                    .map(|photos| serde_json::json!({"photos": photos})),
+                false,
+            ),
+            "unsplash/add" => {
+                let collection = crate::collections::custom_id(&text("collection"));
+                let added = unsplash.fetch(&text("id")).and_then(|(bytes, credit)| {
+                    store_image(directory, decode(&bytes)?, &valid, collection, Some(credit))
+                });
+                let ok = added.is_ok();
+                (added.map(|item| serde_json::json!({"id": item.id})), ok)
+            }
+            _ => (Err("Not found".to_string()), false),
+        };
+        match result {
+            Ok(value) => response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                value.to_string().as_bytes(),
+            )?,
+            Err(error) => error_response(stream, "422 Unprocessable Content", &error)?,
+        }
+        return Ok(changed);
     }
     if request.method != "POST"
         || route != "upload"
@@ -632,7 +945,13 @@ fn serve(
     let mut body = vec![0; request.length];
     read_exact(&mut reader, &mut body, &valid, deadline)?;
     drop(reader);
-    match store(directory, &body, valid) {
+    // The phone sends the collection name percent-encoded, as headers are ASCII.
+    let collection = request
+        .headers
+        .get("x-luma-collection")
+        .and_then(|name| percent_decode(name))
+        .and_then(|name| crate::collections::custom_id(&name));
+    match store(directory, &body, valid, collection) {
         Ok(item) => {
             // The commit succeeded even if the phone disconnects before receiving its reply.
             let _ = response(
@@ -648,6 +967,59 @@ fn serve(
             Ok(false)
         }
     }
+}
+
+/// Runs a Discover search and saves each result's preview where the TV can draw it.
+fn suggest(
+    unsplash: &mut crate::unsplash::Client,
+    previews: &Path,
+    query: &str,
+    page: u32,
+) -> Result<Vec<Suggestion>, String> {
+    if page <= 1 {
+        // A new search replaces the previews of the last one.
+        if let Ok(entries) = fs::read_dir(previews) {
+            for entry in entries.flatten() {
+                if entry.path().extension().is_some_and(|ext| ext == "jpg") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    fs::create_dir_all(previews).map_err(|_| "Previews couldn't be saved on the TV")?;
+    let photos = unsplash.search(query, page)?;
+    Ok(photos
+        .into_iter()
+        .filter_map(|photo| {
+            let thumbnail = previews.join(format!("{}.jpg", photo.id));
+            if !thumbnail.exists() {
+                let bytes = unsplash.thumbnail(&photo).ok()?;
+                fs::write(&thumbnail, bytes).ok()?;
+            }
+            Some(Suggestion { photo, thumbnail })
+        })
+        .collect())
+}
+
+/// Decodes `encodeURIComponent` output; None for malformed input or invalid UTF-8.
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                index += 3;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 #[cfg(test)]

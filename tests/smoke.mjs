@@ -74,7 +74,7 @@ try {
     }
     return state;
   };
-  const home = await scenario('home', 'down');
+  const home = await scenario('home', 'wait');
   assert.deepEqual(home.focus, { App: 'netflix' });
   const recents = await scenario('recents', 'recents,await-recents');
   assert.equal(recents.modal, true);
@@ -167,14 +167,14 @@ try {
     assert.deepEqual(koreanApp.apps, [id]);
     assert.ok(koreanApp.ui_text.includes(title));
   }
-  const settings = await scenario('settings', 'settings,down,down,enter,down,enter,enter');
+  const settings = await scenario('settings', 'settings,down,down,down,enter,down,enter,enter');
   assert.equal(settings.preferences.background, 'forest');
-  const saved = await scenario('saved', 'down,hold,right,back');
+  const saved = await scenario('saved', 'hold,right,back');
   assert.equal(saved.preferences.background, 'forest');
   assert.deepEqual(saved.preferences.favorites.slice(0, 2), ['youtube.leanback.v4', 'netflix']);
   const upload = await scenario(
     'wallpaper-upload',
-    'settings,down,down,enter,up,up,up,enter,await-upload',
+    'settings,down,down,down,enter,up,up,up,right,enter,await-upload',
   );
   assert.equal(upload.modal, true);
   assert.equal(upload.focus, 'CloseDialog');
@@ -189,7 +189,7 @@ try {
   );
   const uploadClosed = await scenario(
     'wallpaper-upload-closed',
-    'settings,down,down,enter,up,up,up,enter,await-upload,back',
+    'settings,down,down,down,enter,up,up,up,right,enter,await-upload,back',
   );
   assert.equal(uploadClosed.modal, false);
   assert.equal(uploadClosed.focus, 'UploadWallpaper');
@@ -203,7 +203,10 @@ try {
     .jpeg()
     .toFile(path.join(customDirectory, 'thumbnail.jpg'));
   await fs.writeFile(path.join(customDirectory, 'metadata.json'), JSON.stringify({ id: customId }));
-  const custom = await scenario('wallpaper-custom', 'settings,down,down,enter,down,enter,enter');
+  const custom = await scenario(
+    'wallpaper-custom',
+    'settings,down,down,down,enter,down,enter,enter',
+  );
   assert.equal(custom.preferences.background, customId);
   assert.equal(custom.modal, false);
   assert.deepEqual(custom.focus, { Background: 9 });
@@ -211,7 +214,7 @@ try {
   assert.equal(customRestored.preferences.background, customId);
   const bundledRestored = await scenario(
     'wallpaper-bundled-restored',
-    'settings,down,down,enter,up,enter,enter',
+    'settings,down,down,down,enter,up,enter,enter',
   );
   assert.equal(bundledRestored.preferences.background, 'forest');
   const clock = await scenario('clock', 'settings,click:900:284');
@@ -219,7 +222,7 @@ try {
   assert.equal(clock.focus, 'ClockFormat');
   assert.ok(clock.ui_text.includes('Clock format'));
   assert.ok(clock.ui_text.includes('Time format'));
-  const inputsPage = 'settings,down,down,down,enter,down,down,down,down,enter';
+  const inputsPage = 'settings,down,down,down,down,down,enter,down,down,down,down,enter';
   const inputs = await scenario('inputs-page', inputsPage);
   assert.equal(inputs.subpage, 'Inputs');
   assert.deepEqual(inputs.focus, { InputMode: 'com.webos.app.hdmi1' });
@@ -279,7 +282,7 @@ try {
   assert.equal(profiled.render.profile.presented, 24);
   assert.ok(profiled.render.profile.pacing.samples > 0);
   assert.ok(profiled.render.profile.cpu_submission.mean_ms >= 0);
-  const widgetsPage = 'settings,down,down,down,enter';
+  const widgetsPage = 'settings,down,down,down,down,down,enter';
   const widgets = await scenario('widgets-settings', widgetsPage);
   assert.deepEqual(widgets.focus, { Widget: 4 });
   assert.ok(widgets.ui_text.includes('Widgets'));
@@ -360,26 +363,53 @@ try {
   const clockFocus = await scenario('clock-format-focus', `${clockEditor},enter,down`);
   assert.equal(clockFocus.subpage, 'ClockFormat');
   assert.deepEqual(clockFocus.focus, { Choice: 1 });
+  // #180: Size offers four steps and an extra-large clock still fits beside the navigation.
+  const clockSizes = await scenario('clock-size', `${clockEditor},down,down,enter`);
+  assert.equal(clockSizes.subpage, 'ClockSize');
+  assert.deepEqual(clockSizes.focus, { Choice: 1 });
+  for (const label of ['Small', 'Medium', 'Large', 'Extra large']) {
+    assert.ok(clockSizes.ui_text.includes(label), label);
+  }
+  const clockLarge = await scenario(
+    'clock-size-saved',
+    `${clockEditor},down,down,enter,down,down,enter`,
+  );
+  assert.equal(clockLarge.preferences.clock_size, 'extra-large');
+  assert.equal(clockLarge.subpage, 'Clock');
+  await scenario('clock-size-home', 'home');
+  const clockMedium = await scenario(
+    'clock-size-reset',
+    `${clockEditor},down,down,enter,up,up,enter`,
+  );
+  assert.equal(clockMedium.preferences.clock_size, 'medium');
   const system = await scenario(
     'system-settings',
-    'settings,down,down,down,down,right,down,down,down',
+    'settings,down,down,down,down,down,down,down,right,down,down,down,down,down,down',
   );
   assert.deepEqual(system.focus, { Setting: 5 });
   assert.ok(system.ui_text.includes('Refresh apps & inputs'));
   assert.ok(!system.ui_text.includes('Luma update'));
   assert.ok(system.ui_text.includes('Quit app'));
   assert.ok(system.ui_text.includes('Text rendering'));
-  const updatePreview = await scenario('update-preview', 'settings,down,down,down,down,right', [
-    '--test-update-version',
-    '99.0.0',
-  ]);
+  assert.ok(system.ui_text.includes('Reset icon cache'));
+  const resetIcons = await scenario(
+    'reset-icon-cache',
+    'settings,down,down,down,down,down,down,down,right,down,down,down,down,down,enter',
+  );
+  assert.deepEqual(resetIcons.focus, { Setting: 9 });
+  assert.deepEqual(resetIcons.preferences, system.preferences);
+  const updatePreview = await scenario(
+    'update-preview',
+    'settings,down,down,down,down,down,down,down,right',
+    ['--test-update-version', '99.0.0'],
+  );
   assert.equal(updatePreview.focus, 'InstallUpdate');
   assert.ok(updatePreview.ui_text.includes('Update available'));
   assert.ok(updatePreview.ui_text.some((label) => label.includes('Latest: 99.0.0')));
   assert.ok(updatePreview.ui_text.includes('Install 99.0.0'));
   const afterUpdatePreview = await scenario(
     'update-preview-cleared',
-    'settings,down,down,down,down,right',
+    'settings,down,down,down,down,down,down,down,right',
   );
   assert.equal(afterUpdatePreview.focus, 'CheckUpdates');
   assert.ok(!afterUpdatePreview.ui_text.includes('Update available'));
@@ -388,7 +418,7 @@ try {
   ).version;
   const latestPreview = await scenario(
     'update-current-preview',
-    'settings,down,down,down,down,right,enter',
+    'settings,down,down,down,down,down,down,down,right,enter',
     ['--test-update-version', currentVersion],
   );
   assert.equal(latestPreview.focus, 'CheckUpdates');
@@ -398,7 +428,11 @@ try {
   assert.ok(latestPreview.ui_text.includes('Check again'));
   assert.ok(latestPreview.ui_text.includes(`Current version: ${currentVersion}`));
   assert.ok(!latestPreview.ui_text.some((label) => label.startsWith('Luma v')));
-  const textOptions = 'settings,down,down,down,down,right,down,down,enter';
+  const textRenderingRow = 'settings,down,down,down,down,down,down,down,right,down,down,down';
+  const textRenderingFocus = await scenario('text-rendering-focus', textRenderingRow);
+  assert.deepEqual(textRenderingFocus.focus, { Setting: 7 });
+  assert.equal(textRenderingFocus.subpage, null);
+  const textOptions = `${textRenderingRow},enter`;
   const textRendering = await scenario('text-rendering-options', textOptions);
   assert.equal(textRendering.subpage, 'TextRendering');
   assert.deepEqual(textRendering.focus, { Choice: 0 });
@@ -507,9 +541,21 @@ try {
     'Pointer focus preserves strip position',
   );
   await fs.writeFile(preferences, JSON.stringify({ show_weather: false }));
+  // #175: with the Back shortcut off, a held Back no longer opens Recent apps.
+  const backRecentsPath = 'settings,down,down,down,down,down,down,enter,enter';
+  const backRecentsOff = await scenario('back-recents-off', backRecentsPath);
+  assert.deepEqual(backRecentsOff.focus, { Setting: 14 });
+  assert.equal(backRecentsOff.preferences.back_recents, false);
+  assert.ok(backRecentsOff.ui_text.includes('Back button opens Recent apps'));
+  const heldWithoutRecents = await scenario('back-recents-held', 'hold-back');
+  assert.equal(heldWithoutRecents.modal, false);
+  const backRecentsOn = await scenario('back-recents-on', backRecentsPath);
+  assert.equal(backRecentsOn.preferences.back_recents, true);
+  const heldWithRecents = await scenario('back-recents-held-on', 'hold-back,await-recents');
+  assert.equal(heldWithRecents.modal, true);
   const gradientDisabled = await scenario(
     'wallpaper-gradient-disabled',
-    'settings,down,down,enter,up,up,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,enter',
   );
   assert.equal(gradientDisabled.focus, 'WallpaperGradient');
   assert.equal(gradientDisabled.preferences.wallpaper_gradient, false);
@@ -518,12 +564,14 @@ try {
   assert.equal(gradientRestored.preferences.wallpaper_gradient, false);
   const gradientEnabled = await scenario(
     'wallpaper-gradient-enabled',
-    'settings,down,down,enter,up,up,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,enter',
   );
   assert.equal(gradientEnabled.preferences.wallpaper_gradient, true);
+  assert.equal(gradientEnabled.preferences.gradient_strength, 'light');
+  assert.ok(gradientEnabled.ui_text.includes('Light'));
   const cycleEnabled = await scenario(
     'wallpaper-cycle-enabled',
-    'settings,down,down,enter,up,up,right,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,right,enter',
   );
   assert.equal(cycleEnabled.subpage, null);
   assert.equal(cycleEnabled.focus, 'WallpaperCycle');
@@ -537,10 +585,33 @@ try {
   );
   const cycleDisabled = await scenario(
     'wallpaper-cycle-disabled',
-    'settings,down,down,enter,up,up,right,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,right,enter',
   );
   assert.equal(cycleDisabled.preferences.wallpaper_cycle, false);
   assert.ok(cycleDisabled.ui_text.includes('Rotation'));
+  await fs.writeFile(preferences, JSON.stringify({ show_weather: false }));
+  const landingSetting = await scenario(
+    'landing-setting',
+    'settings,down,enter,down,down,down,enter',
+  );
+  assert.deepEqual(landingSetting.focus, { Setting: 11 });
+  assert.equal(landingSetting.preferences.landing_layout, true);
+  assert.ok(landingSetting.ui_text.includes('Wallpaper-first Home'));
+  const landing = await scenario('landing', 'home');
+  assert.deepEqual(landing.focus, { Nav: 0 }, 'The wallpaper-first Home starts in the header');
+  const landingDown = await scenario('landing-down', 'home,down');
+  assert.deepEqual(landingDown.focus, { App: 'netflix' });
+  assert.equal(landingDown.scroll, 0);
+  for (const reducedMotion of [false, true]) {
+    await fs.writeFile(
+      preferences,
+      JSON.stringify({ show_weather: false, landing_layout: true, reduced_motion: reducedMotion }),
+    );
+    const clicked = await scenario(`landing-pointer-${reducedMotion}`, 'home,click:220:880');
+    assert.deepEqual(clicked.focus, { App: 'netflix' });
+    assert.ok(clicked.ui_text.includes('Desktop preview · Netflix will open on your TV'));
+    assert.equal(clicked.scroll, 0);
+  }
   console.log(
     'Native smoke checks passed: rendering/alpha, navigation, persistence, SDL pointer input, DPI-aware glyphs, 4K capture and presentation profiling.',
   );

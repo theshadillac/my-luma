@@ -124,6 +124,79 @@ pub struct Reading {
     pub temperature: f64,
     pub code: u8,
     pub is_day: bool,
+    /// The next five days, today first, when the service returned them.
+    #[serde(default)]
+    pub daily: Option<[Day; 5]>,
+    /// Today's sunrise and sunset, Unix seconds, when the service returned them.
+    #[serde(default)]
+    pub sun: Option<(i64, i64)>,
+}
+
+/// One day of the 5-day forecast, in Celsius like the current reading.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Day {
+    /// 0 = Monday … 6 = Sunday, in the location's own time zone.
+    pub weekday: u8,
+    pub high: f64,
+    pub low: f64,
+    pub code: u8,
+}
+impl Day {
+    fn valid(self) -> bool {
+        self.weekday < 7
+            && self.code <= 99
+            && self.high.is_finite()
+            && self.low.is_finite()
+            && (-100.0..=70.0).contains(&self.high)
+            && (-100.0..=70.0).contains(&self.low)
+            && self.low <= self.high
+    }
+}
+
+/// Today's sunrise and sunset from Open-Meteo's `daily` block, when both are sensible.
+pub fn parse_sun(value: &Value) -> Option<(i64, i64)> {
+    let daily = &value["daily"];
+    let rise = daily["sunrise"].as_array()?.first()?.as_i64()?;
+    let set = daily["sunset"].as_array()?.first()?.as_i64()?;
+    (rise < set && set - rise < 86_400).then_some((rise, set))
+}
+
+/// Reads Open-Meteo's `daily` block (unixtime dates at local midnight plus the location's
+/// UTC offset). Anything missing or out of range gives no forecast, never a partial one.
+pub fn parse_daily(value: &Value) -> Option<[Day; 5]> {
+    let daily = &value["daily"];
+    let offset = value["utc_offset_seconds"].as_i64().unwrap_or(0);
+    let column = |name: &str| daily[name].as_array().filter(|a| a.len() >= 5);
+    let (times, codes, highs, lows) = (
+        column("time")?,
+        column("weather_code")?,
+        column("temperature_2m_max")?,
+        column("temperature_2m_min")?,
+    );
+    let mut days = [Day {
+        weekday: 0,
+        high: 0.,
+        low: 0.,
+        code: 0,
+    }; 5];
+    for (index, day) in days.iter_mut().enumerate() {
+        let time = times[index].as_i64()?;
+        let code = codes[index]
+            .as_f64()
+            .filter(|n| n.fract() == 0. && (0.0..=99.0).contains(n))?;
+        // 1970-01-01 was a Thursday (3 when Monday is 0).
+        let local_days = (time + offset).div_euclid(86_400);
+        *day = Day {
+            weekday: ((local_days + 3).rem_euclid(7)) as u8,
+            high: highs[index].as_f64()?,
+            low: lows[index].as_f64()?,
+            code: code as u8,
+        };
+        if !day.valid() {
+            return None;
+        }
+    }
+    Some(days)
 }
 impl Reading {
     pub fn valid(self) -> bool {
@@ -144,6 +217,8 @@ pub fn parse_reading(value: &Value) -> Result<Reading, String> {
             temperature,
             code: code as u8,
             is_day: day == 1.,
+            daily: parse_daily(value),
+            sun: parse_sun(value),
         };
         if reading.valid() {
             return Ok(reading);
@@ -187,6 +262,16 @@ impl Cache {
 pub struct Condition {
     pub key: &'static str,
     pub icon: &'static str,
+}
+/// The condition shown for a forecast day: always the daytime variant.
+pub fn day_condition(day: Day) -> Condition {
+    condition(Reading {
+        temperature: 0.,
+        code: day.code,
+        is_day: true,
+        daily: None,
+        sun: None,
+    })
 }
 pub fn condition(reading: Reading) -> Condition {
     let (key, icon) = match reading.code {
@@ -431,3 +516,50 @@ impl Weather {
 #[cfg(test)]
 #[path = "weather-tests.rs"]
 mod tests;
+
+/// Sunrise and sunset (Unix seconds) for a place and UTC calendar day, from the standard
+/// almanac approximation (accurate to a couple of minutes). Used when the weather service
+/// didn't send today's times, so day and night never falls back to fixed hours for a known
+/// place. None during polar day or night.
+pub fn solar_times(latitude: f64, longitude: f64, date: time::Date) -> Option<(i64, i64)> {
+    let day = date.ordinal() as f64;
+    let hour_of = |rising: bool| -> Option<f64> {
+        let longitude_hour = longitude / 15.;
+        let t = day + ((if rising { 6. } else { 18. }) - longitude_hour) / 24.;
+        let mean_anomaly = 0.9856 * t - 3.289;
+        let true_longitude = (mean_anomaly
+            + 1.916 * mean_anomaly.to_radians().sin()
+            + 0.020 * (2. * mean_anomaly).to_radians().sin()
+            + 282.634)
+            .rem_euclid(360.);
+        let mut ascension = (0.91764 * true_longitude.to_radians().tan())
+            .atan()
+            .to_degrees()
+            .rem_euclid(360.);
+        ascension += (true_longitude / 90.).floor() * 90. - (ascension / 90.).floor() * 90.;
+        let ascension = ascension / 15.;
+        let sin_declination = 0.39782 * true_longitude.to_radians().sin();
+        let cos_declination = sin_declination.asin().cos();
+        let cos_hour = (90.833f64.to_radians().cos()
+            - sin_declination * latitude.to_radians().sin())
+            / (cos_declination * latitude.to_radians().cos());
+        if !(-1. ..=1.).contains(&cos_hour) {
+            return None;
+        }
+        let hour = if rising {
+            360. - cos_hour.acos().to_degrees()
+        } else {
+            cos_hour.acos().to_degrees()
+        } / 15.;
+        let local = hour + ascension - 0.06571 * t - 6.622;
+        Some((local - longitude_hour).rem_euclid(24.))
+    };
+    let midnight = date.midnight().assume_utc().unix_timestamp();
+    let rise = midnight + (hour_of(true)? * 3600.) as i64;
+    let mut set = midnight + (hour_of(false)? * 3600.) as i64;
+    // West of Greenwich, sunset in UTC often falls on the next UTC day.
+    if set < rise {
+        set += 86_400;
+    }
+    (set - rise < 86_400).then_some((rise, set))
+}

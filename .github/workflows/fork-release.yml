@@ -1,0 +1,76 @@
+name: Fork release
+
+# Pushing to the `release` branch builds the ARM IPK and publishes it, with the Homebrew-style
+# repo.json feed, as this fork's GitHub release v<package.json version> (tagging that commit).
+# Luma's in-app updater reads the feed from the latest release and installs only IPKs from
+# these release assets. Bump the version first: an existing release is never replaced.
+on:
+  push:
+    branches: [release]
+
+permissions: {}
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish the release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: armv7-unknown-linux-gnueabi
+      - name: Install asset dependencies
+        run: |
+          apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends \
+            libsdl2-dev pkg-config woff2 python3-fonttools
+      - name: Read the app version
+        id: version
+        run: |
+          pnpm version:check
+          echo "tag=v$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+      - name: Generate native assets
+        run: pnpm assets
+      - name: Set up the webOS SDK
+        run: pnpm sdk
+      - name: Cross-build the IPK and its release feed
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          export WEBOS_NDK="$GITHUB_WORKSPACE/.build/toolchain/arm-webos-linux-gnueabi_sdk-buildroot"
+          pnpm build
+          node tools/package.mjs
+          node tools/repository.mjs
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          files=(dist/*.ipk dist/sha256sums dist/repo.json dist/com.ecklf.luma.manifest.json dist/description.html dist/app-icon-large.png)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            printf 'Release %s already exists; bump package.json to publish another.\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "${files[@]}" \
+            --target "$GITHUB_SHA" \
+            --latest \
+            --generate-notes \
+            --title "My Luma ${RELEASE_TAG#v}"
+          echo "### Published [$RELEASE_TAG]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG)" >> "$GITHUB_STEP_SUMMARY"
