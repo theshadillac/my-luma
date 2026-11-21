@@ -1062,3 +1062,65 @@ fn discover_suggests_unsplash_photos_for_the_collection_and_adds_them() {
     assert_eq!(state.subpage, None);
     assert_eq!(state.focus, Target::DiscoverOpen);
 }
+
+#[test]
+fn holidays_can_alternate_with_photos_or_be_hidden() {
+    let mut state = State::new(Preferences {
+        holiday_mode: crate::collections::HolidayMode::MixIn,
+        ..Preferences::default()
+    });
+    let christmas = |index| Wallpaper {
+        collection: Some("christmas".into()),
+        ..custom(index)
+    };
+    state.set_wallpapers(vec![custom(1), christmas(2), christmas(3)]);
+    let december = time::PrimitiveDateTime::new(
+        time::Date::from_calendar_date(2026, time::Month::December, 16).unwrap(),
+        time::Time::from_hms(12, 0, 0).unwrap(),
+    )
+    .assume_offset(time::UtcOffset::from_hms(-7, 0, 0).unwrap());
+    // Photos stays the collection; Christmas mixes in and shows straight away.
+    assert!(state.refresh_collection(december));
+    assert_eq!(state.collection.id, crate::collections::PHOTOS);
+    assert!(state.collection_due());
+    assert!(state.cycle_wallpaper_at(december));
+    assert_eq!(
+        state.wallpaper_collection(&state.preferences.background),
+        "christmas"
+    );
+    assert!(!state.collection_due());
+    // Then every change alternates between Photos and Christmas.
+    let mut seen = vec![];
+    for _ in 0..6 {
+        assert!(state.cycle_wallpaper_at(december));
+        seen.push(
+            state
+                .wallpaper_collection(&state.preferences.background)
+                .to_owned(),
+        );
+    }
+    assert_eq!(
+        seen,
+        [
+            "photos",
+            "christmas",
+            "photos",
+            "christmas",
+            "photos",
+            "christmas"
+        ]
+    );
+    // A Photos wallpaper on screen isn't "wrong" while mixing.
+    assert!(state.cycle_wallpaper_at(december));
+    assert!(!state.collection_due());
+    // Off: no holiday, no holiday collections listed, nothing lost.
+    state.preferences.holiday_mode = crate::collections::HolidayMode::Off;
+    assert!(state.refresh_collection(december));
+    assert_eq!(state.collection.mix, None);
+    assert!(!state.collections().iter().any(|(id, _)| id == "christmas"));
+    assert_eq!(state.collection_size("christmas"), 2);
+    // Take over: Christmas replaces Photos.
+    state.preferences.holiday_mode = crate::collections::HolidayMode::TakeOver;
+    assert!(state.refresh_collection(december));
+    assert_eq!(state.collection.id, "christmas");
+}

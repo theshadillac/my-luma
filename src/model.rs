@@ -592,6 +592,8 @@ pub struct Preferences {
     pub collection_schedules: std::collections::BTreeMap<String, crate::collections::Schedule>,
     /// A week before a holiday, remind on Home if its collection is still empty.
     pub holiday_reminders: bool,
+    /// Whether holiday collections take over, mix in, or stay out entirely.
+    pub holiday_mode: crate::collections::HolidayMode,
     /// The year each holiday was last reminded about, so it happens once a year.
     pub holiday_reminded: std::collections::BTreeMap<String, i32>,
     /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
@@ -655,6 +657,7 @@ impl Default for Preferences {
             collection_pick: None,
             collection_schedules: Default::default(),
             holiday_reminders: true,
+            holiday_mode: crate::collections::HolidayMode::default(),
             holiday_reminded: Default::default(),
             app_sorting: AppSorting::default(),
             app_launch_counts: Default::default(),

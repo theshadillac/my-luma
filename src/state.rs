@@ -54,6 +54,7 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
             DAY_NIGHT_ROW,
             WALLPAPER_TINT_ROW,
             WEATHER_EFFECTS_ROW,
+            HOLIDAYS_ROW,
             HOLIDAY_REMINDERS_ROW,
         ],
         CONTROLS_SECTION => {
@@ -103,6 +104,7 @@ pub const UI_SOUND_LEVEL_ROW: usize = 26;
 pub const UI_SOUND_OUTPUT_ROW: usize = 27;
 pub const WALLPAPER_TINT_ROW: usize = 28;
 pub const HOLIDAY_REMINDERS_ROW: usize = 29;
+pub const HOLIDAYS_ROW: usize = 30;
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -491,6 +493,8 @@ pub struct State {
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     /// The wallpaper collection showing now (see `refresh_collection`).
     pub collection: crate::collections::Active,
+    /// A holiday just started mixing in; the next wallpaper comes from it.
+    pub mix_due: bool,
     /// The collection the Background gallery lists; None follows the active one.
     pub gallery_collection: Option<String>,
     /// An Unsplash access key is saved on the TV, so Discover is offered.
@@ -565,7 +569,9 @@ impl State {
             collection: crate::collections::Active {
                 id: crate::collections::PHOTOS.into(),
                 reason: crate::collections::Reason::Default,
+                mix: None,
             },
+            mix_due: false,
             gallery_collection: None,
             unsplash_ready: false,
             discover: Discover::default(),
@@ -586,6 +592,7 @@ impl State {
     /// once a year per holiday, shown only while someone is using the TV.
     pub fn remind_holiday(&mut self, now: time::OffsetDateTime) -> Vec<Effect> {
         if !self.preferences.holiday_reminders
+            || self.preferences.holiday_mode == crate::collections::HolidayMode::Off
             || self.page != Page::Home
             || self.overlay.is_some()
             || self.ambient.is_some()
@@ -1730,8 +1737,18 @@ impl State {
     /// is empty.
     fn wallpapers_for(&self, night: Option<bool>) -> Vec<String> {
         let usable = |id: &&str| self.deleting_wallpaper.as_deref() != Some(*id);
+        // Mix in: alternate, the holiday after anything else and back again.
+        let source = match &self.collection.mix {
+            Some((holiday, _))
+                if self.wallpaper_collection(&self.preferences.background) != holiday
+                    && self.collection_size(holiday) > 0 =>
+            {
+                holiday.as_str()
+            }
+            _ => self.collection.id.as_str(),
+        };
         let mut all: Vec<String> = self
-            .collection_ids(&self.collection.id)
+            .collection_ids(source)
             .filter(usable)
             .map(str::to_owned)
             .collect();
@@ -1780,6 +1797,7 @@ impl State {
     fn cycle_through(&mut self, ids: Vec<String>, now: u64) -> bool {
         let next = crate::wallpaper_cycle::next(&ids, &self.preferences.background);
         self.preferences.wallpaper_changed = now;
+        self.mix_due = false;
         let Some(id) = next else {
             return false;
         };
@@ -1850,6 +1868,9 @@ impl State {
             .chain(
                 crate::collections::HOLIDAYS
                     .iter()
+                    .filter(|_| {
+                        self.preferences.holiday_mode != crate::collections::HolidayMode::Off
+                    })
                     .map(|(id, _)| (*id).to_string()),
             )
             .map(|id| {
@@ -1935,9 +1956,14 @@ impl State {
             self.preferences.collection_pick.as_ref(),
             self.preferences.collection_schedules.iter(),
             |id| self.collection_size(id) > 0,
+            self.preferences.holiday_mode,
         );
         if active == self.collection {
             return false;
+        }
+        // A holiday just started mixing in: show one of its wallpapers right away.
+        if active.mix.is_some() && active.mix != self.collection.mix {
+            self.mix_due = true;
         }
         self.collection = active;
         self.dirty = true;
@@ -1946,8 +1972,16 @@ impl State {
 
     /// The wallpaper on screen isn't from the active collection, which has some to show.
     pub fn collection_due(&self) -> bool {
-        self.wallpaper_collection(&self.preferences.background) != self.collection.id
-            && self.collection_size(&self.collection.id) > 0
+        let current = self.wallpaper_collection(&self.preferences.background);
+        let mixed = self
+            .collection
+            .mix
+            .as_ref()
+            .is_some_and(|(holiday, _)| holiday == current);
+        self.mix_due
+            || (current != self.collection.id
+                && !mixed
+                && self.collection_size(&self.collection.id) > 0)
     }
 
     /// The gallery: wallpapers of the collection it shows.
@@ -3618,6 +3652,9 @@ impl State {
                     UI_SOUNDS_ROW => self.preferences.ui_sounds = !self.preferences.ui_sounds,
                     HOLIDAY_REMINDERS_ROW => {
                         self.preferences.holiday_reminders = !self.preferences.holiday_reminders
+                    }
+                    HOLIDAYS_ROW => {
+                        self.preferences.holiday_mode = self.preferences.holiday_mode.next()
                     }
                     WALLPAPER_TINT_ROW => {
                         self.preferences.wallpaper_tint = self.preferences.wallpaper_tint.next()

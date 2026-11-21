@@ -23,6 +23,41 @@ pub const HOLIDAYS: [(&str, &str); 8] = [
     ("christmas", "Christmas"),
 ];
 
+/// How holiday collections behave during their dates (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HolidayMode {
+    /// The holiday collection replaces what would show (the original behaviour).
+    #[default]
+    TakeOver,
+    /// Every other wallpaper change comes from the holiday collection.
+    MixIn,
+    /// No holiday switching or reminders; holiday collections are hidden.
+    Off,
+}
+
+impl HolidayMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::TakeOver => Self::MixIn,
+            Self::MixIn => Self::Off,
+            Self::Off => Self::TakeOver,
+        }
+    }
+
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::TakeOver => "holidaysTakeOver",
+            Self::MixIn => "holidaysMixIn",
+            Self::Off => "stateOff",
+        }
+    }
+}
+
+pub fn is_holiday(id: &str) -> bool {
+    HOLIDAYS.iter().any(|(holiday, _)| *holiday == id)
+}
+
 /// When a custom collection takes over on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -242,6 +277,8 @@ pub struct Active {
     pub id: String,
     /// "Christmas until Dec 26", "Manual", "Sundays", or empty for Photos by default.
     pub reason: Reason,
+    /// Mix in: the holiday collection alternating with `id`, and its last day.
+    pub mix: Option<(String, Date)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,11 +291,14 @@ pub enum Reason {
 
 /// The collection that should be showing now. Holidays beat schedules; a manual pick beats
 /// both until the next automatic run starts after it was made. Empty collections are skipped.
+/// With Mix in the holiday doesn't replace anything: it alternates with the result. With Off
+/// holidays are ignored, a manual pick of one included.
 pub fn active<'a>(
     now: OffsetDateTime,
     pick: Option<&Pick>,
     schedules: impl Iterator<Item = (&'a String, &'a Schedule)>,
     has_wallpapers: impl Fn(&str) -> bool,
+    mode: HolidayMode,
 ) -> Active {
     let today = now.date();
     let midnight = |date: Date| {
@@ -266,7 +306,8 @@ pub fn active<'a>(
             .assume_offset(now.offset())
             .unix_timestamp()
     };
-    let automatic = holiday_on(today)
+    let holiday = holiday_on(today)
+        .filter(|_| mode != HolidayMode::Off)
         .filter(|(id, _)| has_wallpapers(id))
         .map(|(id, start)| {
             let end = holiday_window(
@@ -279,35 +320,46 @@ pub fn active<'a>(
             )
             .map_or(today, |(_, end)| end);
             (id.to_string(), midnight(start), Reason::Holiday(end))
-        })
-        .or_else(|| {
-            let mut scheduled: Vec<_> = schedules
-                .filter(|(id, _)| has_wallpapers(id))
-                .filter_map(|(id, schedule)| {
-                    let start = schedule.start(today)?;
-                    Some((id.clone(), midnight(start), Reason::Scheduled(*schedule)))
-                })
-                .collect();
-            // Several schedules on one day: the most recently started run wins, then by name.
-            scheduled.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-            scheduled.into_iter().next()
         });
-    if let Some(pick) = pick.filter(|pick| pick.id == PHOTOS || has_wallpapers(&pick.id))
+    let scheduled = || {
+        let mut scheduled: Vec<_> = schedules
+            .filter(|(id, _)| has_wallpapers(id))
+            .filter_map(|(id, schedule)| {
+                let start = schedule.start(today)?;
+                Some((id.clone(), midnight(start), Reason::Scheduled(*schedule)))
+            })
+            .collect();
+        // Several schedules on one day: the most recently started run wins, then by name.
+        scheduled.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        scheduled.into_iter().next()
+    };
+    let (automatic, mix) = match mode {
+        HolidayMode::TakeOver => (holiday.or_else(scheduled), None),
+        HolidayMode::MixIn => (
+            scheduled(),
+            holiday.map(|(id, _, reason)| match reason {
+                Reason::Holiday(end) => (id, end),
+                _ => (id, today),
+            }),
+        ),
+        HolidayMode::Off => (scheduled(), None),
+    };
+    let chosen = |id: String, reason: Reason| {
+        let mix = mix.clone().filter(|(holiday, _)| *holiday != id);
+        Active { id, reason, mix }
+    };
+    if let Some(pick) = pick
+        .filter(|pick| pick.id == PHOTOS || has_wallpapers(&pick.id))
+        .filter(|pick| mode != HolidayMode::Off || !is_holiday(&pick.id))
         && automatic
             .as_ref()
             .is_none_or(|(_, start, _)| pick.at >= *start)
     {
-        return Active {
-            id: pick.id.clone(),
-            reason: Reason::Manual,
-        };
+        return chosen(pick.id.clone(), Reason::Manual);
     }
     match automatic {
-        Some((id, _, reason)) => Active { id, reason },
-        None => Active {
-            id: PHOTOS.into(),
-            reason: Reason::Default,
-        },
+        Some((id, _, reason)) => chosen(id, reason),
+        None => chosen(PHOTOS.into(), Reason::Default),
     }
 }
 
@@ -343,6 +395,15 @@ mod tests {
         );
     }
 
+    fn take_over<'a>(
+        now: OffsetDateTime,
+        pick: Option<&Pick>,
+        schedules: impl Iterator<Item = (&'a String, &'a Schedule)>,
+        has_wallpapers: impl Fn(&str) -> bool,
+    ) -> Active {
+        active(now, pick, schedules, has_wallpapers, HolidayMode::TakeOver)
+    }
+
     #[test]
     fn holidays_beat_schedules_and_a_manual_pick_lasts_until_the_next_switch() {
         let everything = |_: &str| true;
@@ -350,16 +411,19 @@ mod tests {
         let schedules = || std::iter::once((&porsche.0, &porsche.1));
         // An ordinary Wednesday: Photos.
         let wednesday = at(2026, Month::November, 18, 12);
-        assert_eq!(active(wednesday, None, schedules(), everything).id, PHOTOS);
+        assert_eq!(
+            take_over(wednesday, None, schedules(), everything).id,
+            PHOTOS
+        );
         // Sunday: the Porsche schedule.
         let sunday = at(2026, Month::November, 15, 12);
         assert_eq!(
-            active(sunday, None, schedules(), everything).id,
+            take_over(sunday, None, schedules(), everything).id,
             "c:Vintage Porsche"
         );
         // Thanksgiving week beats the Sunday schedule.
         let thanksgiving_sunday = at(2026, Month::November, 29, 12);
-        let decided = active(thanksgiving_sunday, None, schedules(), everything);
+        let decided = take_over(thanksgiving_sunday, None, schedules(), everything);
         assert_eq!(decided.id, "thanksgiving");
         // A pick made on a Wednesday holds until the Sunday run starts...
         let pick = Pick {
@@ -367,7 +431,7 @@ mod tests {
             at: at(2026, Month::November, 11, 12).unix_timestamp(),
         };
         assert_eq!(
-            active(
+            take_over(
                 at(2026, Month::November, 13, 12),
                 Some(&pick),
                 schedules(),
@@ -377,12 +441,12 @@ mod tests {
             "c:Art"
         );
         assert_eq!(
-            active(sunday, Some(&pick), schedules(), everything).id,
+            take_over(sunday, Some(&pick), schedules(), everything).id,
             "c:Vintage Porsche"
         );
         // ...and comes back once the run is over.
         assert_eq!(
-            active(
+            take_over(
                 at(2026, Month::November, 16, 12),
                 Some(&pick),
                 schedules(),
@@ -398,7 +462,7 @@ mod tests {
             at: at(2026, Month::December, 10, 9).unix_timestamp(),
         };
         assert_eq!(
-            active(
+            take_over(
                 at(2026, Month::December, 12, 9),
                 Some(&in_december),
                 schedules(),
@@ -410,7 +474,7 @@ mod tests {
         // An empty holiday is skipped.
         let no_christmas = |id: &str| id != "christmas";
         assert_eq!(
-            active(
+            take_over(
                 at(2026, Month::December, 12, 9),
                 None,
                 schedules(),
@@ -424,8 +488,94 @@ mod tests {
             at(2026, Month::December, 31, 20),
             at(2027, Month::January, 2, 9),
         ] {
-            assert_eq!(active(when, None, schedules(), everything).id, "new-year");
+            assert_eq!(
+                take_over(when, None, schedules(), everything).id,
+                "new-year"
+            );
         }
+    }
+
+    #[test]
+    fn holidays_can_mix_in_or_be_switched_off() {
+        let everything = |_: &str| true;
+        let porsche = ("c:Vintage Porsche".to_string(), Schedule::Sundays);
+        let schedules = || std::iter::once((&porsche.0, &porsche.1));
+        let december = at(2026, Month::December, 16, 12);
+        // Mix in: Photos stays the collection, Christmas alternates with it until Dec 26.
+        let mixed = active(december, None, schedules(), everything, HolidayMode::MixIn);
+        assert_eq!(mixed.id, PHOTOS);
+        assert_eq!(
+            mixed.mix,
+            Some((
+                "christmas".into(),
+                Date::from_calendar_date(2026, Month::December, 26).unwrap()
+            ))
+        );
+        // A Sunday schedule still applies, with the holiday mixed into it.
+        let sunday = at(2026, Month::December, 20, 12);
+        let mixed = active(sunday, None, schedules(), everything, HolidayMode::MixIn);
+        assert_eq!(mixed.id, "c:Vintage Porsche");
+        assert_eq!(mixed.mix.map(|(id, _)| id), Some("christmas".into()));
+        // A manual pick made before the holiday survives it under Mix in.
+        let pick = Pick {
+            id: "c:Art".into(),
+            at: at(2026, Month::December, 1, 12).unix_timestamp(),
+        };
+        let mixed = active(
+            december,
+            Some(&pick),
+            schedules(),
+            everything,
+            HolidayMode::MixIn,
+        );
+        assert_eq!(mixed.id, "c:Art");
+        assert!(mixed.mix.is_some());
+        // Picking the holiday itself shows only the holiday, nothing to mix.
+        let christmas = Pick {
+            id: "christmas".into(),
+            at: at(2026, Month::December, 15, 12).unix_timestamp(),
+        };
+        let picked = active(
+            december,
+            Some(&christmas),
+            schedules(),
+            everything,
+            HolidayMode::MixIn,
+        );
+        assert_eq!((picked.id.as_str(), picked.mix), ("christmas", None));
+        // Off: no holiday at all, and a holiday pick is ignored.
+        let off = active(
+            december,
+            Some(&christmas),
+            schedules(),
+            everything,
+            HolidayMode::Off,
+        );
+        assert_eq!((off.id.as_str(), off.mix), (PHOTOS, None));
+        assert_eq!(
+            active(
+                december,
+                None,
+                schedules(),
+                everything,
+                HolidayMode::TakeOver
+            )
+            .id,
+            "christmas"
+        );
+        // An empty holiday is never mixed in.
+        let no_christmas = |id: &str| id != "christmas";
+        assert_eq!(
+            active(
+                december,
+                None,
+                schedules(),
+                no_christmas,
+                HolidayMode::MixIn
+            )
+            .mix,
+            None
+        );
     }
 
     #[test]

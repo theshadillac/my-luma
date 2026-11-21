@@ -5,12 +5,12 @@ use crate::{
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
         AMBIENT_ROW, APP_SORTING_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control,
-        DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOLIDAY_REMINDERS_ROW, HOME_FADE_LEFT,
-        HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS,
-        LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW, Page, QUICK_PANEL_ROW,
-        Rect, SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
-        UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW,
-        WIDGETS_SECTION,
+        DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOLIDAY_REMINDERS_ROW, HOLIDAYS_ROW,
+        HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
+        HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW,
+        Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target,
+        TextField, UI_SOUND_LEVEL_ROW, UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WALLPAPER_TINT_ROW,
+        WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -3344,6 +3344,16 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                                 }
                             });
                         }
+                        if let Some((holiday, end)) = &state.collection.mix
+                            && matches!(subpage, Subpage::Collections)
+                            && *holiday == id
+                        {
+                            parts.push(format!(
+                                "Mixed in for the holiday until {} {}",
+                                short_month(end.month()),
+                                end.day()
+                            ));
+                        }
                         let selected = id == current;
                         (crate::collections::name(&id), parts.join(" · "), selected)
                     })
@@ -3631,6 +3641,13 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     } else {
                         language.t("stateOn")
                     }),
+                    false,
+                ),
+                (
+                    HOLIDAYS_ROW,
+                    "holidayMode",
+                    "sparkles",
+                    Some(language.t(state.preferences.holiday_mode.label_key())),
                     false,
                 ),
                 (
