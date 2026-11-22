@@ -5044,3 +5044,25 @@ fn power_on_shows_home_or_the_ambient_screen() {
     assert!(state.note_input());
     assert!(state.ambient.is_none());
 }
+
+#[test]
+fn power_on_is_the_return_to_active_from_standby() {
+    use serde_json::json;
+    let mut watch = crate::platform::PowerWatch::default();
+    // The G5's own sequence (2026-11-22): off with the remote, then on again.
+    let replies = [
+        json!({"subscribed": true, "returnValue": true, "state": "Active"}),
+        json!({"state": "Active", "processing": "Request Power Off", "onOff": "off"}),
+        json!({"state": "Active", "processing": "Prepare Active Standby", "onOff": "off"}),
+        json!({"returnValue": true, "state": "Active Standby"}),
+        json!({"state": "Active Standby", "reason": "oslbSaving", "onOff": "off"}),
+        json!({"state": "Active Standby", "processing": "Prepare Power On", "onOff": "on"}),
+        json!({"state": "Active Standby", "processing": "Screen On", "onOff": "on"}),
+        json!({"returnValue": true, "state": "Active"}),
+        json!({"returnValue": true, "state": "Active"}),
+    ];
+    let fired: Vec<bool> = replies.iter().map(|reply| watch.update(reply)).collect();
+    assert_eq!(fired.iter().filter(|fired| **fired).count(), 1);
+    assert!(fired[7]);
+    assert!(!watch.update(&json!({"returnValue": true})));
+}

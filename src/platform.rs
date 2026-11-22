@@ -1028,3 +1028,34 @@ impl PowerClock {
         passed > awake + Self::SLEEP
     }
 }
+
+/// Follows tvpower's getPowerState replies. Turning the TV off with the remote puts a G5
+/// in "Active Standby" with Luma still running (no suspend), so the clocks don't jump; the
+/// return to "Active" is the power-on.
+#[derive(Debug, Default)]
+#[cfg_attr(
+    not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
+    allow(dead_code)
+)]
+pub struct PowerWatch {
+    standby: bool,
+}
+
+#[cfg_attr(
+    not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
+    allow(dead_code)
+)]
+impl PowerWatch {
+    /// True once per return to "Active" after any other state.
+    pub fn update(&mut self, reply: &serde_json::Value) -> bool {
+        let Some(state) = reply.get("state").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        if state == "Active" {
+            std::mem::take(&mut self.standby)
+        } else {
+            self.standby = true;
+            false
+        }
+    }
+}

@@ -995,6 +995,11 @@ fn run() -> Result<(), String> {
     let mut initial_focus = options.script.is_empty();
     let mut startup_cycle_pending = state.preferences.wallpaper_cycle;
     let mut power_clock = platform::PowerClock::new(std::time::SystemTime::now(), Instant::now());
+    let powered_on = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
+    if options.webos_home {
+        watch_power(powered_on.clone());
+    }
     let mut woke: Option<Instant> = None;
     let mut wallpapers_scanned = false;
     let launched = Instant::now();
@@ -1317,7 +1322,8 @@ fn run() -> Result<(), String> {
         weather_tick(&mut state, &weather_service, visible);
         // Standby suspends the TV: the wall clock moves on while Instant (CLOCK_MONOTONIC)
         // does not. A jump means the TV just came back on; Luma restarts never count.
-        let woke_now = power_clock.check(std::time::SystemTime::now(), Instant::now());
+        let woke_now = power_clock.check(std::time::SystemTime::now(), Instant::now())
+            | powered_on.swap(false, std::sync::atomic::Ordering::Relaxed);
         if woke_now {
             eprintln!("Luma power: back from standby");
             woke = Some(Instant::now());
@@ -2214,4 +2220,46 @@ fn hit(
 ) -> Option<Target> {
     let (x, y) = pointer_position(window, x, y)?;
     state.hit_test(controls, x, y)
+}
+
+/// Sets `flag` each time the TV comes back on from standby (tvpower's state returns to
+/// "Active"). Failing to subscribe only costs the power-on choice; the clock check remains.
+#[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
+fn watch_power(flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let uri = "luna://com.webos.service.tvpower/power/getPowerState";
+    let payload = serde_json::json!({"subscribe": true});
+    let on_message = |flag: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+        let mut watch = platform::PowerWatch::default();
+        move |reply: serde_json::Value| {
+            if watch.update(&reply) {
+                eprintln!("Luma power: screen back on");
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    };
+    match luna::subscribe(
+        None,
+        uri,
+        &payload,
+        Duration::from_secs(5),
+        on_message(flag.clone()),
+    ) {
+        Ok(()) => eprintln!("Luma power: watching tvpower"),
+        Err(error) => {
+            eprintln!("Luma power: {error}; retrying as {}", platform::home_id());
+            // As root, act for the Home app id, like the lifecycle registration does.
+            match luna::subscribe_as_app(
+                platform::home_id(),
+                uri,
+                &payload,
+                Duration::from_secs(5),
+                on_message(flag),
+                |_| eprintln!("Luma power: tvpower subscription ended"),
+            ) {
+                // Keep the subscription (and its luna-send child) for the life of Luma.
+                Ok(subscription) => std::mem::forget(subscription),
+                Err(error) => eprintln!("Luma power: {error}"),
+            }
+        }
+    }
 }
