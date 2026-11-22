@@ -576,7 +576,9 @@ try {
   assert.equal(cycleEnabled.subpage, null);
   assert.equal(cycleEnabled.focus, 'WallpaperCycle');
   assert.equal(cycleEnabled.preferences.wallpaper_cycle, true);
+  assert.equal(cycleEnabled.preferences.cycle_interval, 'five_minutes');
   assert.ok(cycleEnabled.ui_text.includes('Rotation'));
+  assert.ok(cycleEnabled.ui_text.includes('5 min'));
   const cycledAfterRestart = await scenario('wallpaper-cycle-restart', 'down');
   assert.equal(
     cycledAfterRestart.preferences.background,
@@ -585,7 +587,7 @@ try {
   );
   const cycleDisabled = await scenario(
     'wallpaper-cycle-disabled',
-    'settings,down,down,down,enter,up,up,right,right,right,enter',
+    'settings,down,down,down,enter,up,up,right,right,right,enter,enter,enter,enter,enter',
   );
   assert.equal(cycleDisabled.preferences.wallpaper_cycle, false);
   assert.ok(cycleDisabled.ui_text.includes('Rotation'));

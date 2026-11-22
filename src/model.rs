@@ -566,6 +566,8 @@ pub struct Preferences {
     pub landing_layout: bool,
     #[serde(deserialize_with = "crate::wallpaper_cycle::deserialize")]
     pub wallpaper_cycle: bool,
+    /// How often the wallpaper changes while `wallpaper_cycle` is on.
+    pub cycle_interval: crate::wallpaper_cycle::Interval,
     pub wallpaper_gradient: bool,
     /// Used while the gradient is on.
     pub gradient_strength: GradientStrength,
@@ -659,6 +661,7 @@ impl Default for Preferences {
             text_rendering: crate::text_rendering::TextRendering::default(),
             landing_layout: false,
             wallpaper_cycle: false,
+            cycle_interval: crate::wallpaper_cycle::Interval::default(),
             wallpaper_gradient: true,
             gradient_strength: GradientStrength::default(),
             wallpaper_changed: 0,

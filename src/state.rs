@@ -3763,7 +3763,13 @@ impl State {
                 self.options();
             }
             Target::WallpaperCycle => {
-                self.preferences.wallpaper_cycle = !self.preferences.wallpaper_cycle;
+                (
+                    self.preferences.wallpaper_cycle,
+                    self.preferences.cycle_interval,
+                ) = crate::wallpaper_cycle::Interval::step(
+                    self.preferences.wallpaper_cycle,
+                    self.preferences.cycle_interval,
+                );
                 self.preferences.wallpaper_changed = unix_now();
                 return vec![Effect::Save];
             }

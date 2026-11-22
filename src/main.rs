@@ -1148,6 +1148,7 @@ fn run() -> Result<(), String> {
                 || state.day_night_due(now)
                 || wallpaper_cycle::due(
                     state.preferences.wallpaper_cycle,
+                    state.preferences.cycle_interval,
                     state.preferences.wallpaper_changed,
                     unix,
                 ))

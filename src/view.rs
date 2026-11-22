@@ -2726,8 +2726,10 @@ struct Row<'a> {
     chevron: bool,
 }
 fn rotation_value_width(assets: &Assets, language: Language) -> f32 {
-    ["stateOn", "stateOff"]
+    crate::wallpaper_cycle::Interval::ALL
+        .map(crate::wallpaper_cycle::Interval::label_key)
         .into_iter()
+        .chain(["stateOff"])
         .map(|key| assets.width(language.t(key), text(18.4, 450, 0.)))
         .fold(0., f32::max)
         .ceil()
@@ -3794,7 +3796,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                         "refresh-off"
                     }),
                     value: Some(language.t(if state.preferences.wallpaper_cycle {
-                        "stateOn"
+                        state.preferences.cycle_interval.label_key()
                     } else {
                         "stateOff"
                     })),
@@ -5535,7 +5537,7 @@ mod tests {
                 state
                     .preferences
                     .language
-                    .t(if enabled { "stateOn" } else { "stateOff" });
+                    .t(if enabled { "cycle15m" } else { "stateOff" });
             let (value, style) = scene
                 .draw
                 .iter()

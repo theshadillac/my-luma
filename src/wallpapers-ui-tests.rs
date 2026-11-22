@@ -116,7 +116,7 @@ fn cycling_button_toggles_on_off_without_opening_a_page_or_moving_controls() {
             .iter()
             .find_map(|draw| match draw {
                 Draw::Text(label, rect, style, ..)
-                    if label == language.t("stateOn") && rect.x > button.x =>
+                    if label == language.t("cycle5m") && rect.x > button.x =>
                 {
                     Some((rect, style))
                 }
@@ -133,6 +133,15 @@ fn cycling_button_toggles_on_off_without_opening_a_page_or_moving_controls() {
                 (new.rect.x, new.rect.y, new.rect.w, new.rect.h)
             );
         }
+        // 15 min, 1 hr, 4 hr, Daily, then Off again.
+        for _ in 0..4 {
+            assert_eq!(state.activate(), vec![Effect::Save]);
+            assert!(state.preferences.wallpaper_cycle);
+        }
+        assert_eq!(
+            state.preferences.cycle_interval,
+            crate::wallpaper_cycle::Interval::Day
+        );
         assert_eq!(state.activate(), vec![Effect::Save]);
         assert!(!state.preferences.wallpaper_cycle);
     }
@@ -249,7 +258,12 @@ fn automatic_changes_preserve_manual_splash_across_saves_and_restart_and_manual_
     state.preferences.background = "forest".into();
     state.preferences.wallpaper_cycle = true;
     state.preferences.wallpaper_changed = 100;
-    assert!(!crate::wallpaper_cycle::due(true, 100, 100));
+    assert!(!crate::wallpaper_cycle::due(
+        true,
+        crate::wallpaper_cycle::Interval::default(),
+        100,
+        100
+    ));
     assert!(crate::wallpaper_cycle::startup_due(
         true,
         true,
