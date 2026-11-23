@@ -1,23 +1,26 @@
 {
   "note": "Items already reviewed with Stephen. Keys are URLs or repo@version.",
   "repos": {
-    "Seagey/couch-tv": "c9dbfaf32226d591817f19887cdbde56c24eaccc",
+    "Seagey/couch-tv": "b3d45ab50c80061968a7f70b93553a734892656d",
     "techgenius1/tvOS-Launcher": "b14942965c240b78030e83461550cb23509163a1",
-    "aabytt/custom-screensaver-aerial": "5dcceaba4e5746f09ab172b6d7b984504fc82a3b",
+    "aabytt/custom-screensaver-aerial": "f7d3d9d8393db70e1fe2c1c032e33cdb9d2d629a",
     "kitsuned/AltHome": "a67385151486347394c6ac6e8af8da61e6c72685",
     "mareklarek/webos10-homescreen-customization": "80e39c822097a933fd49c2a23ff5cdfbf9e54763",
     "webosbrew/custom-screensaver": "90666c19112ec77d6c2b1b84ae7db7d914285e92",
     "cocombee/glass-tv": "ce164b650818249f89725ed8070c911b3958df30",
-    "ecklf/lg-luma@main": "bd13c9a7c46c0ffaa8adda0c4f3834fbb6e80870",
+    "ecklf/lg-luma@main": "4d78dd6df6acdea3253ebe34d7a6998374198d9e",
     "ipatek420/halcyon": "22476f67a1083aad16a2e20c55b197140d9e0f4b",
     "ratelimits/atlauncher": "66dc1369f7713f380d3f7e515596b2cfed5fba1d",
     "SikeXML/glasshouse-dock": "48d492083b496d23ee9f020400518873858289f9",
-    "ViieeS/mytvlauncher": "948190c279c67bac2b1599d9af908d489304aae5",
-    "kennysarnoski-jarvis/webos-dock": "2ff7150e3322ea89d060fa5bea053d83f0125725"
+    "ViieeS/mytvlauncher": "88542de7f3449d372df4d1c17912522684145e53",
+    "kennysarnoski-jarvis/webos-dock": "2ff7150e3322ea89d060fa5bea053d83f0125725",
+    "lasharor/cleanyourtv-WebOS": "c3722f74f0091418f2fe93a801a9e385e6726bab",
+    "axellaffite/openhome-webos": "105682e1986a90cca1868a2452ee3b59decb73f3"
   },
   "releases": {
-    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16; main to a3e4234 reviewed 2026-11-17; 3.5.0-3.6.2 reviewed 2026-11-18 (latest v3.6.2); 3.7.0-3.10.0 reviewed 2026-11-19 (latest v3.10.0); 3.10.1-3.11.0 reviewed 2026-11-20 (latest v3.11.0); 3.11.1-3.12.0 reviewed 2026-11-21 (latest v3.12.0); 3.12.1-3.13.0 and main to bd13c9a (#365, #370) reviewed 2026-11-22 (latest v3.13.0)",
-    "aabytt/custom-screensaver-aerial": "v3.1.1 reviewed 2026-11-19"
+    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16; main to a3e4234 reviewed 2026-11-17; 3.5.0-3.6.2 reviewed 2026-11-18 (latest v3.6.2); 3.7.0-3.10.0 reviewed 2026-11-19 (latest v3.10.0); 3.10.1-3.11.0 reviewed 2026-11-20 (latest v3.11.0); 3.11.1-3.12.0 reviewed 2026-11-21 (latest v3.12.0); 3.12.1-3.13.0 and main to bd13c9a (#365, #370) reviewed 2026-11-22 (latest v3.13.0); main to 4d78dd6 (#388, Homebrew docs) reviewed 2026-11-23 (latest still v3.13.0)",
+    "aabytt/custom-screensaver-aerial": "v3.1.1 reviewed 2026-11-19",
+    "webosbrew/apps-repo": "com.ecklf.luma listed (6a3fea1) noted 2026-11-23"
   },
   "items": [
     "https://repo.webosbrew.org/apps/org.aabytt.webos.custom-screensaver-aerial/",
@@ -108,6 +111,22 @@
     "https://github.com/robhannan/back-to-tv",
     "https://github.com/alequab/afnon-lg",
     "https://github.com/Knikt/APL-TV",
-    "https://github.com/ohmybahgosh/TiviBro"
+    "https://github.com/ohmybahgosh/TiviBro",
+    "https://github.com/webosbrew/apps-repo/commit/6a3fea1",
+    "https://github.com/ecklf/lg-luma/commit/372936c",
+    "https://github.com/ecklf/lg-luma/pull/388",
+    "https://github.com/ecklf/lg-luma/commit/d0149ba",
+    "https://github.com/Seagey/couch-tv/commit/b3d45ab",
+    "https://github.com/Seagey/couch-tv/commit/d41c5a7",
+    "https://github.com/Seagey/couch-tv/commit/66f0857",
+    "https://github.com/ViieeS/mytvlauncher/commit/88542de",
+    "https://github.com/ViieeS/mytvlauncher/commit/5da923f",
+    "https://github.com/aabytt/custom-screensaver-aerial/pull/106",
+    "https://github.com/lasharor/cleanyourtv-WebOS",
+    "https://github.com/lasharor/cleanyourtv-WebOS/blob/main/docs/input-key.md",
+    "https://github.com/lasharor/cleanyourtv-WebOS/blob/main/docs/notifications.md",
+    "https://github.com/axellaffite/openhome-webos",
+    "https://github.com/pranavv1210/lg-tv-custom-ui",
+    "https://github.com/acuntex/takt"
   ]
 }
