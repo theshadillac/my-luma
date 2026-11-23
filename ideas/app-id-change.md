@@ -4,6 +4,15 @@ Status (2026-11-23): renamed. The app is now **Lume** (`com.theshadillac.lume`, 
 icon option A "Glow"). The 11.0.0 `com.theshadillac.myluma` release was never installed and is
 superseded; everything below applies to Lume with the folder `/media/developer/com.theshadillac.lume`.
 
+Side by side started 2026-11-23: data copied with `cp -a` (379 files, 73 MB, settings identical),
+1.0.0 installed. Lume first refused the copy: `cp -a` kept the old app's sandbox owner (5408),
+and a normal (jailed) Luma rejects a settings folder owned by another user. Fixed by giving the
+copy to Lume's sandbox user, found with
+`jailer -t native_devmode -i com.theshadillac.lume -p <app dir> /usr/bin/id -u` (6333), then
+`chown -R 6333 /media/developer/com.theshadillac.lume`. The old folder kept 5408. Lume then
+started with all settings; System page and phone page confirmed. A repeat copy must include
+that chown step.
+
 Earlier (same day): Stephen approved the move to `com.theshadillac.myluma`.
 - Phase 0 done: settings backup in 10.1.0 (old id); new-id code with takeover guard and copy guard.
 - Phase 1 done: 11.0.0 released as "My Luma" (`com.theshadillac.myluma_11.0.0_arm.ipk`,
