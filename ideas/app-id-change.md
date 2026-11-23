@@ -4,6 +4,11 @@ Status (2026-11-23): renamed. The app is now **Lume** (`com.theshadillac.lume`, 
 icon option A "Glow"). The 11.0.0 `com.theshadillac.myluma` release was never installed and is
 superseded; everything below applies to Lume with the folder `/media/developer/com.theshadillac.lume`.
 
+Cutover done 2026-11-23 14:12 (Stephen chose to cut over the same day): old takeover disabled,
+Lume enabled; status shows appDir com.theshadillac.lume, enabled, mounted (manifest method),
+boot hook on. Rollback: `home.sh disable`, then the old app's `home.sh enable`. The old
+com.ecklf.luma app stays installed with its data until Phase 4 (retire after a week or two).
+
 Side by side started 2026-11-23: data copied with `cp -a` (379 files, 73 MB, settings identical),
 1.0.0 installed. Lume first refused the copy: `cp -a` kept the old app's sandbox owner (5408),
 and a normal (jailed) Luma rejects a settings folder owned by another user. Fixed by giving the
