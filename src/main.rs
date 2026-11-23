@@ -1053,6 +1053,16 @@ fn run() -> Result<(), String> {
                     state.wallpaper_upload = Some(result);
                     state.dirty = true;
                 }
+                wallpapers::Event::Restore(restored) => {
+                    state.restore_preferences(*restored);
+                    if let Err(error) = storage::save(&preferences_path, &state.preferences) {
+                        eprintln!("{error}");
+                        state.notify(state.preferences.language.t("savedError"));
+                    } else {
+                        platform.sync_splash(state.preferences.splash_background());
+                        state.notify(state.preferences.language.t("settingsRestored"));
+                    }
+                }
                 wallpapers::Event::Suggestions(page, result) => state.suggestions(page, result),
                 wallpapers::Event::SuggestionAdded(id, result) => {
                     state.suggestion_added(&id, result)

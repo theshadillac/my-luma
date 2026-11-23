@@ -101,6 +101,8 @@ pub enum Event {
     Deleted(String, Result<(), String>),
     Session(u64, Result<Session, String>),
     Ended(u64),
+    /// Settings restored from a backup on the phone page, already checked.
+    Restore(Box<crate::model::Preferences>),
 }
 
 enum Command {
@@ -125,6 +127,7 @@ impl Service {
             .parent()
             .unwrap_or(Path::new("."))
             .join("wallpapers");
+        let settings = preferences.to_path_buf();
         let desired = Arc::new(AtomicU64::new(0));
         let worker_desired = desired.clone();
         let unsplash_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -136,6 +139,7 @@ impl Service {
             .spawn(move || {
                 worker(
                     &directory,
+                    &settings,
                     &worker_desired,
                     &worker_unsplash,
                     &sender,
@@ -614,6 +618,7 @@ fn store_image(
 
 fn worker(
     directory: &Path,
+    settings: &Path,
     desired: &AtomicU64,
     unsplash_ready: &std::sync::atomic::AtomicBool,
     sender: &mpsc::SyncSender<Event>,
@@ -721,11 +726,18 @@ fn worker(
                     let valid = || {
                         desired.load(Ordering::Acquire) == generation && Instant::now() < deadline
                     };
+                    let restore = |preferences| {
+                        let _ = sender.send(Event::Restore(Box::new(preferences)));
+                    };
                     match serve(
                         &mut stream,
                         &address.to_string(),
                         &token,
                         directory,
+                        Backup {
+                            settings,
+                            restore: &restore,
+                        },
                         &mut unsplash,
                         valid,
                     ) {
@@ -764,11 +776,41 @@ fn request(
     crate::companion::request(reader, valid, deadline, MAX_BODY, "Image exceeds 12 MiB")
 }
 
+/// The saved preferences file and how a checked restore reaches the main loop.
+struct Backup<'a> {
+    settings: &'a Path,
+    restore: &'a dyn Fn(crate::model::Preferences),
+}
+
+/// Largest settings file the phone may restore.
+const MAX_SETTINGS: usize = 512 * 1024;
+
+/// A backup the phone sent back: must be a JSON object Luma itself wrote, with the usual keys,
+/// read the same way as the preferences file. The Unsplash key is never part of it.
+pub fn restorable(bytes: &[u8]) -> Result<crate::model::Preferences, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| "That file isn't a Luma settings backup.")?;
+    let object = value
+        .as_object()
+        .ok_or("That file isn't a Luma settings backup.")?;
+    if !["language", "background", "favorites"]
+        .iter()
+        .all(|key| object.contains_key(*key))
+    {
+        return Err("That file isn't a Luma settings backup.".into());
+    }
+    let mut preferences: crate::model::Preferences =
+        serde_json::from_value(value).map_err(|e| format!("That backup couldn't be read: {e}"))?;
+    preferences.sanitize();
+    Ok(preferences)
+}
+
 fn serve(
     stream: &mut TcpStream,
     host: &str,
     token: &str,
     directory: &Path,
+    backup: Backup<'_>,
     unsplash: &mut crate::unsplash::Client,
     valid: impl Fn() -> bool,
 ) -> Result<bool, String> {
@@ -838,6 +880,18 @@ fn serve(
             )?;
             return Ok(false);
         }
+        if route == "settings.json" {
+            // The saved file is current: every settings change is saved at once.
+            match fs::read(backup.settings) {
+                Ok(bytes) => response(stream, "200 OK", "application/json; charset=utf-8", &bytes)?,
+                Err(error) => error_response(
+                    stream,
+                    "404 Not Found",
+                    &format!("No saved settings yet ({error})"),
+                )?,
+            }
+            return Ok(false);
+        }
         let (kind, body): (&str, &[u8]) = match route {
             "" => (
                 "text/html; charset=utf-8",
@@ -863,6 +917,10 @@ fn serve(
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/unsplash.js"),
             ),
+            "settings.js" => (
+                "text/javascript; charset=utf-8",
+                include_bytes!("../assets/wallpaper-upload/settings.js"),
+            ),
             "storage.js" => (
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/storage.js"),
@@ -874,6 +932,35 @@ fn serve(
             }
         };
         response(stream, "200 OK", kind, body)?;
+        return Ok(false);
+    }
+    if request.method == "POST"
+        && route == "settings/restore"
+        && request.headers.get("x-luma-upload").map(String::as_str) == Some(token)
+    {
+        if request.length > MAX_SETTINGS {
+            error_response(
+                stream,
+                "413 Content Too Large",
+                "That file is too large to be settings",
+            )?;
+            return Ok(false);
+        }
+        let mut body = vec![0; request.length];
+        read_exact(&mut reader, &mut body, &valid, deadline)?;
+        drop(reader);
+        match restorable(&body) {
+            Ok(preferences) => {
+                (backup.restore)(preferences);
+                response(
+                    stream,
+                    "200 OK",
+                    "application/json; charset=utf-8",
+                    br#"{"ok":true}"#,
+                )?;
+            }
+            Err(error) => error_response(stream, "422 Unprocessable Content", &error)?,
+        }
         return Ok(false);
     }
     if request.method == "POST"

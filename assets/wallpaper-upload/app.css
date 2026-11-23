@@ -603,3 +603,18 @@ dialog::backdrop {
   background: #101213e6;
   box-shadow: 0 8px 24px #0008;
 }
+
+.backup {
+  margin-top: 28px;
+  color: #a9bfb0;
+  font-size: 14px;
+}
+.backup summary {
+  cursor: pointer;
+  color: #e8efe9;
+  font-weight: 600;
+}
+.backup p {
+  margin: 10px 0 14px;
+  line-height: 1.45;
+}

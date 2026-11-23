@@ -888,6 +888,13 @@ impl State {
         Some(Duration::from_secs(u64::from(minutes) * 60).saturating_sub(self.last_input.elapsed()))
     }
 
+    /// Settings restored from a backup (already checked and sanitized). Collections, the
+    /// Home layout and the theme follow on the next frame; the wallpapers stay as they are.
+    pub fn restore_preferences(&mut self, preferences: Preferences) {
+        self.preferences = preferences;
+        self.dirty = true;
+    }
+
     /// The TV came back on from standby with Luma in front: show Home or the ambient screen,
     /// as chosen, whatever was showing when it went off.
     pub fn powered_on(&mut self) {

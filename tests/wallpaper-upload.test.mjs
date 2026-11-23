@@ -160,3 +160,27 @@ test('the queue stops at the free gallery slots and ignores photos already queue
   );
   assert.match(note, /1 didn’t fit/);
 });
+
+test('settings backup downloads the saved file and restores with the session header', async () => {
+  globalThis.document ??= { getElementById: () => null };
+  globalThis.location ??= { pathname: '/session-token/' };
+  const { download, restore } = await import('../assets/wallpaper-upload/settings.js');
+  const saved = await download(async (url) => {
+    assert.equal(url, 'settings.json');
+    return { ok: true, text: async () => '{"language":"en"}' };
+  });
+  assert.equal(await saved.text(), '{"language":"en"}');
+  await assert.rejects(
+    download(async () => ({ ok: false, text: async () => 'No saved settings yet' })),
+    /No saved settings yet/,
+  );
+  let sent;
+  await restore({ size: 20, text: async () => '{"language":"en"}' }, async (url, options) => {
+    sent = { url, options };
+    return { ok: true, text: async () => '' };
+  });
+  assert.equal(sent.url, 'settings/restore');
+  assert.equal(sent.options.method, 'POST');
+  assert.ok(sent.options.headers['X-Luma-Upload']);
+  await assert.rejects(restore({ size: 600 * 1024, text: async () => '' }), /too large/);
+});

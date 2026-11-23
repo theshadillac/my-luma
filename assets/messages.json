@@ -5761,5 +5761,22 @@
     "sv": "Dagligen",
     "cs": "Denně",
     "ca": "Diari"
+  },
+  "settingsRestored": {
+    "en": "Settings restored",
+    "de": "Einstellungen wiederhergestellt",
+    "es": "Ajustes restaurados",
+    "zh": "设置已恢复",
+    "zh-tw": "設定已還原",
+    "pt": "Configurações restauradas",
+    "it": "Impostazioni ripristinate",
+    "ru": "Настройки восстановлены",
+    "pl": "Ustawienia przywrócone",
+    "fr": "Réglages restaurés",
+    "vi": "Đã khôi phục cài đặt",
+    "nl": "Instellingen hersteld",
+    "sv": "Inställningar återställda",
+    "cs": "Nastavení obnoveno",
+    "ca": "Configuració restaurada"
   }
 }

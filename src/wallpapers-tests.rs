@@ -47,6 +47,10 @@ fn http(path: &Path, request: impl FnOnce(&str) -> Vec<u8>) -> (String, bool) {
             &address.to_string(),
             "secret",
             &path,
+            super::Backup {
+                settings: &path.with_file_name("preferences.json"),
+                restore: &|_| {},
+            },
             &mut crate::unsplash::Client::new(&std::env::temp_dir().join("luma-no-unsplash")),
             || true,
         )
@@ -660,4 +664,72 @@ fn the_upload_page_may_show_unsplash_previews_but_nothing_else_external() {
         source.contains("connect-src 'self';"),
         "only the TV is ever called"
     );
+}
+
+#[test]
+fn only_a_luma_settings_backup_can_be_restored() {
+    use crate::model::Preferences;
+    let saved = serde_json::to_vec(&Preferences::default()).unwrap();
+    let restored = super::restorable(&saved).unwrap();
+    assert_eq!(restored.language, Preferences::default().language);
+    for wrong in [
+        &b"not json"[..],
+        b"[]",
+        b"{}",
+        br#"{"language":"en"}"#,
+        br#"{"photos":[1,2,3]}"#,
+    ] {
+        assert!(
+            super::restorable(wrong).is_err(),
+            "{}",
+            String::from_utf8_lossy(wrong)
+        );
+    }
+}
+
+#[test]
+fn the_phone_page_serves_the_settings_script() {
+    let source = include_str!("wallpapers.rs");
+    assert!(source.contains("\"settings.js\" =>"));
+    assert!(source.contains("route == \"settings/restore\""));
+    assert!(include_str!("../assets/wallpaper-upload/index.html").contains("settings.js"));
+}
+
+#[test]
+fn settings_backup_needs_the_session_and_its_header() {
+    let fixture = Fixture::new();
+    // Nothing saved yet.
+    let (response, _) = http(&fixture.wallpapers(), |host| {
+        format!("GET /secret/settings.json HTTP/1.1\r\nHost: {host}\r\n\r\n").into_bytes()
+    });
+    assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    std::fs::write(fixture.0.join("preferences.json"), br#"{"language":"de"}"#).unwrap();
+    let (response, _) = http(&fixture.wallpapers(), |host| {
+        format!("GET /secret/settings.json HTTP/1.1\r\nHost: {host}\r\n\r\n").into_bytes()
+    });
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with(r#"{"language":"de"}"#));
+    // Another session's address finds nothing; a restore without the header is refused.
+    let (response, _) = http(&fixture.wallpapers(), |host| {
+        format!("GET /other/settings.json HTTP/1.1\r\nHost: {host}\r\n\r\n").into_bytes()
+    });
+    assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+    let body = serde_json::to_string(&crate::model::Preferences::default()).unwrap();
+    let (response, _) = http(&fixture.wallpapers(), |host| {
+        format!(
+            "POST /secret/settings/restore HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    });
+    assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    let (response, _) = http(&fixture.wallpapers(), |host| {
+        format!(
+            "POST /secret/settings/restore HTTP/1.1\r\nHost: {host}\r\nX-Luma-Upload: secret\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    });
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
 }

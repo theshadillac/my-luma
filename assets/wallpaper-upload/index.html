@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="app.css" />
     <script type="module" src="app.js"></script>
     <script type="module" src="unsplash.js"></script>
+    <script type="module" src="settings.js"></script>
   </head>
   <body>
     <main>
@@ -136,6 +137,22 @@
         <button id="another" type="button">Add more</button>
       </section>
       <p id="status" role="status" aria-live="polite"></p>
+      <details class="backup" id="backup">
+        <summary>Settings backup</summary>
+        <p>
+          Save all of Luma's settings (favourites, collections and schedules, tiles, input names,
+          clock, ambient and weather) to this phone, or put a saved copy back on the TV. Your
+          wallpapers and the Unsplash key are not included. Tile web addresses are, so keep the file
+          private.
+        </p>
+        <div class="actions">
+          <button id="backup-save" type="button" class="secondary">Download settings</button>
+          <label class="button secondary" id="backup-restore">
+            <input id="backup-file" type="file" accept="application/json,.json" />
+            Restore from file
+          </label>
+        </div>
+      </details>
       <footer id="storage-footer">
         <span>Stored on this TV at</span>
         <code id="storage-path">Finding storage location…</code>
