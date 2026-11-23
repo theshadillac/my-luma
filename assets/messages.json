@@ -5778,5 +5778,22 @@
     "sv": "Inställningar återställda",
     "cs": "Nastavení obnoveno",
     "ca": "Configuració restaurada"
+  },
+  "legacyNotCopied": {
+    "en": "Settings from Luma aren't copied yet, so changes won't be saved",
+    "de": "Einstellungen aus Luma sind noch nicht kopiert, Änderungen werden nicht gespeichert",
+    "es": "Los ajustes de Luma aún no se han copiado; los cambios no se guardarán",
+    "zh": "尚未复制 Luma 的设置，更改不会保存",
+    "zh-tw": "尚未複製 Luma 的設定，變更不會儲存",
+    "pt": "As configurações do Luma ainda não foram copiadas; as alterações não serão salvas",
+    "it": "Le impostazioni di Luma non sono ancora state copiate; le modifiche non verranno salvate",
+    "ru": "Настройки Luma ещё не скопированы, изменения не сохранятся",
+    "pl": "Ustawienia z Luma nie zostały jeszcze skopiowane, zmiany nie zostaną zapisane",
+    "fr": "Les réglages de Luma ne sont pas encore copiés, les modifications ne seront pas enregistrées",
+    "vi": "Chưa sao chép cài đặt từ Luma nên thay đổi sẽ không được lưu",
+    "nl": "Instellingen van Luma zijn nog niet gekopieerd, wijzigingen worden niet opgeslagen",
+    "sv": "Inställningar från Luma har inte kopierats än, så ändringar sparas inte",
+    "cs": "Nastavení z Luma ještě nejsou zkopírována, změny se neuloží",
+    "ca": "La configuració de Luma encara no s'ha copiat; els canvis no es desaran"
   }
 }

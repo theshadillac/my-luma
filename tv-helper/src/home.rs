@@ -1,5 +1,5 @@
 use crate::{
-    APP, Result, accepted, files,
+    APP, LEGACY_APP, Result, accepted, files,
     system::{self, System},
 };
 use serde::{Deserialize, Serialize};
@@ -602,6 +602,17 @@ impl<'a, S: System> Home<'a, S> {
         {
             return Err("Disable the existing Home integration before changing its target".into());
         }
+        // Another installed copy (the old com.ecklf.luma one) owns Home: hand over explicitly,
+        // never by overwriting its state. Its own `home.sh disable` releases it first.
+        if let Some(owner) = previous
+            .as_ref()
+            .filter(|c| c.enabled && Path::new(&c.app_dir) != app.as_path())
+        {
+            return Err(format!(
+                "Home takeover belongs to the Luma installed at {}. Turn it off there first: sh {}/home.sh disable",
+                owner.app_dir, STATE
+            ));
+        }
         let stock = if self.mounted() {
             previous
                 .as_ref()
@@ -707,9 +718,10 @@ fn unescape(s: &str) -> String {
         .replace("\\134", "\\")
 }
 pub fn exe_owned(root: &str) -> bool {
-    root.strip_suffix("//deleted")
-        .unwrap_or(root)
-        .ends_with("/com.ecklf.luma/luma")
+    let root = root.strip_suffix("//deleted").unwrap_or(root);
+    [APP, LEGACY_APP]
+        .iter()
+        .any(|id| root.ends_with(&format!("/{id}/luma")))
 }
 pub fn home_process(
     args: &[String],

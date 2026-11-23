@@ -691,6 +691,9 @@ fn run() -> Result<(), String> {
         app_artwork::set_disk_cache(directory.join("icon-cache"));
     }
     let mut state = State::new(initial_preferences);
+    if storage::legacy_pending() {
+        state.notify(state.preferences.language.t("legacyNotCopied"));
+    }
     if let Some(version) = &options.test_update_version {
         eprintln!(
             "Luma update preview: simulated version {version}; public release check disabled"

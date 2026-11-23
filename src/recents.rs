@@ -2,7 +2,7 @@
 use crate::{
     app_artwork::Source,
     model::{App, demo_inventory, valid_app_id},
-    platform::{APP_ID, FULL_HOME_ID, HOME_ID},
+    platform::{APP_ID, FULL_HOME_ID, HOME_ID, LEGACY_APP_ID},
     state::{Direction, Effect, Overlay, State, Target},
 };
 use serde::Serialize;
@@ -46,6 +46,7 @@ fn excluded(id: &str) -> bool {
     matches!(
         id,
         APP_ID
+            | LEGACY_APP_ID
             | HOME_ID
             | FULL_HOME_ID
             | "com.luma.native"

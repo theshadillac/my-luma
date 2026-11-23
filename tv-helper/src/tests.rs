@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-const DIR: &str = "/media/developer/apps/usr/palm/applications/com.ecklf.luma";
+const DIR: &str = "/media/developer/apps/usr/palm/applications/com.theshadillac.myluma";
 const EXE: &str = "/usr/bin/com.webos.app.home";
 const FILTER_SOURCE: &str = include_str!("../../tv/home-filter.js");
 struct Fixture {
@@ -330,13 +330,43 @@ fn home_methods_reject_unknown_firmware_or_lifecycle() {
 #[test]
 fn only_luma_mounts_are_owned_even_after_package_replacement() {
     for root in [
-        "/developer/apps/usr/palm/applications/com.ecklf.luma/luma",
-        "/cryptofs/apps/usr/palm/applications/com.ecklf.luma/luma//deleted",
+        "/developer/apps/usr/palm/applications/com.theshadillac.myluma/luma",
+        "/cryptofs/apps/usr/palm/applications/com.theshadillac.myluma/luma//deleted",
     ] {
         assert!(home::exe_owned(root));
     }
     assert!(!home::exe_owned("/var/lib/other/launcher"));
-    assert!(!home::exe_owned("/com.ecklf.luma/luma/../other"));
+    assert!(!home::exe_owned("/com.theshadillac.myluma/luma/../other"));
+    // The old id's mount is still Luma's own, so a handover can unmount it.
+    assert!(home::exe_owned(
+        "/developer/apps/usr/palm/applications/com.ecklf.luma/luma"
+    ));
+}
+#[test]
+fn takeover_owned_by_the_other_install_must_be_turned_off_there_first() {
+    let f = Fixture::new();
+    home::dispatch(&f, "enable", Some(DIR), None).unwrap();
+    // As if the old com.ecklf.luma copy had enabled it.
+    let mut config = home::load(&f).unwrap().unwrap();
+    config.app_dir = "/media/developer/apps/usr/palm/applications/com.ecklf.luma".into();
+    system::write_json(&f, "/var/lib/luma-home/state.json", &config).unwrap();
+    let refused = home::dispatch(&f, "enable", Some(DIR), None).unwrap_err();
+    assert!(refused.contains("com.ecklf.luma"), "{refused}");
+    assert!(refused.contains("home.sh disable"), "{refused}");
+    assert!(
+        home::load(&f)
+            .unwrap()
+            .unwrap()
+            .app_dir
+            .ends_with("com.ecklf.luma")
+    );
+    // After the owner turns it off, this install may take over.
+    home::dispatch(&f, "disable", None, None).unwrap();
+    home::dispatch(&f, "enable", Some(DIR), None).unwrap();
+    assert_eq!(home::load(&f).unwrap().unwrap().app_dir, DIR);
+    // Enabling again from the same install (after an update) is still fine.
+    home::dispatch(&f, "enable", Some(DIR), None).unwrap();
+    home::dispatch(&f, "disable", None, None).unwrap();
 }
 #[test]
 fn executable_apply_mounts_marks_and_launches_then_restore_unmounts() {
@@ -732,7 +762,7 @@ fn missing_or_invalid_splash_sources_preserve_previous_images() {
         assert!(files::sync_splash(&f, Path::new(DIR), background).is_err());
         assert_eq!(f.read(&format!("{DIR}/splash.png")), b"default");
     }
-    assert!(files::sync_splash(&f, Path::new("/tmp/com.ecklf.luma"), "forest").is_err());
+    assert!(files::sync_splash(&f, Path::new("/tmp/com.theshadillac.myluma"), "forest").is_err());
 }
 #[test]
 fn failed_atomic_write_cleans_its_private_temporary_file() {

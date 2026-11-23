@@ -50,7 +50,10 @@ test('version sync changes only release versions and is idempotent', async (t) =
   );
   assert.equal(
     after[3],
-    before[3].replaceAll(`com.ecklf.luma_${previous}_arm.ipk`, 'com.ecklf.luma_3.1.0_arm.ipk'),
+    before[3].replaceAll(
+      `com.theshadillac.myluma_${previous}_arm.ipk`,
+      'com.theshadillac.myluma_3.1.0_arm.ipk',
+    ),
   );
   assert.deepEqual((await syncVersions(directory, { check: true })).changed, []);
   assert.deepEqual((await syncVersions(directory)).changed, []);
@@ -169,8 +172,8 @@ test('release feed and standalone manifest share the same verified package metad
   assert.equal(await fs.readFile(githubOutput, 'utf8'), `tag=v${app.version}\n`);
 
   const workflow = await fs.readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8');
-  assert.match(workflow, /dist\/com\.ecklf\.luma\.manifest\.json/);
-  assert.match(workflow, /files=\([^\n]*release\/com\.ecklf\.luma\.manifest\.json/);
+  assert.match(workflow, /dist\/com\.theshadillac\.myluma\.manifest\.json/);
+  assert.match(workflow, /files=\([^\n]*release\/com\.theshadillac\.myluma\.manifest\.json/);
 });
 
 function gateFixture({ pull = {}, previous = '2.0.3', current = '2.0.4', event = {} } = {}) {

@@ -11,7 +11,10 @@ use std::{collections::HashSet, sync::mpsc, thread};
 #[path = "platform-install.rs"]
 mod installation;
 
-pub const APP_ID: &str = "com.ecklf.luma";
+pub const APP_ID: &str = "com.theshadillac.myluma";
+/// The id My Luma used until 11.0 (shared with upstream Luma). Its data is copied on first
+/// start and it is hidden from Luma's lists, never uninstalled from inside Luma.
+pub const LEGACY_APP_ID: &str = "com.ecklf.luma";
 pub const HOME_ID: &str = "com.webos.app.home";
 pub const FULL_HOME_ID: &str = "com.webos.app.fullhome";
 
@@ -559,6 +562,7 @@ pub fn can_uninstall(id: &str) -> bool {
         && !matches!(
             id,
             APP_ID
+                | LEGACY_APP_ID
                 | HOME_ID
                 | "com.luma.native"
                 | "com.luma.launcher"
@@ -849,6 +853,7 @@ pub fn normalize_apps(raw: &Value) -> Result<Vec<App>, String> {
         let live = id == "com.webos.app.livetv";
         let visible = entry.get("visible");
         if id == APP_ID
+            || id == LEGACY_APP_ID
             || id == "com.luma.native"
             || id == "com.luma.launcher"
             || id == "com.luma.launcher.native"

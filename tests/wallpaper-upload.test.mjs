@@ -54,7 +54,7 @@ test('upload page needs no name and retains its storage-path success view', asyn
 });
 
 test('storage path resolves to the exact absolute directory and rejects unavailable or unsafe values', async () => {
-  const path = '/media/internal/.com.ecklf.luma/wallpapers';
+  const path = '/media/internal/.com.theshadillac.myluma/wallpapers';
   assert.equal(
     await loadStoragePath(async (url, options) => {
       assert.equal(url, 'info.json');

@@ -105,7 +105,10 @@ if [ "$COMMAND" = early ]; then
   [ "$(stat -c '%d %i' "$app/luma")" = "$(stat -c '%d %i' "$EXE")" ] || exit 1
   # Luma registers with SAM under this identity (src/platform.rs), as after the helper's apply.
   printf '%s\n' "$HOME_ID" >"$MARKER-target"
-  printf '%s\n' com.ecklf.luma >"$MARKER"
+  # The id of the Luma that owns Home, from its own package (My Luma moved ids in 11.0).
+  id=$(sed -n 's/^ *"id": *"\([^"]*\)".*/\1/p' "$app/appinfo.json" | head -n 1)
+  [ -n "$id" ] || exit 1
+  printf '%s\n' "$id" >"$MARKER"
   printf '%s early: Luma is Home (uptime %s)\n' "$(date)" "$(cut -d' ' -f1 /proc/uptime)" >>"$STATE/boot.log"
   exit 0
 fi

@@ -4,6 +4,31 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Set while the old com.ecklf.luma settings exist but have not been copied to this app's
+/// folder yet (My Luma 11 moved ids). Nothing is saved meanwhile, so a fresh settings file can
+/// never stand in the way of the copy.
+static LEGACY_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn legacy_pending() -> bool {
+    LEGACY_PENDING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The old app's settings files, next to where this app's would be.
+#[cfg_attr(not(all(feature = "webos", unix)), allow(dead_code))]
+fn legacy_pending_in(candidates: &[PathBuf]) -> bool {
+    let legacy = crate::platform::LEGACY_APP_ID;
+    let current = crate::platform::APP_ID;
+    let moved = |path: &PathBuf| {
+        PathBuf::from(
+            path.to_string_lossy()
+                .replace(&format!("/{current}/"), &format!("/{legacy}/"))
+                .replace(&format!("/.{current}/"), &format!("/.{legacy}/")),
+        )
+    };
+    !candidates.iter().any(|path| path.exists())
+        && candidates.iter().any(|path| moved(path).exists())
+}
+
 pub fn default_path(webos: bool) -> Result<PathBuf, String> {
     if webos {
         #[cfg(all(feature = "webos", unix))]
@@ -42,6 +67,13 @@ fn tv_path() -> Result<PathBuf, String> {
     } else {
         [developer, shared_developer, internal]
     };
+    if legacy_pending_in(&candidates) {
+        LEGACY_PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
+        eprintln!(
+            "Luma storage: settings from {} have not been copied yet; nothing is saved until then",
+            crate::platform::LEGACY_APP_ID
+        );
+    }
     tv_path_in(candidates, &legacy, unsafe { libc::geteuid() })
 }
 
@@ -175,6 +207,9 @@ pub fn load(path: &Path) -> Result<Preferences, String> {
 }
 
 pub fn save(path: &Path, preferences: &Preferences) -> Result<(), String> {
+    if legacy_pending() {
+        return Err("Settings not saved: copy them from the old Luma first".into());
+    }
     let bytes = serde_json::to_vec_pretty(preferences)
         .map_err(|e| format!("Could not encode preferences: {e}"))?;
     write_atomic(path, &bytes)
@@ -401,5 +436,37 @@ mod tests {
         assert!(blocked.is_dir());
         assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 2);
         assert_eq!(fs::read(&preferences).unwrap(), b"second");
+    }
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::legacy_pending_in;
+    use std::path::PathBuf;
+
+    #[test]
+    fn old_settings_without_a_copy_are_pending_and_a_copy_ends_it() {
+        let root = std::env::temp_dir().join(format!("luma-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let current = |base: &str| {
+            root.join(base)
+                .join(crate::platform::APP_ID)
+                .join("preferences.json")
+        };
+        let candidates: Vec<PathBuf> = ["developer", "temp"].iter().map(|b| current(b)).collect();
+        // Nothing anywhere: a new install, nothing pending.
+        assert!(!legacy_pending_in(&candidates));
+        let legacy = root
+            .join("developer")
+            .join(crate::platform::LEGACY_APP_ID)
+            .join("preferences.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "{}").unwrap();
+        assert!(legacy_pending_in(&candidates));
+        // Once the copy is in place, normal saving resumes.
+        std::fs::create_dir_all(candidates[0].parent().unwrap()).unwrap();
+        std::fs::write(&candidates[0], "{}").unwrap();
+        assert!(!legacy_pending_in(&candidates));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
