@@ -4013,7 +4013,11 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                         &[("current", assets.version.trim()), ("latest", latest)],
                     )
                 } else {
-                    language.format("currentVersion", &[("current", assets.version.trim())])
+                    format!(
+                        "{} · {}",
+                        language.format("currentVersion", &[("current", assets.version.trim())]),
+                        language.t("basedOnLuma")
+                    )
                 },
                 Rect::new(rect.x + 24.2, rect.y + 74., rect.w - 48.4, 32.),
                 text(20.8, 450, -0.02).leading(1.4),

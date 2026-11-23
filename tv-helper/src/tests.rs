@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-const DIR: &str = "/media/developer/apps/usr/palm/applications/com.theshadillac.myluma";
+const DIR: &str = "/media/developer/apps/usr/palm/applications/com.theshadillac.lume";
 const EXE: &str = "/usr/bin/com.webos.app.home";
 const FILTER_SOURCE: &str = include_str!("../../tv/home-filter.js");
 struct Fixture {
@@ -330,13 +330,13 @@ fn home_methods_reject_unknown_firmware_or_lifecycle() {
 #[test]
 fn only_luma_mounts_are_owned_even_after_package_replacement() {
     for root in [
-        "/developer/apps/usr/palm/applications/com.theshadillac.myluma/luma",
-        "/cryptofs/apps/usr/palm/applications/com.theshadillac.myluma/luma//deleted",
+        "/developer/apps/usr/palm/applications/com.theshadillac.lume/luma",
+        "/cryptofs/apps/usr/palm/applications/com.theshadillac.lume/luma//deleted",
     ] {
         assert!(home::exe_owned(root));
     }
     assert!(!home::exe_owned("/var/lib/other/launcher"));
-    assert!(!home::exe_owned("/com.theshadillac.myluma/luma/../other"));
+    assert!(!home::exe_owned("/com.theshadillac.lume/luma/../other"));
     // The old id's mount is still Luma's own, so a handover can unmount it.
     assert!(home::exe_owned(
         "/developer/apps/usr/palm/applications/com.ecklf.luma/luma"
@@ -762,7 +762,7 @@ fn missing_or_invalid_splash_sources_preserve_previous_images() {
         assert!(files::sync_splash(&f, Path::new(DIR), background).is_err());
         assert_eq!(f.read(&format!("{DIR}/splash.png")), b"default");
     }
-    assert!(files::sync_splash(&f, Path::new("/tmp/com.theshadillac.myluma"), "forest").is_err());
+    assert!(files::sync_splash(&f, Path::new("/tmp/com.theshadillac.lume"), "forest").is_err());
 }
 #[test]
 fn failed_atomic_write_cleans_its_private_temporary_file() {

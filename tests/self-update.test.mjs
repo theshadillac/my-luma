@@ -31,7 +31,7 @@ function run({
   const json = (value) => (pretty ? `${JSON.stringify(value, null, 2)}\n` : JSON.stringify(value));
   write(
     `${app}/appinfo.json`,
-    json({ id: 'com.theshadillac.myluma', version: '9.0.0', type: 'native' }),
+    json({ id: 'com.theshadillac.lume', version: '9.0.0', type: 'native' }),
   );
   write(
     `${homeState}/state.json`,
@@ -61,7 +61,7 @@ esac
   const script = source
     .replaceAll('/var/lib/luma-update', state)
     .replaceAll('/var/lib/luma-home', homeState)
-    .replaceAll('/media/developer/apps/usr/palm/applications/com.theshadillac.myluma', app)
+    .replaceAll('/media/developer/apps/usr/palm/applications/com.theshadillac.lume', app)
     .replaceAll('/proc/mounts', `${dir}/mounts`)
     .replaceAll('/var/run/luma-home', `${dir}/marker`);
   write(`${dir}/installer.sh`, script);
@@ -91,7 +91,7 @@ test('normal app update verifies the package and reports completion after launch
   const result = run();
   assert.equal(result.exit, 0);
   assert.equal(result.status.state, 'success');
-  assert.match(result.calls, /launch.*com.theshadillac.myluma/);
+  assert.match(result.calls, /launch.*com.theshadillac.lume/);
 });
 test('checksum and install failures publish retryable failure, never launch', () => {
   for (const options of [{ checksum: false }, { install: false }]) {

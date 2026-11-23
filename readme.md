@@ -128,7 +128,7 @@ https://github.com/ecklf/lg-luma/releases/latest/download/repo.json
 On your computer, replace `TV_IP`:
 
 ```sh
-scp -O dist/com.theshadillac.myluma_11.0.0_arm.ipk root@TV_IP:/tmp/luma.ipk
+scp -O dist/com.theshadillac.lume_1.0.0_arm.ipk root@TV_IP:/tmp/luma.ipk
 ssh root@TV_IP
 ```
 
@@ -136,7 +136,7 @@ In the TV's root shell:
 
 ```sh
 luna-send -i luna://com.webos.appInstallService/dev/install \
-  '{"id":"com.theshadillac.myluma","ipkUrl":"/tmp/luma.ipk","subscribe":true}'
+  '{"id":"com.theshadillac.lume","ipkUrl":"/tmp/luma.ipk","subscribe":true}'
 ```
 
 ## Replacing LG Home
@@ -158,14 +158,14 @@ other Home replacement, then run in the TV's root SSH shell:
 If you enabled Lumas autostart method earlier, disable it first:
 
 ```sh
-APP=/media/developer/apps/usr/palm/applications/com.theshadillac.myluma
+APP=/media/developer/apps/usr/palm/applications/com.theshadillac.lume
 sh "$APP/autostart.sh" disable
 ```
 
 To enable the takeover run:
 
 ```sh
-APP=/media/developer/apps/usr/palm/applications/com.theshadillac.myluma
+APP=/media/developer/apps/usr/palm/applications/com.theshadillac.lume
 sh "$APP/home.sh" enable
 ```
 
@@ -223,7 +223,7 @@ LG Home's original files remain underneath, using the same approach as
 Open Luma 25 seconds after a full cold boot. Run in the TV's root SSH shell:
 
 ```sh
-sh /media/developer/apps/usr/palm/applications/com.theshadillac.myluma/autostart.sh enable
+sh /media/developer/apps/usr/palm/applications/com.theshadillac.lume/autostart.sh enable
 ```
 
 Use this when takeover is disabled. It launches Luma as a regular app and does not remap the Home button.
@@ -231,7 +231,7 @@ Use this when takeover is disabled. It launches Luma as a regular app and does n
 Disable before enabling takeover or uninstalling Luma:
 
 ```sh
-sh /media/developer/apps/usr/palm/applications/com.theshadillac.myluma/autostart.sh disable
+sh /media/developer/apps/usr/palm/applications/com.theshadillac.lume/autostart.sh disable
 ```
 
 ### LG Input Hook Method
@@ -239,7 +239,7 @@ sh /media/developer/apps/usr/palm/applications/com.theshadillac.myluma/autostart
 You can use [LG Input Hook](https://repo.webosbrew.org/apps/org.webosbrew.inputhook/), configure an Execute action with this one-line command:
 
 ```sh
-/usr/bin/luna-send -n 1 -w 5000 luna://com.webos.service.applicationmanager/launch '{"id":"com.theshadillac.myluma"}'
+/usr/bin/luna-send -n 1 -w 5000 luna://com.webos.service.applicationmanager/launch '{"id":"com.theshadillac.lume"}'
 ```
 
 Test on a spare button first. Disable the mapping in Input Hook to restore normal Home behavior.
@@ -316,7 +316,7 @@ checksum-pinned SDL-webOS library; both downloads are cached under `.build/`.
 Output:
 
 ```text
-dist/com.theshadillac.myluma_11.0.0_arm.ipk
+dist/com.theshadillac.lume_1.0.0_arm.ipk
 dist/sha256sums
 dist/repo.json
 dist/app-icon-large.png
@@ -326,7 +326,7 @@ Open [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop), conn
 IP on port **22** as **root**, and install the IPK. Open **Luma** from the TV menu. Homebrew
 Channel must be elevated; on webOS 26 use **0.8.0-rc1 or newer** for its `lunabus.query` mapping.
 
-The native package uses **`com.theshadillac.myluma`** and installs separately from the old
+The native package uses **`com.theshadillac.lume`** and installs separately from the old
 `com.luma.launcher` web app and the former `com.luma.launcher.native` / `com.luma.native` prototypes. Native preferences
 are local JSON files and are separate for each installation; browser preferences are not migrated.
 Homebrew Channel treats this ID as a separate app rather than an update to the old launcher.

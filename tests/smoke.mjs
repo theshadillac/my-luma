@@ -426,7 +426,7 @@ try {
   assert.equal(latestPreview.available_update, null);
   assert.ok(latestPreview.ui_text.includes('No newer version found'));
   assert.ok(latestPreview.ui_text.includes('Check again'));
-  assert.ok(latestPreview.ui_text.includes(`Current version: ${currentVersion}`));
+  assert.ok(latestPreview.ui_text.includes(`Current version: ${currentVersion} · Based on Luma`));
   assert.ok(!latestPreview.ui_text.some((label) => label.startsWith('Luma v')));
   const textRenderingRow = 'settings,down,down,down,down,down,down,down,right,down,down,down';
   const textRenderingFocus = await scenario('text-rendering-focus', textRenderingRow);
@@ -438,7 +438,7 @@ try {
   assert.deepEqual(textRendering.focus, { Choice: 0 });
   assert.ok(textRendering.ui_text.includes('MSAA (default)'));
   assert.ok(textRendering.ui_text.includes('Analytic'));
-  assert.ok(textRendering.ui_text.includes('Restart Luma to apply changes.'));
+  assert.ok(textRendering.ui_text.includes('Restart Lume to apply changes.'));
   const analyticSaved = await scenario('text-rendering-saved', `${textOptions},down,enter`);
   assert.equal(analyticSaved.preferences.text_rendering, 'analytic');
   assert.deepEqual(analyticSaved.focus, { Setting: 7 });

@@ -11,7 +11,7 @@ use std::{collections::HashSet, sync::mpsc, thread};
 #[path = "platform-install.rs"]
 mod installation;
 
-pub const APP_ID: &str = "com.theshadillac.myluma";
+pub const APP_ID: &str = "com.theshadillac.lume";
 /// The id My Luma used until 11.0 (shared with upstream Luma). Its data is copied on first
 /// start and it is hidden from Luma's lists, never uninstalled from inside Luma.
 pub const LEGACY_APP_ID: &str = "com.ecklf.luma";

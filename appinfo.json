@@ -1,10 +1,10 @@
 {
-  "id": "com.theshadillac.myluma",
-  "version": "11.0.0",
+  "id": "com.theshadillac.lume",
+  "version": "1.0.0",
   "vendor": "Luma",
   "type": "native",
   "main": "luma",
-  "title": "My Luma",
+  "title": "Lume",
   "icon": "app-icon.png",
   "largeIcon": "app-icon-large.png",
   "appDescription": "A remote-first native webOS launcher.",

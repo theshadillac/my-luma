@@ -1032,7 +1032,7 @@ fn system_version_is_inside_the_update_status_card_without_a_separate_row() {
     assert!(system.draw.iter().any(|draw| matches!(
         draw,
         crate::renderer::Draw::Text(label, _, style, color, _)
-            if label == "Current version: test" && style.size == 20.8 && style.weight == 450 && color[3] == 0.73
+            if label == "Current version: test · Based on Luma" && style.size == 20.8 && style.weight == 450 && color[3] == 0.73
     )));
     assert_eq!(state.hit_test(&system.controls, 900., 200.), None);
     state.focus = Target::Sidebar(crate::state::SYSTEM_SECTION);
@@ -1150,7 +1150,7 @@ fn text_rendering_choices_persist_and_back_restores_the_system_row() {
     assert_eq!(state.focus, Target::Choice(0));
     assert!(scene(&state).draw.iter().any(|draw| matches!(
         draw,
-        crate::renderer::Draw::Text(label, ..) if label == "Restart Luma to apply changes."
+        crate::renderer::Draw::Text(label, ..) if label == "Restart Lume to apply changes."
     )));
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Choice(1));

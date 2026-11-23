@@ -22,7 +22,7 @@ export async function download(fetcher = fetch) {
 }
 
 export async function restore(file, fetcher = fetch) {
-  if (file.size > 512 * 1024) throw new Error('That file is too large to be Luma settings.');
+  if (file.size > 512 * 1024) throw new Error('That file is too large to be Lume settings.');
   const response = await fetcher('settings/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Luma-Upload': token },
@@ -53,7 +53,7 @@ if (save && file) {
     const chosen = file.files?.[0];
     file.value = '';
     if (!chosen) return;
-    if (!confirm("Replace all of Luma's settings on the TV with this backup?")) return;
+    if (!confirm("Replace all of Lume's settings on the TV with this backup?")) return;
     try {
       await restore(chosen);
       message('Settings restored on the TV.');

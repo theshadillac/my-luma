@@ -789,15 +789,15 @@ const MAX_SETTINGS: usize = 512 * 1024;
 /// read the same way as the preferences file. The Unsplash key is never part of it.
 pub fn restorable(bytes: &[u8]) -> Result<crate::model::Preferences, String> {
     let value: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|_| "That file isn't a Luma settings backup.")?;
+        serde_json::from_slice(bytes).map_err(|_| "That file isn't a Lume settings backup.")?;
     let object = value
         .as_object()
-        .ok_or("That file isn't a Luma settings backup.")?;
+        .ok_or("That file isn't a Lume settings backup.")?;
     if !["language", "background", "favorites"]
         .iter()
         .all(|key| object.contains_key(*key))
     {
-        return Err("That file isn't a Luma settings backup.".into());
+        return Err("That file isn't a Lume settings backup.".into());
     }
     let mut preferences: crate::model::Preferences =
         serde_json::from_value(value).map_err(|e| format!("That backup couldn't be read: {e}"))?;

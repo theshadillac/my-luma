@@ -18,7 +18,7 @@ dist/                        Generated ARM IPK, checksum and Homebrew feed
 
 The launcher is rendered natively, without React, JSX, Vite or a browser runtime. Node/pnpm
 remain build/deployment tools for Sharp, the webOS CLI and formatting/linting. The installed app
-is the Rust executable `luma`, with app ID `com.theshadillac.myluma`. The companion pages in
+is the Rust executable `luma`, with app ID `com.theshadillac.lume`. The companion pages in
 `assets/wallpaper-upload/` and `assets/tile-editor/` are plain HTML/CSS/JavaScript, embedded in the
 native executable and served temporarily to the owner's phone or computer; they do not render the
 TV interface.
@@ -643,10 +643,10 @@ the original process arguments available to SDL/libhelpers. To expose the actual
 sandbox's stdout/stderr, close Luma and run in the TV's root SSH shell:
 
 ```sh
-APP=/media/developer/apps/usr/palm/applications/com.theshadillac.myluma
+APP=/media/developer/apps/usr/palm/applications/com.theshadillac.lume
 XDG_RUNTIME_DIR=/tmp/xdg RUST_BACKTRACE=1 /usr/bin/jailer \
-  -t native_devmode -i com.theshadillac.myluma -p "$APP" \
-  "$APP/luma" '{"@system_native_app":true,"nid":"com.theshadillac.myluma"}'
+  -t native_devmode -i com.theshadillac.lume -p "$APP" \
+  "$APP/luma" '{"@system_native_app":true,"nid":"com.theshadillac.lume"}'
 ```
 
 Startup prints accepted launch parameters, SDL driver, actual sample count, cumulative stage
@@ -764,7 +764,7 @@ never as a registered app: on every Home key it kills Luma and starts it again. 
 of LG's executable is not an option here, because LG Home's role
 (`/usr/share/luna-service2/roles.d/com.webos.app.home.app.json`) is app-ID based
 (`"appId": "com.webos.app.home"`, names `com.webos.app.home-*`), not bound to a path, and Luma's
-role only allows `com.theshadillac.myluma` or an anonymous name.
+role only allows `com.theshadillac.lume` or an anonymous name.
 
 The staged Home runs as root, and as root the system-bus `luna-send -a` may act for an app ID.
 So when `options.webos_home` is set outside LG's executable path and the effective user is root,
@@ -875,7 +875,7 @@ runtime font/translation services or telemetry are used. Weather attribution: Op
 On interactive desktop or TV startup a separate worker checks
 `https://github.com/ecklf/lg-luma/releases/latest/download/repo.json` once per process automatically.
 **Settings → System → Check again** retries on the same worker, with one request in flight at a time.
-It only reads the `com.theshadillac.myluma` package/manifest version and compares numeric major/minor/patch
+It only reads the `com.theshadillac.lume` package/manifest version and compares numeric major/minor/patch
 components with the compiled version. Equal, older, malformed or prerelease versions do not offer
 updates. HTTP is HTTPS-only with bounded redirects, a ten-second timeout, a 256 KiB reply limit and
 no proxy; failures are logged without interrupting launch and the status card offers retry.
@@ -970,7 +970,7 @@ or rerun a workflow to rebuild the same commit.
 Only the build job checks out PR code. It has read-only repository access, no persisted
 checkout credentials and no shared build caches. A separate job with comment-writing permission
 uses the trusted base-branch workflow and GitHub's artifact API without checking out PR code.
-The package keeps the normal `com.theshadillac.myluma` identity and version, so installing it replaces
+The package keeps the normal `com.theshadillac.lume` identity and version, so installing it replaces
 the existing Luma app. These builds are for manual TV verification; the ordinary CI checks still
 run independently.
 
@@ -1037,9 +1037,9 @@ not `manifest.appDescription`. The feed generator writes the root app metadata d
 to `dist/description.html` and sets the package's `fullDescriptionUrl` to that version's release
 asset. Homebrew Channel prefers this HTML description when the URL is present. CI uploads the
 HTML alongside the feed and IPK, so the feed and its description must be published together.
-The generator also writes `dist/com.theshadillac.myluma.manifest.json`, containing exactly the app manifest
+The generator also writes `dist/com.theshadillac.lume.manifest.json`, containing exactly the app manifest
 embedded in `repo.json`. CI publishes it with every release for the central webOS Homebrew repository's
-`manifestUrl`, using `https://github.com/ecklf/lg-luma/releases/latest/download/com.theshadillac.myluma.manifest.json`.
+`manifestUrl`, using `https://github.com/ecklf/lg-luma/releases/latest/download/com.theshadillac.lume.manifest.json`.
 This standalone manifest is not a replacement for the custom repository's `repo.json` feed.
 
 Key modules: `state.rs` focus/preferences, `view.rs` geometry, `renderer.rs` GPU caches/draws,
@@ -1058,7 +1058,7 @@ existing takeover first, then explicitly select that target:
 
 ```sh
 sh /var/lib/luma-home/home.sh disable
-sh /media/developer/apps/usr/palm/applications/com.theshadillac.myluma/home.sh enable /media/developer/apps/usr/palm/applications/com.theshadillac.myluma com.webos.app.fullhome
+sh /media/developer/apps/usr/palm/applications/com.theshadillac.lume/home.sh enable /media/developer/apps/usr/palm/applications/com.theshadillac.lume com.webos.app.fullhome
 ```
 
 Use the installed package directory on production installations. The selected target is saved
