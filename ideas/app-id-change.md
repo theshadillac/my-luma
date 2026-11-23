@@ -1,6 +1,15 @@
 # Plan: moving My Luma to its own app id
 
-Status: planning (2026-11-23). Nothing is changed on the TV until Stephen approves each phase.
+Status (2026-11-23): Stephen approved the move to `com.theshadillac.myluma`.
+- Phase 0 done: settings backup in 10.1.0 (old id); new-id code with takeover guard and copy guard.
+- Phase 1 done: 11.0.0 released as "My Luma" (`com.theshadillac.myluma_11.0.0_arm.ipk`,
+  sha256 b012e39cb9e6504c8fddb4b7dda07c7dc84ddca6210e9699dee880dde8f326eb).
+- Phase 2 (side by side) is next: copy data as root, install, checklist. The old app stays Home.
+
+Changes from the plan: data is copied by one checked root command (`cp -a`, owners and modes
+kept) before first launch, not by the app, because the app may not run as root when opened
+from the app list. Until the copy exists the new app saves nothing and shows a notice. The old
+10.1.0 app ignores 11.x releases (its updater only accepts its own id).
 Backlog: B80. Short-term guard already done: version jumped to 10.0.0, and Stephen does not use
 Update on Luma in the Homebrew Channel.
 
