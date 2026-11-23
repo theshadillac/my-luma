@@ -1,6 +1,10 @@
 # Plan: moving My Luma to its own app id
 
-Status (2026-11-23): Stephen approved the move to `com.theshadillac.myluma`.
+Status (2026-11-23): renamed. The app is now **Lume** (`com.theshadillac.lume`, version 1.0.0,
+icon option A "Glow"). The 11.0.0 `com.theshadillac.myluma` release was never installed and is
+superseded; everything below applies to Lume with the folder `/media/developer/com.theshadillac.lume`.
+
+Earlier (same day): Stephen approved the move to `com.theshadillac.myluma`.
 - Phase 0 done: settings backup in 10.1.0 (old id); new-id code with takeover guard and copy guard.
 - Phase 1 done: 11.0.0 released as "My Luma" (`com.theshadillac.myluma_11.0.0_arm.ipk`,
   sha256 b012e39cb9e6504c8fddb4b7dda07c7dc84ddca6210e9699dee880dde8f326eb).
