@@ -41,6 +41,8 @@ Scoring guide: Priority 1 is for Low or Medium risk stability/performance items 
 
 - 2026-11-23: My Luma renamed **Lume** (id com.theshadillac.lume, 1.0.0, Glow icon). The 11.0.0 com.theshadillac.myluma release is superseded and was never installed.
 
+- 2026-11-24: Plex tile logo now in colour (gold chevron), Lume 1.0.1. Other single-colour tile logos stay as they are; no icon pipeline rework for now.
+
 ## 1. Features
 
 Things you see or use on the TV.
