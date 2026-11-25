@@ -5066,3 +5066,38 @@ fn power_on_is_the_return_to_active_from_standby() {
     assert!(fired[7]);
     assert!(!watch.update(&json!({"returnValue": true})));
 }
+
+#[test]
+fn stationary_pointer_events_do_not_steal_remote_focus() {
+    let mut state = ready();
+    state.pointer = false;
+    assert!(!crate::pointer_motion_active(&state, 0, 0));
+    assert!(crate::pointer_motion_active(&state, 1, 0));
+    assert!(crate::pointer_motion_active(&state, 0, -1));
+    state.pointer = true;
+    assert!(crate::pointer_motion_active(&state, 0, 0));
+}
+
+#[test]
+fn home_return_holds_hover_off_until_the_pointer_really_moves() {
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    state.pointer = false;
+    let mut motion = crate::PointerMotion::default();
+    let now = Instant::now();
+    motion.reset_at(now);
+    state.return_home();
+    let home = state.focus.clone();
+    for millis in [0, 100, 400, 749] {
+        let x = 1600 + millis as i32;
+        let at = now + Duration::from_millis(millis);
+        assert!(!motion.accept_at(&state, (x, 100), (10, 2), at));
+    }
+    assert_eq!(state.focus, home);
+    let resumed = now + Duration::from_millis(750);
+    // The restored position, even with a delta, only sets a baseline.
+    assert!(!motion.accept_at(&state, (2349, 100), (10, 2), resumed));
+    assert!(!motion.accept_at(&state, (2349, 100), (5, -3), resumed));
+    // Real movement afterwards brings the pointer back.
+    assert!(motion.accept_at(&state, (2350, 100), (1, 0), resumed));
+}

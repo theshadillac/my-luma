@@ -12,6 +12,7 @@ mod diagnostics;
 mod egl_damage;
 mod feedback;
 mod font;
+mod font_metrics;
 mod i18n;
 #[path = "input-refresh.rs"]
 mod input_refresh;
@@ -465,6 +466,52 @@ fn compose(
         view::scene_with_pill(state, assets, pill, width, now)
     } else {
         scene
+    }
+}
+
+/// Zero-movement Magic Remote events must not steal remote focus (upstream #400, B88).
+fn pointer_motion_active(state: &State, xrel: i32, yrel: i32) -> bool {
+    state.pointer || xrel != 0 || yrel != 0
+}
+
+/// Holds hover off briefly after Lume comes back to the front, so the remote's restored
+/// pointer position cannot pull focus off the first favourite (upstream #403, B96).
+#[derive(Default)]
+struct PointerMotion {
+    position: Option<(i32, i32)>,
+    suppress_until: Option<Instant>,
+}
+
+impl PointerMotion {
+    fn reset(&mut self) {
+        self.reset_at(Instant::now());
+    }
+
+    fn reset_at(&mut self, now: Instant) {
+        self.position = None;
+        self.suppress_until = Some(now + Duration::from_millis(750));
+    }
+
+    fn accept(&mut self, state: &State, x: i32, y: i32, xrel: i32, yrel: i32) -> bool {
+        self.accept_at(state, (x, y), (xrel, yrel), Instant::now())
+    }
+
+    fn accept_at(
+        &mut self,
+        state: &State,
+        position: (i32, i32),
+        relative: (i32, i32),
+        now: Instant,
+    ) -> bool {
+        let previous = self.position.replace(position);
+        // Track the pointer during the grace period without letting it take focus.
+        if self.suppress_until.is_some_and(|until| now < until) {
+            return false;
+        }
+        // webOS may report the restored cursor with a nonzero delta; the first event after a
+        // reset only sets a baseline.
+        previous.is_some_and(|previous| previous != position)
+            && pointer_motion_active(state, relative.0, relative.1)
     }
 }
 
@@ -973,6 +1020,8 @@ fn run() -> Result<(), String> {
     let mut foreground = platform::ForegroundCheck::default();
     let mut feedback = feedback::Feedback::default();
     let mut focused = !start_hidden;
+    let mut pointer_motion = PointerMotion::default();
+    pointer_motion.reset();
     // Whether SDL currently declines LG's screen saver (the ambient screen holds it).
     let mut holding_screen_saver = false;
     // A key that woke the ambient screen: its release is swallowed too.
@@ -1442,8 +1491,11 @@ fn run() -> Result<(), String> {
                 }
                 _ => {}
             }
-            // Remote keys only reach the focused surface.
-            if matches!(event, Event::KeyDown { .. } | Event::KeyUp { .. }) {
+            // Remote keys and pointer clicks only reach the focused surface.
+            if matches!(
+                event,
+                Event::KeyDown { .. } | Event::KeyUp { .. } | Event::MouseButtonDown { .. }
+            ) {
                 focused = true;
                 foreground.confirmed();
             }
@@ -1473,6 +1525,7 @@ fn run() -> Result<(), String> {
                         press = None;
                         back_button.cancel();
                         pending = state.return_home();
+                        pointer_motion.reset();
                         // A staged Home must come forward itself. If it does not, its
                         // registration would leave the Home key dead: check below.
                         if end_registration.is_some() {
@@ -1507,6 +1560,7 @@ fn run() -> Result<(), String> {
                         tile_editor_service.set_active(false, &[]);
                         visible = false;
                         focused = false;
+                        pointer_motion.reset();
                         press = None;
                         back_button.cancel();
                         if matches!(state.overlay, Some(Overlay::SystemKeyboard)) {
@@ -1530,6 +1584,7 @@ fn run() -> Result<(), String> {
                             tile_editor_service.set_active(false, &[]);
                         }
                         focused = false;
+                        pointer_motion.reset();
                         press = None;
                         back_button.cancel();
                     }
@@ -1578,6 +1633,7 @@ fn run() -> Result<(), String> {
                                 press = None;
                                 back_button.cancel();
                                 pending = state.return_home();
+                                pointer_motion.reset();
                                 cue = Some(Cue::Back);
                             }
                         }
@@ -1677,9 +1733,15 @@ fn run() -> Result<(), String> {
                         cue = Some(Cue::Select);
                     }
                 }
-                Event::MouseMotion { x, y, .. }
-                    if state.moving.is_none()
-                        && !matches!(state.overlay, Some(Overlay::SystemKeyboard)) =>
+                Event::MouseMotion {
+                    x, y, xrel, yrel, ..
+                } if state.moving.is_none()
+                    && !matches!(state.overlay, Some(Overlay::SystemKeyboard))
+                    && pointer_motion_active(&state, xrel, yrel)
+                    && (!webos
+                        || (focused
+                            && visible
+                            && pointer_motion.accept(&state, x, y, xrel, yrel))) =>
                 {
                     let hovered = hit(&scene.controls, &window, x, y, &state);
                     if let Some(target) = hovered.clone() {

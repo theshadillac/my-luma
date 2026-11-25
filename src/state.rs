@@ -1199,13 +1199,13 @@ impl State {
                     && app.title.to_lowercase().contains(&query)
             })
             .collect();
-        apps.sort_by(|a, b| {
-            let rank = |app: &App| {
-                ids.iter()
-                    .position(|id| id == &app.id)
-                    .unwrap_or(usize::MAX)
-            };
-            let usage = |app: &App| match self.preferences.app_sorting {
+        // Each key is built once per app instead of on every comparison (upstream aa007ba).
+        apps.sort_by_cached_key(|app| {
+            let rank = ids
+                .iter()
+                .position(|id| id == &app.id)
+                .unwrap_or(usize::MAX);
+            let usage = match self.preferences.app_sorting {
                 crate::model::AppSorting::Alphabetical => 0,
                 crate::model::AppSorting::Usage => self
                     .preferences
@@ -1214,11 +1214,12 @@ impl State {
                     .copied()
                     .unwrap_or(0),
             };
-            rank(a)
-                .cmp(&rank(b))
-                .then_with(|| usage(b).cmp(&usage(a)))
-                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
-                .then_with(|| a.id.cmp(&b.id))
+            (
+                rank,
+                std::cmp::Reverse(usage),
+                app.title.to_lowercase(),
+                app.id.as_str(),
+            )
         });
         apps
     }
