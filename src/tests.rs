@@ -5063,10 +5063,70 @@ fn power_on_is_the_return_to_active_from_standby() {
         json!({"returnValue": true, "state": "Active"}),
         json!({"returnValue": true, "state": "Active"}),
     ];
-    let fired: Vec<bool> = replies.iter().map(|reply| watch.update(reply)).collect();
-    assert_eq!(fired.iter().filter(|fired| **fired).count(), 1);
-    assert!(fired[7]);
-    assert!(!watch.update(&json!({"returnValue": true})));
+    use crate::platform::PowerChange::{Off, On};
+    let fired: Vec<_> = replies.iter().map(|reply| watch.update(reply)).collect();
+    // Off as soon as the power off is requested (screen still lit), On only at Active.
+    assert_eq!(
+        fired,
+        vec![
+            None,
+            Some(Off),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(On),
+            None
+        ]
+    );
+    assert_eq!(watch.update(&json!({"returnValue": true})), None);
+    // The next power off is announced again.
+    assert_eq!(
+        watch
+            .update(&json!({"state": "Active", "processing": "Request Power Off", "onOff": "off"})),
+        Some(Off)
+    );
+}
+
+#[test]
+fn ambient_at_power_on_is_ready_before_the_screen_comes_back() {
+    let mut state = ready();
+    state.preferences.power_on = crate::model::PowerOn::Ambient;
+    state.open(1);
+    assert!(state.arm_power_on_ambient());
+    assert_eq!(state.page, Page::Home);
+    // Fully faded in already: nothing of Home shows when the TV wakes.
+    assert_eq!(state.ambient_progress(), (1., 1.));
+    state.powered_on();
+    assert_eq!(
+        state.ambient_progress(),
+        (1., 1.),
+        "power on keeps it, no new fade"
+    );
+    // Without arming (e.g. a wake the off message missed) it still fades in as before.
+    let mut state = ready();
+    state.preferences.power_on = crate::model::PowerOn::Ambient;
+    state.powered_on();
+    assert!(state.ambient.is_some());
+    assert!(state.ambient_progress().0 < 0.5);
+}
+
+#[test]
+fn a_wake_into_another_app_drops_the_prepared_ambient_screen() {
+    let mut state = ready();
+    state.preferences.power_on = crate::model::PowerOn::Ambient;
+    assert!(state.arm_power_on_ambient());
+    state.power_on_missed();
+    assert!(state.ambient.is_none());
+    // Home at power on never prepares it.
+    let mut state = ready();
+    assert!(!state.arm_power_on_ambient());
+    assert!(state.ambient.is_none());
+    // A missed wake without arming leaves a timer-started ambient screen alone.
+    state.ambient = Some(std::time::Instant::now());
+    state.power_on_missed();
+    assert!(state.ambient.is_some());
 }
 
 #[test]

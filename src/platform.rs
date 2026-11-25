@@ -1044,6 +1044,16 @@ impl PowerClock {
 )]
 pub struct PowerWatch {
     standby: bool,
+    off_announced: bool,
+}
+
+/// A power change worth acting on, from tvpower's getPowerState replies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerChange {
+    /// The TV started turning off (the first "off" reply, while the screen is still lit).
+    Off,
+    /// The TV is fully back on ("Active" after any other state).
+    On,
 }
 
 #[cfg_attr(
@@ -1051,16 +1061,28 @@ pub struct PowerWatch {
     allow(dead_code)
 )]
 impl PowerWatch {
-    /// True once per return to "Active" after any other state.
-    pub fn update(&mut self, reply: &serde_json::Value) -> bool {
-        let Some(state) = reply.get("state").and_then(serde_json::Value::as_str) else {
-            return false;
-        };
-        if state == "Active" {
-            std::mem::take(&mut self.standby)
-        } else {
-            self.standby = true;
-            false
+    /// Off once when the TV starts turning off; On once per return to "Active" after any
+    /// other state.
+    pub fn update(&mut self, reply: &serde_json::Value) -> Option<PowerChange> {
+        let state = reply.get("state").and_then(serde_json::Value::as_str)?;
+        let off = reply.get("onOff").and_then(serde_json::Value::as_str) == Some("off");
+        if state == "Active" && !off {
+            self.off_announced = false;
+            return std::mem::take(&mut self.standby).then_some(PowerChange::On);
         }
+        if state != "Active" {
+            self.standby = true;
+        }
+        if (off || state != "Active") && !self.off_announced && !self.standby_was_on_reply(reply) {
+            self.off_announced = true;
+            return Some(PowerChange::Off);
+        }
+        None
+    }
+
+    /// "Prepare Power On" and "Screen On" replies come while still in standby; they are
+    /// the way back, not a new power off.
+    fn standby_was_on_reply(&self, reply: &serde_json::Value) -> bool {
+        reply.get("onOff").and_then(serde_json::Value::as_str) == Some("on")
     }
 }

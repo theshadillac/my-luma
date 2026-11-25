@@ -484,6 +484,8 @@ pub struct State {
     drawer_return: Option<Target>,
     /// Ambient started from the quick panel, whatever its idle timer.
     ambient_manual: bool,
+    /// The ambient screen was set up as the TV turned off (ambient at power on).
+    ambient_armed: bool,
     /// Until the first app list arrives (or the user presses something), Home's focus belongs on
     /// the first app, not the tab bar it starts on while nothing is loaded yet.
     settle_focus: bool,
@@ -533,6 +535,7 @@ impl State {
             page_motion: None,
             drawer_return: None,
             ambient_manual: false,
+            ambient_armed: false,
             settle_focus: true,
             ui_sounds_unavailable: false,
             ui_sounds_detail: None,
@@ -920,13 +923,55 @@ impl State {
                 self.ambient_manual = false;
             }
             crate::model::PowerOn::Ambient => {
-                self.ambient = Some(Instant::now());
+                // Already up since power off: keep it, so Home never shows first.
+                if !(self.ambient_armed && self.ambient.is_some()) {
+                    self.ambient = Some(Instant::now());
+                }
                 // Like the quick panel's Ambient button: shown even with the timer off.
                 self.ambient_manual = true;
                 self.pointer = false;
             }
         }
+        self.ambient_armed = false;
         self.dirty = true;
+    }
+
+    /// The TV started turning off with Luma in front. With ambient at power on, switch to a
+    /// fully faded-in ambient screen now, while the panel goes dark, so the TV wakes up
+    /// straight into it. Returns whether it did.
+    pub fn arm_power_on_ambient(&mut self) -> bool {
+        if self.preferences.power_on != crate::model::PowerOn::Ambient {
+            return false;
+        }
+        self.overlay = None;
+        self.panel_started = None;
+        self.moving = None;
+        self.waking = None;
+        if self.page != Page::Home {
+            self.open(0);
+        }
+        self.focus = self.first_content();
+        let faded = Duration::from_secs_f32(AMBIENT_DIM_START + AMBIENT_DIM_FADE);
+        self.ambient = Some(
+            Instant::now()
+                .checked_sub(faded)
+                .unwrap_or_else(Instant::now),
+        );
+        self.ambient_manual = true;
+        self.ambient_armed = true;
+        self.pointer = false;
+        self.dirty = true;
+        true
+    }
+
+    /// The TV came back to another app or input: drop the ambient screen set up at power off,
+    /// so opening Luma later shows Home as usual.
+    pub fn power_on_missed(&mut self) {
+        if std::mem::take(&mut self.ambient_armed) {
+            self.ambient = None;
+            self.ambient_manual = false;
+            self.dirty = true;
+        }
     }
 
     /// Starts the ambient screen once Home has been idle long enough; only while Luma is seen.
