@@ -215,6 +215,7 @@ pub enum Target {
     QuickAll,
     QuickToggle(crate::model::QuickKey),
     ClockPosition,
+    ClockStyle,
     /// The top bar's Inputs button (Settings → Widgets → Inputs) and its menu's rows.
     InputsButton,
     InputPick(String),
@@ -2329,6 +2330,7 @@ impl State {
                     Target::ClockTimeFormat,
                     Target::ClockSize,
                     Target::ClockPosition,
+                    Target::ClockStyle,
                 ]),
                 Some(Subpage::QuickPanel) => Some(&QUICK_TOGGLES),
                 _ => None,
@@ -2357,6 +2359,7 @@ impl State {
                                 | Target::ClockTimeFormat
                                 | Target::ClockSize
                                 | Target::ClockPosition
+                                | Target::ClockStyle
                                 | Target::DateFormat
                         ) =>
                     {
@@ -3375,6 +3378,11 @@ impl State {
             Target::MoreApps => self.open_drawer(),
             Target::ClockPosition => {
                 self.preferences.clock_position = self.preferences.clock_position.next();
+                self.dirty = true;
+                return vec![Effect::Save];
+            }
+            Target::ClockStyle => {
+                self.preferences.clock_style = self.preferences.clock_style.next();
                 self.dirty = true;
                 return vec![Effect::Save];
             }

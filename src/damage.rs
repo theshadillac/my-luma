@@ -86,6 +86,12 @@ pub fn bounds(command: &Draw) -> Option<Rect> {
         | Draw::TintedImage(_, rect, ..)
         | Draw::AppImage(_, rect, ..) => Some(rect.inset(-1.)),
         Draw::Shadow(rect, _, blur, _) => Some(rect.inset(-blur - 1.)),
+        // Any turn stays inside the circle through the corners, around the centre.
+        Draw::Rotated(rect, ..) => {
+            let reach = (rect.w * rect.w + rect.h * rect.h).sqrt() / 2. + 2.;
+            let (cx, cy) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
+            Some(Rect::new(cx - reach, cy - reach, reach * 2., reach * 2.))
+        }
         // Glyphs may extend past their layout box: redraw the full width of the line.
         Draw::Text(_, rect, style, ..) => Some(Rect::new(
             0.,
@@ -105,6 +111,9 @@ fn same(a: &Draw, b: &Draw) -> bool {
         }
         (Draw::RoundedGradient(r1, a1, t1, b1), Draw::RoundedGradient(r2, a2, t2, b2)) => {
             rect(r1, r2) && a1 == a2 && t1 == t2 && b1 == b2
+        }
+        (Draw::Rotated(r1, a1, b1, c1), Draw::Rotated(r2, a2, b2, c2)) => {
+            rect(r1, r2) && a1 == a2 && b1 == b2 && c1 == c2
         }
         (Draw::Shadow(r1, a1, b1, c1), Draw::Shadow(r2, a2, b2, c2)) => {
             rect(r1, r2) && a1 == a2 && b1 == b2 && c1 == c2

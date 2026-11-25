@@ -283,6 +283,75 @@ fn deserialize_clock_position<'de, D: serde::Deserializer<'de>>(
     )
 }
 
+/// How the big Home and ambient clock is drawn (fork option). Glass is the original.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockStyle {
+    #[default]
+    Glass,
+    Thin,
+    Bold,
+    Stacked,
+    Minimal,
+    Ticks,
+    Dots,
+    Ring,
+}
+
+impl ClockStyle {
+    pub const ALL: [Self; 8] = [
+        Self::Glass,
+        Self::Thin,
+        Self::Bold,
+        Self::Stacked,
+        Self::Minimal,
+        Self::Ticks,
+        Self::Dots,
+        Self::Ring,
+    ];
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Glass => "glass",
+            Self::Thin => "thin",
+            Self::Bold => "bold",
+            Self::Stacked => "stacked",
+            Self::Minimal => "minimal",
+            Self::Ticks => "ticks",
+            Self::Dots => "dots",
+            Self::Ring => "ring",
+        }
+    }
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Glass => "clockStyleGlass",
+            Self::Thin => "clockStyleThin",
+            Self::Bold => "clockStyleBold",
+            Self::Stacked => "clockStyleStacked",
+            Self::Minimal => "clockStyleMinimal",
+            Self::Ticks => "clockStyleTicks",
+            Self::Dots => "clockStyleDots",
+            Self::Ring => "clockStyleRing",
+        }
+    }
+    pub fn analog(self) -> bool {
+        matches!(self, Self::Minimal | Self::Ticks | Self::Dots | Self::Ring)
+    }
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1) % Self::ALL.len()]
+    }
+}
+
+/// Unknown or missing values keep the original glass clock instead of rejecting preferences.
+fn deserialize_clock_style<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ClockStyle, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(ClockStyle::ALL
+        .into_iter()
+        .find(|style| value.as_str() == Some(style.key()))
+        .unwrap_or_default())
+}
+
 /// A button of the quick settings panel behind the gear (fork).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum QuickKey {
@@ -590,6 +659,9 @@ pub struct Preferences {
     /// Where Home's clock block sits (fork option).
     #[serde(deserialize_with = "deserialize_clock_position")]
     pub clock_position: ClockPosition,
+    /// How the big clock is drawn: digital looks or analog faces (fork option).
+    #[serde(deserialize_with = "deserialize_clock_style")]
+    pub clock_style: ClockStyle,
     /// The faint "More apps" hint under Home's last row (fork option).
     #[serde(deserialize_with = "deserialize_more_apps_hint")]
     pub more_apps_hint: MoreAppsHint,
@@ -673,6 +745,7 @@ impl Default for Preferences {
             power_on: PowerOn::default(),
             tile_lift: true,
             clock_position: ClockPosition::Default,
+            clock_style: ClockStyle::Glass,
             more_apps_hint: MoreAppsHint::Always,
             quick_hidden: Vec::new(),
             pixel_shift: false,

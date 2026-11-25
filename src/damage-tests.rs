@@ -193,3 +193,22 @@ fn an_unchanged_frame_names_a_pixel_inside_the_drawable() {
         );
     }
 }
+
+#[test]
+fn a_turned_bar_is_covered_at_every_angle() {
+    let bar = Rect::new(100., 100., 10., 200.);
+    let covered = bounds(&Draw::Rotated(bar, 5., 1.1, [1., 1., 1., 1.])).unwrap();
+    for angle in [0., 0.7, 1.5, 2.4, 3.1, 4.5] {
+        let (sin, cos) = f32::sin_cos(angle);
+        for (lx, ly) in [(-5., -100.), (5., -100.), (-5., 100.), (5., 100.)] {
+            let (x, y) = (105. + lx * cos - ly * sin, 200. + lx * sin + ly * cos);
+            assert!(
+                x >= covered.x
+                    && x <= covered.x + covered.w
+                    && y >= covered.y
+                    && y <= covered.y + covered.h,
+                "{angle}: {x},{y}"
+            );
+        }
+    }
+}

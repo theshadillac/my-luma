@@ -1,7 +1,7 @@
 //! Screen geometry and styling mirror the web UI's 1920×1080 / 16px-rem layout.
 use crate::{
     i18n::Language,
-    model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode},
+    model::{App, BACKGROUNDS, CATEGORIES, ClockStyle, Input, InputMode},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
         AMBIENT_ROW, APP_SORTING_ROW, APPS_COLUMNS, AmbientSpot, BACK_RECENTS_ROW, Control,
@@ -287,6 +287,7 @@ impl Scene {
         for draw in &mut self.draw[from..to] {
             match draw {
                 Draw::Shape(rect, ..)
+                | Draw::Rotated(rect, ..)
                 | Draw::RoundedGradient(rect, ..)
                 | Draw::Shadow(rect, ..)
                 | Draw::Text(_, rect, ..)
@@ -303,6 +304,7 @@ impl Scene {
         for draw in &mut self.draw[from..to] {
             match draw {
                 Draw::Shape(rect, ..)
+                | Draw::Rotated(rect, ..)
                 | Draw::RoundedGradient(rect, ..)
                 | Draw::Shadow(rect, ..)
                 | Draw::Text(_, rect, ..)
@@ -324,6 +326,7 @@ impl Scene {
             };
             match draw {
                 Draw::Shape(_, _, _, color)
+                | Draw::Rotated(_, _, _, color)
                 | Draw::Shadow(_, _, _, color)
                 | Draw::Text(_, _, _, color, _)
                 | Draw::TintedImage(_, _, _, _, color)
@@ -1712,9 +1715,39 @@ fn glass_clock(
     const CEILING: f32 = 56.;
     let largest = ((bottom - CEILING - date_height - forecast_height) / 1.02).max(80.);
     let size = ((room / 1.02).clamp(96., 330.) * scale).min(largest);
-    let style = text(size, 600, -0.045).leading(1.0);
-    let fitted = assets.fit_text(&clock, style, 1500.);
-    let clock_height = fitted.size * 1.02;
+    let face = state.preferences.clock_style;
+    let style = match face {
+        ClockStyle::Thin => text(size, 200, -0.03),
+        ClockStyle::Bold => text(size, 800, -0.04),
+        ClockStyle::Stacked => text(size * 0.5, 350, -0.03),
+        _ => text(size, 600, -0.045),
+    }
+    .leading(1.0);
+    // Stacked shows hours over minutes; every other digital look is one line.
+    let (hours, minutes) = clock.split_once(':').unwrap_or((clock.as_str(), ""));
+    let widest = if face == ClockStyle::Stacked {
+        if hours.len() >= minutes.len() {
+            hours
+        } else {
+            minutes
+        }
+    } else {
+        clock.as_str()
+    };
+    let fitted = assets.fit_text(widest, style, 1500.);
+    // A dial is as tall as the digits would be; two stacked lines fill the same height.
+    let clock_height = if face == ClockStyle::Stacked {
+        fitted.size * 2.04
+    } else if face.analog() {
+        size * 1.02
+    } else {
+        fitted.size * 1.02
+    };
+    let face_width = if face.analog() {
+        clock_height
+    } else {
+        assets.width(widest, fitted)
+    };
     let block = date_height + clock_height + forecast_height;
     let centred = top + (bottom - top - block) / 2.;
     let home_y = (centred
@@ -1733,10 +1766,10 @@ fn glass_clock(
     } else {
         0.
     };
-    let block_width = assets
-        .width(&clock, fitted)
-        .max(date_width)
-        .max(if days.is_some() { FORECAST_WIDTH } else { 0. });
+    let block_width =
+        face_width
+            .max(date_width)
+            .max(if days.is_some() { FORECAST_WIDTH } else { 0. });
     // Each stop as an offset from Home's position, with comfortable padding in the corners.
     let offset = |spot: AmbientSpot| {
         const PAD_X: f32 = 120.;
@@ -1810,9 +1843,34 @@ fn glass_clock(
         );
         y += date_height;
     }
-    let width = assets.width(&clock, fitted) + 2.;
-    let rect = Rect::new(960. + dx - width / 2., y, width, clock_height);
-    glass_text(out, &clock, rect, fitted, opacity);
+    match face {
+        ClockStyle::Glass => {
+            let width = assets.width(&clock, fitted) + 2.;
+            let rect = Rect::new(960. + dx - width / 2., y, width, clock_height);
+            glass_text(out, &clock, rect, fitted, opacity);
+        }
+        ClockStyle::Thin | ClockStyle::Bold => {
+            let width = assets.width(&clock, fitted) + 2.;
+            let rect = Rect::new(960. + dx - width / 2., y, width, clock_height);
+            solid_text(out, &clock, rect, fitted, 0.9 * opacity);
+        }
+        ClockStyle::Stacked => {
+            let line = fitted.size * 1.02;
+            for (index, (part, alpha)) in [(hours, 0.92), (minutes, 0.6)].into_iter().enumerate() {
+                let width = assets.width(part, fitted) + 2.;
+                let rect = Rect::new(960. + dx - width / 2., y + index as f32 * line, width, line);
+                solid_text(out, part, rect, fitted, alpha * opacity);
+            }
+        }
+        _ => analog_face(
+            out,
+            face,
+            now,
+            (960. + dx, y + clock_height / 2.),
+            clock_height / 2.,
+            opacity,
+        ),
+    }
     y += clock_height;
     if let Some(days) = days {
         forecast_row(
@@ -1825,6 +1883,162 @@ fn glass_clock(
             opacity,
         );
     }
+}
+
+/// Plain soft-white digits with a faint drop shadow (Thin, Bold and Stacked clock styles).
+fn solid_text(out: &mut Scene, value: &str, rect: Rect, style: TextStyle, alpha: f32) {
+    // Ambient raises the clock's prominence past 1; keep colours within full opacity.
+    let alpha = alpha.min(1.);
+    out.text(
+        value.to_owned(),
+        Rect::new(rect.x, rect.y + 4., rect.w, rect.h),
+        style,
+        c(0x000000, 0.14 * alpha),
+        false,
+    );
+    out.text(value.to_owned(), rect, style, c(0xffffff, alpha), false);
+}
+
+/// An analog dial of `radius` around `centre`: hour and minute hands (no seconds hand, so it
+/// changes once a minute like the digits), plus the face's marks.
+fn analog_face(
+    out: &mut Scene,
+    face: ClockStyle,
+    now: OffsetDateTime,
+    centre: (f32, f32),
+    radius: f32,
+    opacity: f32,
+) {
+    use std::f32::consts::TAU;
+    // Ambient raises prominence past 1; the brightest mark (0.95) then reaches full opacity.
+    let opacity = opacity.min(1. / 0.95);
+    let (cx, cy) = centre;
+    let r = radius;
+    // A bar from `inner` to `outer` along `angle` (clockwise from 12), `width` wide.
+    let bar = |out: &mut Scene, angle: f32, inner: f32, outer: f32, width: f32, color: Color| {
+        let middle = (inner + outer) / 2.;
+        let (x, y) = (cx + angle.sin() * middle, cy - angle.cos() * middle);
+        let length = outer - inner;
+        out.draw.push(Draw::Rotated(
+            Rect::new(x - width / 2., y - length / 2., width, length),
+            width / 2.,
+            angle,
+            color,
+        ));
+    };
+    let dot = |out: &mut Scene, x: f32, y: f32, size: f32, color: Color| {
+        out.draw.push(Draw::Shape(
+            Rect::new(x - size, y - size, size * 2., size * 2.),
+            size,
+            0.,
+            color,
+        ));
+    };
+    match face {
+        ClockStyle::Ticks => {
+            for hour in 0..12 {
+                let angle = hour as f32 / 12. * TAU;
+                let major = hour % 3 == 0;
+                let (length, width, alpha) = if major {
+                    (0.16, 0.035, 0.9)
+                } else {
+                    (0.08, 0.018, 0.5)
+                };
+                bar(
+                    out,
+                    angle,
+                    r * (0.98 - length),
+                    r * 0.98,
+                    (r * width).max(2.),
+                    c(0xffffff, alpha * opacity),
+                );
+            }
+        }
+        ClockStyle::Dots => {
+            for hour in 0..12 {
+                let angle = hour as f32 / 12. * TAU;
+                let (size, alpha) = if hour % 3 == 0 {
+                    (0.032, 0.9)
+                } else {
+                    (0.019, 0.5)
+                };
+                dot(
+                    out,
+                    cx + angle.sin() * r * 0.92,
+                    cy - angle.cos() * r * 0.92,
+                    (r * size).max(1.5),
+                    c(0xffffff, alpha * opacity),
+                );
+            }
+        }
+        ClockStyle::Ring => {
+            let stroke = (r * 0.012).max(2.);
+            out.draw.push(Draw::Shape(
+                Rect::new(cx - r, cy - r, r * 2., r * 2.),
+                r,
+                stroke,
+                c(0xffffff, 0.38 * opacity),
+            ));
+            let numeral = text(r * 0.17, 450, 0.);
+            for (hour, label) in [(0, "12"), (3, "3"), (6, "6"), (9, "9")] {
+                let angle = hour as f32 / 12. * TAU;
+                let (x, y) = (cx + angle.sin() * r * 0.76, cy - angle.cos() * r * 0.76);
+                let (w, h) = (r * 0.5, r * 0.2);
+                out.text(
+                    label,
+                    Rect::new(x - w / 2., y - h / 2., w, h),
+                    numeral.leading(1.),
+                    c(0xffffff, 0.85 * opacity),
+                    true,
+                );
+            }
+        }
+        _ => {}
+    }
+    // Ring keeps its hands inside the numerals; Minimal has nothing else, so bolder hands.
+    let (hour_len, minute_len, weight) = match face {
+        ClockStyle::Ring => (0.46, 0.64, 1.),
+        ClockStyle::Minimal => (0.52, 0.84, 1.25),
+        _ => (0.52, 0.8, 1.),
+    };
+    let minutes = now.minute() as f32;
+    let hours = (now.hour() % 12) as f32 + minutes / 60.;
+    let hands = [
+        (hours / 12. * TAU, r * hour_len, r * 0.06 * weight),
+        (minutes / 60. * TAU, r * minute_len, r * 0.038 * weight),
+    ];
+    // A soft shadow under the hands keeps them readable on bright wallpapers.
+    for (angle, length, width) in hands {
+        let width = width.max(3.);
+        let (sx, sy) = (0., r * 0.02 + 2.);
+        let middle = (length - r * 0.08) / 2.;
+        let (x, y) = (
+            cx + sx + angle.sin() * middle,
+            cy + sy - angle.cos() * middle,
+        );
+        out.draw.push(Draw::Rotated(
+            Rect::new(
+                x - width / 2.,
+                y - (length + r * 0.08) / 2.,
+                width,
+                length + r * 0.08,
+            ),
+            width / 2.,
+            angle,
+            c(0x000000, 0.22 * opacity),
+        ));
+    }
+    for (angle, length, width) in hands {
+        bar(
+            out,
+            angle,
+            -r * 0.08,
+            length,
+            width.max(3.),
+            c(0xffffff, 0.92 * opacity),
+        );
+    }
+    dot(out, cx, cy, (r * 0.05).max(4.), c(0xffffff, 0.95 * opacity));
 }
 
 /// Frosted-glass digits: a faint drop shadow, a translucent body that lets the wallpaper
@@ -4369,6 +4583,11 @@ fn clock_settings(out: &mut Scene, state: &State, assets: &Assets) {
             Target::ClockPosition,
             "clockPosition",
             language.t(state.preferences.clock_position.label_key()),
+        ),
+        (
+            Target::ClockStyle,
+            "clockStyle",
+            language.t(state.preferences.clock_style.label_key()),
         ),
     ]
     .into_iter()

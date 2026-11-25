@@ -5101,3 +5101,80 @@ fn home_return_holds_hover_off_until_the_pointer_really_moves() {
     // Real movement afterwards brings the pointer back.
     assert!(motion.accept_at(&state, (2350, 100), (1, 0), resumed));
 }
+
+#[test]
+fn clock_style_cycles_through_all_eight_and_survives_a_restart() {
+    use crate::model::ClockStyle;
+    let mut state = ready();
+    state.open(2);
+    state.subpage = Some(crate::state::Subpage::Clock);
+    state.focus = Target::ClockStyle;
+    let mut seen = vec![state.preferences.clock_style];
+    for _ in 0..8 {
+        assert_eq!(state.activate(), vec![Effect::Save]);
+        seen.push(state.preferences.clock_style);
+    }
+    assert_eq!(&seen[..8], &ClockStyle::ALL);
+    assert_eq!(seen[8], ClockStyle::Glass);
+    state.preferences.clock_style = ClockStyle::Ticks;
+    let saved = serde_json::to_value(&state.preferences).unwrap();
+    assert_eq!(saved["clock_style"], "ticks");
+    let restored: Preferences = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored.clock_style, ClockStyle::Ticks);
+    // Older settings files and unknown names keep the original glass clock.
+    let old: Preferences = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(old.clock_style, ClockStyle::Glass);
+    let odd: Preferences = serde_json::from_value(json!({"clock_style": "sundial"})).unwrap();
+    assert_eq!(odd.clock_style, ClockStyle::Glass);
+}
+
+#[test]
+fn analog_clock_styles_draw_hands_instead_of_digits() {
+    use crate::model::ClockStyle;
+    use crate::renderer::Draw;
+    // 2026-11-25 10:25 UTC
+    let now = time::OffsetDateTime::from_unix_timestamp(1_795_602_300).unwrap();
+    for style in ClockStyle::ALL {
+        let mut state = ready();
+        state.preferences.glass_clock = true;
+        state.preferences.clock_style = style;
+        let scene = scene_at(&state, now);
+        let rotated = scene
+            .draw
+            .iter()
+            .filter(|draw| matches!(draw, Draw::Rotated(..)))
+            .count();
+        let digits = scene.draw.iter().any(
+            |draw| matches!(draw, Draw::Text(value, ..) if value.contains(":25") || value == "25"),
+        );
+        if style.analog() {
+            // Two hands with their shadows, plus twelve ticks for Ticks.
+            let expected = if style == ClockStyle::Ticks { 16 } else { 4 };
+            assert_eq!(rotated, expected, "{style:?}");
+            assert!(!digits, "{style:?}");
+        } else {
+            assert_eq!(rotated, 0, "{style:?}");
+            assert!(digits, "{style:?}");
+        }
+    }
+}
+
+#[test]
+fn clock_settings_list_the_style_row() {
+    let mut state = ready();
+    state.open(2);
+    state.subpage = Some(crate::state::Subpage::Clock);
+    state.focus = Target::ClockPosition;
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::ClockStyle);
+    let texts: Vec<_> = scene(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(value, ..) => Some(value.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.iter().any(|t| t == "Style"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Glass"), "{texts:?}");
+}

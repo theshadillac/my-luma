@@ -10,7 +10,7 @@ directory = Path(sys.argv[1])
 font = TTFont(directory / "font.ttf")
 axes = {axis.axisTag for axis in font["fvar"].axes} if "fvar" in font else set()
 metrics = {}
-for weight in (350, 400, 450, 500, 550, 600, 650, 800):
+for weight in (200, 350, 400, 450, 500, 550, 600, 650, 800):
     for display in (False, True):
         values = {"wght": weight} if "wght" in axes else {}
         if "opsz" in axes:
