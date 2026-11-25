@@ -43,7 +43,8 @@ Scoring guide: Priority 1 is for Low or Medium risk stability/performance items 
 
 - 2026-11-24: Plex tile logo now in colour (gold chevron), Lume 1.0.1. Other single-colour tile logos stay as they are; no icon pipeline rework for now.
 - 2026-11-25: Lume 1.0.2 (B88, B96, B107, B108) and 1.1.0 (clock styles: Glass, Thin, Bold, Stacked, and analog Minimal, Ticks, Dots, Ring; Home and ambient) released. B109 and B97 approved, each pending a TV check first. B92, B89, B99-B102, B111-B116 skipped.
-- 2026-11-25: Lume 1.1.1 (B109) and 1.2.0 (Discover marks photos already saved, by Unsplash id from 1.2.0 on; New collection on the TV, kept while empty, removable while empty) released. B97 dropped (no brand logos stored on the G5). Open: ambient at power-on not consistent; waiting on a TV log after a miss.
+- 2026-11-25: Lume 1.1.1 (B109) and 1.2.0 (Discover marks photos already saved, by Unsplash id from 1.2.0 on; New collection on the TV, kept while empty, removable while empty) released. B97 dropped (no brand logos stored on the G5). Ambient at power-on: Home showed briefly before ambient faded in.
+- 2026-11-25: Lume 1.2.1 sets up a fully faded-in ambient screen when tvpower announces "Request Power Off" (Lume in front), so the TV wakes straight into it; dropped if the TV wakes into another app.
 
 ## 1. Features
 
