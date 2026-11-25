@@ -7,6 +7,7 @@ fn custom(index: u32) -> Wallpaper {
         credit: None,
         id: format!("custom-{index:032x}"),
         directory: PathBuf::from(format!("/preview/wallpapers/custom-{index:032x}")),
+        unsplash: None,
         has_original: true,
     }
 }
@@ -1137,4 +1138,133 @@ fn holidays_can_alternate_with_photos_or_be_hidden() {
     state.preferences.holiday_mode = crate::collections::HolidayMode::TakeOver;
     assert!(state.refresh_collection(december));
     assert_eq!(state.collection.id, "christmas");
+}
+
+#[test]
+fn discover_marks_photos_already_saved_and_does_not_fetch_them_twice() {
+    let mut state = ready();
+    state.open(2);
+    state.section = 1;
+    state.unsplash_ready = true;
+    let saved = Wallpaper {
+        collection: Some("c:Vintage Porsche".into()),
+        unsplash: Some("p2".into()),
+        ..custom(1)
+    };
+    state.set_wallpapers(vec![saved]);
+    state.focus = Target::DiscoverOpen;
+    state.activate();
+    let suggestion = |index: usize| crate::wallpapers::Suggestion {
+        photo: crate::unsplash::Photo {
+            id: format!("p{index}"),
+            thumb: "https://images.unsplash.com/p".into(),
+            color: "#000".into(),
+            alt: String::new(),
+            name: format!("Photographer {index}"),
+            profile: String::new(),
+            page: String::new(),
+        },
+        thumbnail: PathBuf::from(format!("/preview/discover/p{index}.jpg")),
+    };
+    state.suggestions(1, Ok((0..4).map(suggestion).collect()));
+    assert_eq!(
+        state.suggestion_owner("p2").as_deref(),
+        Some("Vintage Porsche")
+    );
+    assert_eq!(state.suggestion_owner("p1"), None);
+    // The tile says where it already is.
+    let texts: Vec<String> = scene(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            Draw::Text(value, ..) => Some(value.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.iter().any(|t| t == "In Vintage Porsche"), "{texts:?}");
+    // OK on it only explains; no second download.
+    state.focus = Target::Suggestion(2);
+    assert!(state.activate().is_empty());
+    state.focus = Target::Suggestion(1);
+    assert_eq!(state.activate().len(), 1);
+}
+
+#[test]
+fn a_collection_made_on_the_tv_opens_its_gallery_and_can_be_removed_while_empty() {
+    let mut state = ready();
+    state.open(2);
+    state.section = 1;
+    state.unsplash_ready = true;
+    state.focus = Target::WallpaperCollection;
+    state.activate();
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Collections));
+    let last = state.collections().len() + state.custom_collections().len();
+    state.focus = Target::Choice(last);
+    assert!(state.activate().is_empty());
+    assert!(state.text_input_active());
+    state.text("  Vintage   Porsche ");
+    assert_eq!(state.finish_text_input(), vec![Effect::Save]);
+    assert_eq!(
+        state.preferences.created_collections,
+        vec!["c:Vintage Porsche".to_string()]
+    );
+    assert_eq!(state.gallery_collection(), "c:Vintage Porsche");
+    assert_eq!(state.subpage, None);
+    assert_eq!(state.focus, Target::DiscoverOpen);
+    assert!(
+        state
+            .collections()
+            .iter()
+            .any(|(id, size)| id == "c:Vintage Porsche" && *size == 0)
+    );
+    // Discover searches for the name.
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Suggest {
+            query: "Vintage Porsche".into(),
+            page: 1
+        }]
+    );
+    state.back();
+    // The same name again, in other case, finds it instead of making a second one.
+    state.focus = Target::WallpaperCollection;
+    state.activate();
+    let last = state.collections().len() + state.custom_collections().len();
+    state.focus = Target::Choice(last);
+    state.activate();
+    state.text("vintage porsche");
+    state.finish_text_input();
+    assert_eq!(state.preferences.created_collections.len(), 1);
+    assert_eq!(state.gallery_collection(), "c:Vintage Porsche");
+    // An empty name changes nothing.
+    state.focus = Target::WallpaperCollection;
+    state.activate();
+    let last = state.collections().len() + state.custom_collections().len();
+    state.focus = Target::Choice(last);
+    state.activate();
+    assert!(state.finish_text_input().is_empty());
+    state.back();
+    // Empty, so its gallery offers Remove.
+    state.gallery_collection = Some("c:Vintage Porsche".into());
+    assert_eq!(state.removable_collection(), Some("c:Vintage Porsche"));
+    state.focus = Target::RemoveCollection;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.created_collections.is_empty());
+    assert!(
+        !state
+            .collections()
+            .iter()
+            .any(|(id, _)| id == "c:Vintage Porsche")
+    );
+    // Once it holds a wallpaper it can't be removed from here.
+    state
+        .preferences
+        .created_collections
+        .push("c:Vintage Porsche".into());
+    state.set_wallpapers(vec![Wallpaper {
+        collection: Some("c:Vintage Porsche".into()),
+        ..custom(1)
+    }]);
+    state.gallery_collection = Some("c:Vintage Porsche".into());
+    assert_eq!(state.removable_collection(), None);
 }

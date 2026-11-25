@@ -255,6 +255,7 @@ fn gallery_capacity_is_checked_before_decoding_or_creating_another_upload() {
                 collection: None,
                 credit: None,
                 directory: directory.clone(),
+                unsplash: None,
                 has_original: false,
             })
             .unwrap(),

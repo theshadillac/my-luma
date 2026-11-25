@@ -103,9 +103,11 @@ function render() {
 }
 element('collection').addEventListener('change', render);
 
-function tile(photo) {
+function tile(photo, owner) {
   const item = document.createElement('li');
   item.dataset.id = photo.id;
+  // Already saved on the TV: shown as added, so it isn't downloaded twice.
+  if (owner) item.classList.add('done');
   const pick = document.createElement('button');
   pick.type = 'button';
   pick.className = 'tile';
@@ -133,7 +135,7 @@ function tile(photo) {
   credit.href = photo.profile;
   credit.target = '_blank';
   credit.rel = 'noopener';
-  credit.textContent = photo.name;
+  credit.textContent = owner ? `In ${owner} · ${photo.name}` : photo.name;
   item.append(pick, badge, credit);
   return item;
 }
@@ -151,9 +153,13 @@ async function search(next) {
   }
   message('Searching…');
   try {
-    const { photos } = await call('search', { query: lastQuery, page });
+    const { photos, owned = {} } = await call('search', { query: lastQuery, page });
     const known = new Set([...grid.children].map((item) => item.dataset.id));
-    grid.append(...photos.filter((photo) => !known.has(photo.id)).map(tile));
+    grid.append(
+      ...photos
+        .filter((photo) => !known.has(photo.id))
+        .map((photo) => tile(photo, owned[photo.id])),
+    );
     more.hidden = photos.length < 24;
     message(grid.children.length ? '' : 'No photos found. Try other words.');
   } catch (error) {

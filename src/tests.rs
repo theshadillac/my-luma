@@ -562,6 +562,7 @@ fn gallery_and_grid_navigation_scroll_to_keep_focus_visible() {
         credit: None,
         id: "custom-00000000000000000000000000000001".into(),
         directory: PathBuf::from("/preview/wallpapers/custom-00000000000000000000000000000001"),
+        unsplash: None,
         has_original: true,
     }]);
     state.open(2);
@@ -2820,6 +2821,7 @@ fn settings_lists_keep_bottom_padding_for_remote_and_wheel_scrolling() {
                         credit: None,
                         id: format!("custom-{index:032x}"),
                         directory: std::path::PathBuf::from(".build/padding-fixture"),
+                        unsplash: None,
                         has_original: true,
                     })
                     .collect(),

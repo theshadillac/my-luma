@@ -5965,5 +5965,22 @@
     "sv": "Analog med ring",
     "cs": "Analogové s kruhem",
     "ca": "Analògic amb anell"
+  },
+  "newCollection": {
+    "en": "New collection",
+    "de": "Neue Sammlung",
+    "es": "Nueva colección",
+    "zh": "新建合集",
+    "zh-tw": "新增合集",
+    "pt": "Nova coleção",
+    "it": "Nuova raccolta",
+    "ru": "Новая коллекция",
+    "pl": "Nowa kolekcja",
+    "fr": "Nouvelle collection",
+    "vi": "Bộ sưu tập mới",
+    "nl": "Nieuwe collectie",
+    "sv": "Ny samling",
+    "cs": "Nová kolekce",
+    "ca": "Nova col·lecció"
   }
 }

@@ -3594,6 +3594,22 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                             false,
                         )
                     }));
+                    // Typing on the TV's own keyboard shows the name here as it grows.
+                    let typing = state.text_input_active()
+                        && state.keyboard_field == TextField::CollectionName;
+                    rows.push((
+                        if typing {
+                            format!(
+                                "{}: {}|",
+                                language.t("newCollection"),
+                                state.collection_name
+                            )
+                        } else {
+                            language.t("newCollection").to_string()
+                        },
+                        "Name it, then Discover finds photos for it".into(),
+                        false,
+                    ));
                 }
                 rows
             }
@@ -4125,6 +4141,43 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
             }
             // Fixed actions sit above the gallery, without cutting off scrolling cards.
             let actions = out.draw.split_off(actions_start);
+            if state.background_count() == 0 {
+                let hint = if state.unsplash_ready {
+                    format!(
+                        "No wallpapers in {collection_name} yet. Discover finds photos for it, or upload from your phone."
+                    )
+                } else {
+                    format!("No wallpapers in {collection_name} yet. Upload some from your phone.")
+                };
+                out.text(
+                    &hint,
+                    Rect::new(640., 262.8, 1120., 30.),
+                    text(19.2, 500, 0.),
+                    c(0xffffff, 0.72),
+                    false,
+                );
+                if state.removable_collection().is_some() {
+                    let label = format!("Remove {collection_name}");
+                    let width = (assets.width(&label, text(20.8, 550, -0.02)) + 156.)
+                        .ceil()
+                        .min(560.);
+                    row(
+                        out,
+                        state,
+                        assets,
+                        Row {
+                            target: Target::RemoveCollection,
+                            rect: Rect::new(640., 316.8, width, 64.),
+                            title: &label,
+                            icon: Some("close"),
+                            value: None,
+                            description: None,
+                            selected: false,
+                            chevron: false,
+                        },
+                    );
+                }
+            }
             for index in 0..state.background_count() {
                 let id = state.background_id(index).unwrap();
                 let custom = state.wallpapers.iter().find(|item| item.id == id);
@@ -5311,6 +5364,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
             TextField::Location => language.t("cityPostcode"),
             TextField::Name => language.t("greetingName"),
             TextField::InputName => language.t("inputName"),
+            TextField::CollectionName => language.t("newCollection"),
             TextField::Apps => language.t("findApp"),
         },
         Rect::new(389., 324., 1000., 44.),
@@ -5463,10 +5517,15 @@ fn discover_page(out: &mut Scene, state: &State, assets: &Assets) {
             false,
         );
         out.border(rect, 12., 1., c(0xffffff, 0.086));
-        if item.status == SuggestionStatus::Added {
+        // Saved here already (now or earlier, in any collection): dimmed with a check.
+        let owner = (item.status != SuggestionStatus::Adding)
+            .then(|| state.suggestion_owner(&item.suggestion.photo.id))
+            .flatten();
+        if item.status == SuggestionStatus::Added || owner.is_some() {
             out.shape(rect, 12., c(0x101213, 0.45));
         }
         let badge = match item.status {
+            _ if owner.is_some() => Some(("✓", 0xcfe3d2, 0x17261b)),
             SuggestionStatus::Ready => None,
             SuggestionStatus::Adding => Some(("…", 0x101213, 0xffffff)),
             SuggestionStatus::Added => Some(("✓", 0xcfe3d2, 0x17261b)),
@@ -5480,11 +5539,15 @@ fn discover_page(out: &mut Scene, state: &State, assets: &Assets) {
         if state.focus == Target::Suggestion(index) {
             out.border(rect.inset(-3.), 15., 3., WHITE);
         }
+        let caption = match &owner {
+            Some(collection) => format!("In {collection}"),
+            None => item.suggestion.photo.name.clone(),
+        };
         out.text(
-            &item.suggestion.photo.name,
+            &caption,
             Rect::new(rect.x + 2., rect.y + h + 8., w - 4., 22.),
             text(15.2, 500, 0.),
-            c(0xffffff, 0.6),
+            c(0xffffff, if owner.is_some() { 0.85 } else { 0.6 }),
             false,
         );
         out.control(Target::Suggestion(index), rect, false);

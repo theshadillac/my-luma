@@ -254,6 +254,8 @@ pub enum Target {
     MoveBackground,
     /// The Background page's Discover button (with an Unsplash key saved).
     DiscoverOpen,
+    /// Removes an empty collection made on the TV (its empty gallery's button).
+    RemoveCollection,
     /// An Unsplash suggestion on the Discover page.
     Suggestion(usize),
     /// Loads more Discover suggestions.
@@ -384,6 +386,7 @@ pub enum TextField {
     Location,
     Name,
     InputName,
+    CollectionName,
 }
 
 #[derive(Clone, Copy)]
@@ -513,6 +516,8 @@ pub struct State {
     pub keyboard_field: TextField,
     pub greeting_name_draft: String,
     pub input_name: String,
+    /// The name typed for a new collection on the TV.
+    pub collection_name: String,
     pub recents: crate::recents::Recents,
 }
 
@@ -586,6 +591,7 @@ impl State {
             weather: weather::Weather::default(),
             keyboard_field: TextField::Apps,
             greeting_name_draft: String::new(),
+            collection_name: String::new(),
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
         }
@@ -1896,6 +1902,12 @@ impl State {
                     .keys()
                     .map(String::as_str),
             )
+            .chain(
+                self.preferences
+                    .created_collections
+                    .iter()
+                    .map(String::as_str),
+            )
             .filter(|id| crate::collections::is_custom(id))
             .map(str::to_owned)
             .collect();
@@ -1956,6 +1968,17 @@ impl State {
             Err(error) => self.discover.error = Some(error),
         }
         self.dirty = true;
+    }
+
+    /// The collection (display name) already holding this Unsplash photo, if any.
+    pub fn suggestion_owner(&self, photo: &str) -> Option<String> {
+        let item = self
+            .wallpapers
+            .iter()
+            .find(|item| item.unsplash.as_deref() == Some(photo))?;
+        Some(crate::collections::name(
+            self.wallpaper_collection(&item.id),
+        ))
     }
 
     /// A Discover suggestion was saved as a wallpaper, or failed to be.
@@ -2379,8 +2402,9 @@ impl State {
                     ) => 2,
                     Some(Subpage::InputIcons(_)) => crate::model::INPUT_ICONS.len() + 1,
                     Some(Subpage::Language) => Language::ALL.len(),
+                    // The last row makes a new collection.
                     Some(Subpage::Collections) => {
-                        self.collections().len() + self.custom_collections().len()
+                        self.collections().len() + self.custom_collections().len() + 1
                     }
                     Some(Subpage::MoveCollection(_)) => self.collections().len(),
                     Some(Subpage::ClockSize) => crate::model::ClockSize::ALL.len(),
@@ -2753,6 +2777,9 @@ impl State {
             }
             if self.focus == Target::DiscoverOpen {
                 match direction {
+                    Direction::Down if self.removable_collection().is_some() => {
+                        self.focus(Target::RemoveCollection, controls)
+                    }
                     Direction::Down => self.focus(
                         Target::Background(1.min(self.background_count().saturating_sub(1))),
                         controls,
@@ -2763,11 +2790,21 @@ impl State {
                 }
                 return vec![];
             }
+            if self.focus == Target::RemoveCollection {
+                match direction {
+                    Direction::Up => self.focus(Target::WallpaperCollection, controls),
+                    Direction::Left => self.focus(Target::Sidebar(1), controls),
+                    _ => {}
+                }
+                return vec![];
+            }
             if self.focus == Target::WallpaperCollection {
                 match direction {
                     Direction::Down => {
                         if self.background_count() > 0 {
                             self.focus(Target::Background(0), controls)
+                        } else if self.removable_collection().is_some() {
+                            self.focus(Target::RemoveCollection, controls)
                         }
                     }
                     Direction::Up => self.focus(Target::Nav(2), controls),
@@ -3086,6 +3123,16 @@ impl State {
                 self.dirty = true;
                 return;
             }
+            if self.keyboard_field == TextField::CollectionName {
+                let length = self.collection_name.chars().count();
+                self.collection_name.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .take(32usize.saturating_sub(length)),
+                );
+                self.dirty = true;
+                return;
+            }
             if self.keyboard_field == TextField::InputName {
                 let length = self.input_name.chars().count();
                 self.input_name.extend(
@@ -3116,6 +3163,8 @@ impl State {
                 self.greeting_name_draft.pop();
             } else if self.keyboard_field == TextField::InputName {
                 self.input_name.pop();
+            } else if self.keyboard_field == TextField::CollectionName {
+                self.collection_name.pop();
             } else {
                 self.query.pop();
             }
@@ -3153,7 +3202,53 @@ impl State {
             }
             return vec![];
         }
+        if self.keyboard_field == TextField::CollectionName {
+            return self.commit_collection_name();
+        }
         self.commit_input_name()
+    }
+
+    /// A name typed for a new collection: make it (or find the existing one with that name)
+    /// and open its gallery, where Discover searches Unsplash for the name.
+    fn commit_collection_name(&mut self) -> Vec<Effect> {
+        let typed = std::mem::take(&mut self.collection_name);
+        let Some(id) = crate::collections::custom_id(&typed) else {
+            return vec![];
+        };
+        let existing = self
+            .collections()
+            .into_iter()
+            .map(|(id, _)| id)
+            .find(|known| known.to_lowercase() == id.to_lowercase());
+        let id = match existing {
+            Some(known) => known,
+            None => {
+                self.preferences.created_collections.push(id.clone());
+                id
+            }
+        };
+        self.gallery_collection = Some(id);
+        self.subpage = None;
+        self.scroll = 0.;
+        self.focus = if self.unsplash_ready {
+            Target::DiscoverOpen
+        } else {
+            Target::UploadWallpaper
+        };
+        self.dirty = true;
+        vec![Effect::Save]
+    }
+
+    /// An empty collection made on the TV, which its empty gallery offers to remove.
+    pub fn removable_collection(&self) -> Option<&str> {
+        let id = self.gallery_collection();
+        (self.background_count() == 0
+            && self
+                .preferences
+                .created_collections
+                .iter()
+                .any(|known| known == id))
+        .then_some(id)
     }
 
     /// Closing the keyboard by any route keeps a typed input name. An empty
@@ -3265,6 +3360,7 @@ impl State {
             TextField::Location => &self.weather.query,
             TextField::Name => &self.greeting_name_draft,
             TextField::InputName => &self.input_name,
+            TextField::CollectionName => &self.collection_name,
             TextField::Apps => &self.query,
         }
     }
@@ -3278,6 +3374,9 @@ impl State {
             // The TV keyboard starts empty, so a new name replaces the old one.
             self.input_name.clear();
         }
+        if field == TextField::CollectionName {
+            self.collection_name.clear();
+        }
         if cfg!(all(
             feature = "webos",
             target_os = "linux",
@@ -3288,6 +3387,7 @@ impl State {
                 TextField::Location => Target::WeatherQuery,
                 TextField::Name => Target::GreetingName,
                 TextField::InputName => Target::InputRename,
+                TextField::CollectionName => self.focus.clone(),
                 TextField::Apps => Target::Search,
             };
             self.panel_started = None;
@@ -3316,6 +3416,9 @@ impl State {
             TextField::Location => Target::WeatherSearch,
             TextField::Name => Target::GreetingName,
             TextField::InputName => Target::InputRename,
+            TextField::CollectionName => {
+                Target::Choice(self.collections().len() + self.custom_collections().len())
+            }
             TextField::Apps => Target::Search,
         }
     }
@@ -3831,6 +3934,26 @@ impl State {
                 self.back();
                 return vec![Effect::Save];
             }
+            Target::RemoveCollection => {
+                if let Some(id) = self.removable_collection().map(str::to_owned) {
+                    self.preferences
+                        .created_collections
+                        .retain(|known| *known != id);
+                    self.preferences.collection_schedules.remove(&id);
+                    if self
+                        .preferences
+                        .collection_pick
+                        .as_ref()
+                        .is_some_and(|pick| pick.id == id)
+                    {
+                        self.preferences.collection_pick = None;
+                    }
+                    self.gallery_collection = None;
+                    self.focus = Target::WallpaperCollection;
+                    self.dirty = true;
+                    return vec![Effect::Save];
+                }
+            }
             Target::DiscoverOpen => {
                 let collection = self.gallery_collection().to_owned();
                 self.subpage = Some(Subpage::Discover);
@@ -3855,6 +3978,16 @@ impl State {
                 return vec![Effect::Suggest { query, page: 1 }];
             }
             Target::Suggestion(index) => {
+                // Already saved here: say where instead of downloading it twice.
+                if let Some(owner) = self
+                    .discover
+                    .photos
+                    .get(index)
+                    .and_then(|item| self.suggestion_owner(&item.suggestion.photo.id))
+                {
+                    self.notify(format!("Already in {owner}"));
+                    return vec![];
+                }
                 if let Some(item) = self.discover.photos.get_mut(index)
                     && matches!(
                         item.status,
@@ -3960,6 +4093,9 @@ impl State {
                             });
                             self.gallery_collection = Some(id.clone());
                             self.close_subpage();
+                        } else if index == collections.len() + self.custom_collections().len() {
+                            self.open_keyboard(TextField::CollectionName);
+                            return vec![];
                         } else if let Some(id) =
                             self.custom_collections().get(index - collections.len())
                         {
@@ -4175,6 +4311,7 @@ impl State {
                     TextField::Location => self.weather.edit(String::new()),
                     TextField::Name => self.greeting_name_draft.clear(),
                     TextField::InputName => self.input_name.clear(),
+                    TextField::CollectionName => self.collection_name.clear(),
                     TextField::Apps => self.query.clear(),
                 },
                 "Done" => {

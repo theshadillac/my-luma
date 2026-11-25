@@ -691,6 +691,9 @@ pub struct Preferences {
     pub collection_pick: Option<crate::collections::Pick>,
     /// Custom collections that take over on their own on certain days.
     pub collection_schedules: std::collections::BTreeMap<String, crate::collections::Schedule>,
+    /// Collections made on the TV, kept while they are still empty (fork). Collections from
+    /// the phone exist through their wallpapers.
+    pub created_collections: Vec<String>,
     /// A week before a holiday, remind on Home if its collection is still empty.
     pub holiday_reminders: bool,
     /// Whether holiday collections take over, mix in, or stay out entirely.
@@ -760,6 +763,7 @@ impl Default for Preferences {
             wallpaper_collections: Default::default(),
             collection_pick: None,
             collection_schedules: Default::default(),
+            created_collections: Vec::new(),
             holiday_reminders: true,
             holiday_mode: crate::collections::HolidayMode::default(),
             holiday_reminded: Default::default(),

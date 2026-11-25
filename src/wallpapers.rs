@@ -44,6 +44,10 @@ pub struct Wallpaper {
     /// The photographer, for photos added from Unsplash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credit: Option<crate::unsplash::Credit>,
+    /// The Unsplash photo id, so Discover can tell a photo is already here (fork; photos
+    /// added before 1.2.0 don't have it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsplash: Option<String>,
     #[serde(skip)]
     pub directory: PathBuf,
     #[serde(skip)]
@@ -480,7 +484,7 @@ fn import_folder(directory: &Path, mut added: impl FnMut()) -> usize {
                 }
             })
             .and_then(|bytes| decode_import(&bytes))
-            .and_then(|image| store_image(directory, image, || true, None, None));
+            .and_then(|image| store_image(directory, image, || true, None, None, None));
         match result {
             Ok(_) => {
                 let _ = fs::remove_file(&path);
@@ -544,7 +548,7 @@ fn store(
             "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
         ));
     }
-    store_image(directory, decode(bytes)?, valid, collection, None)
+    store_image(directory, decode(bytes)?, valid, collection, None, None)
 }
 
 fn store_image(
@@ -553,6 +557,7 @@ fn store_image(
     valid: impl Fn() -> bool,
     collection: Option<String>,
     credit: Option<crate::unsplash::Credit>,
+    unsplash: Option<String>,
 ) -> Result<Wallpaper, String> {
     if catalog(directory).len() >= MAX_WALLPAPERS {
         return Err(format!(
@@ -585,6 +590,7 @@ fn store_image(
         id: id.clone(),
         collection: collection.filter(|id| id != crate::collections::PHOTOS),
         credit,
+        unsplash,
         directory: directory.join(&id),
         has_original: true,
     };
@@ -656,6 +662,7 @@ fn worker(
                     // Already a collection id, chosen on the TV.
                     Some(collection.clone()).filter(|id| !id.is_empty()),
                     Some(credit),
+                    Some(id.clone()),
                 )
             });
             let added = result.is_ok();
@@ -986,13 +993,37 @@ fn serve(
             "unsplash/search" => (
                 unsplash
                     .search(&text("query"), input["page"].as_u64().unwrap_or(1) as u32)
-                    .map(|photos| serde_json::json!({"photos": photos})),
+                    .map(|photos| {
+                        // Photos already saved here, so the phone shows them as added.
+                        let owned: serde_json::Map<String, serde_json::Value> = catalog(directory)
+                            .into_iter()
+                            .filter_map(|item| {
+                                let id = item.unsplash?;
+                                photos.iter().any(|photo| photo.id == id).then(|| {
+                                    let collection = item
+                                        .collection
+                                        .as_deref()
+                                        .unwrap_or(crate::collections::PHOTOS);
+                                    (id, crate::collections::name(collection).into())
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({"photos": photos, "owned": owned})
+                    }),
                 false,
             ),
             "unsplash/add" => {
                 let collection = crate::collections::custom_id(&text("collection"));
-                let added = unsplash.fetch(&text("id")).and_then(|(bytes, credit)| {
-                    store_image(directory, decode(&bytes)?, &valid, collection, Some(credit))
+                let photo = text("id");
+                let added = unsplash.fetch(&photo).and_then(|(bytes, credit)| {
+                    store_image(
+                        directory,
+                        decode(&bytes)?,
+                        &valid,
+                        collection,
+                        Some(credit),
+                        Some(photo.clone()),
+                    )
                 });
                 let ok = added.is_ok();
                 (added.map(|item| serde_json::json!({"id": item.id})), ok)
