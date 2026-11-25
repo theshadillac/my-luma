@@ -212,3 +212,51 @@ fn a_turned_bar_is_covered_at_every_angle() {
         }
     }
 }
+
+#[test]
+fn moving_commands_stay_aligned_with_their_following_clip() {
+    let mut tracker = Tracker::default();
+    tracker.push(&[
+        wallpaper(),
+        Draw::Clip(Some(Rect::new(64., 100., 1792., 900.))),
+        shape(100.),
+        shape(400.),
+        shape(700.),
+        Draw::Clip(None),
+    ]);
+    tracker.push(&[
+        wallpaper(),
+        Draw::Clip(Some(Rect::new(64., 100., 1792., 900.))),
+        shape(120.),
+        shape(420.),
+        shape(720.),
+        Draw::Clip(None),
+    ]);
+    let changed = area(tracker.damage(1));
+    assert_eq!((changed.x, changed.x + changed.w), (99., 821.));
+    assert_eq!((changed.y, changed.h), (299., 102.));
+}
+
+#[test]
+fn a_sliding_row_of_many_tiles_leaves_the_static_scene_out_of_the_damage() {
+    let row = |offset: f32| (0..12).map(move |i| shape(100. + i as f32 * 140. + offset));
+    let still = || Draw::Shape(Rect::new(40., 900., 200., 100.), 8., 0., [1., 1., 1., 1.]);
+    let mut tracker = Tracker::default();
+    tracker.push(
+        &[wallpaper()]
+            .into_iter()
+            .chain(row(0.))
+            .chain([still()])
+            .collect::<Vec<_>>(),
+    );
+    tracker.push(
+        &[wallpaper()]
+            .into_iter()
+            .chain(row(20.))
+            .chain([still()])
+            .collect::<Vec<_>>(),
+    );
+    let changed = area(tracker.damage(1));
+    // Only the sliding row (y 299..401), not the still shape at the bottom.
+    assert_eq!((changed.y, changed.h), (299., 102.));
+}

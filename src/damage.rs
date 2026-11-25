@@ -55,7 +55,7 @@ impl Tracker {
 fn diff(old: &[Draw], new: &[Draw]) -> Damage {
     let mut area = Rect::default();
     let mut j = 0;
-    for command in new {
+    for (index, command) in new.iter().enumerate() {
         if j < old.len() && same(&old[j], command) {
             j += 1;
             continue;
@@ -69,6 +69,17 @@ fn diff(old: &[Draw], new: &[Draw]) -> Damage {
             j = k + 1;
         } else {
             area = union(area, bounds(command)?);
+            // During an animation the same command often moves every frame. Consume its old
+            // position too, or every following command loses alignment and the whole rest of
+            // the scene counts as damaged (upstream #359, B109).
+            if let Some(previous) = old.get(j)
+                && !new[index + 1..new.len().min(index + 1 + LOOKAHEAD)]
+                    .iter()
+                    .any(|upcoming| same(previous, upcoming))
+            {
+                area = union(area, bounds(previous)?);
+                j += 1;
+            }
         }
     }
     for removed in &old[j.min(old.len())..] {
