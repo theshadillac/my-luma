@@ -3,12 +3,12 @@
   "repos": {
     "Seagey/couch-tv": "8ee2a8aea5c6b845d7879305ee12e6469cc46ca1",
     "techgenius1/tvOS-Launcher": "b14942965c240b78030e83461550cb23509163a1",
-    "aabytt/custom-screensaver-aerial": "3cf172dcae896da3c9cfc65fdd4fdd8133f27b9d",
+    "aabytt/custom-screensaver-aerial": "e6c47bf4e274e3236e736f954d9546fa305a5738",
     "kitsuned/AltHome": "a67385151486347394c6ac6e8af8da61e6c72685",
     "mareklarek/webos10-homescreen-customization": "80e39c822097a933fd49c2a23ff5cdfbf9e54763",
     "webosbrew/custom-screensaver": "90666c19112ec77d6c2b1b84ae7db7d914285e92",
     "cocombee/glass-tv": "ce164b650818249f89725ed8070c911b3958df30",
-    "ecklf/lg-luma@main": "22e71801b89775848fe53069bc200bd1e2d9db60",
+    "ecklf/lg-luma@main": "35e1af299b9d6011fdbdfdbe89593192c0c26a7c",
     "ipatek420/halcyon": "22476f67a1083aad16a2e20c55b197140d9e0f4b",
     "ratelimits/atlauncher": "66dc1369f7713f380d3f7e515596b2cfed5fba1d",
     "SikeXML/glasshouse-dock": "48d492083b496d23ee9f020400518873858289f9",
@@ -16,19 +16,23 @@
     "kennysarnoski-jarvis/webos-dock": "2ff7150e3322ea89d060fa5bea053d83f0125725",
     "lasharor/cleanyourtv-WebOS": "b70056e988e9c7cdcfaac0a2a00c6c96152751e3",
     "axellaffite/openhome-webos": "105682e1986a90cca1868a2452ee3b59decb73f3",
-    "Mokto/tvlauncher": "f20251a1a59626d7ca47531849822b94394e5d28",
+    "Mokto/tvlauncher": "d83eaa343b743d979f118cbf5c2c872e89cce02c",
     "joaowatanabe/webos-tv-enhancer": "9230bc5bbeec8e4717d582cd3d3793dde7372de8",
     "TheLord83/CleanFrame-webos": "8aeded9021f5e683f40570d08046579bc33aafa8",
     "File48/webos-homescreen": "e3b4851ef45b1f9c52e645f919008da214a726af",
     "RYUJIN-ISO/lg-tv-home": "9d5912e2da91d6a0b3875f7bf1883a904fb9b4a0",
     "glexe/sei": "f075a32c2696e51a3f77cb1b06c37f8346eb485a",
-    "ryanrs-chang/webos-ambient": "368a5713627b9d5efa6ad83041fcb4077a7c15e2",
-    "manishslal/TV-CleanSlate": "648c9a684e39f876ea3541b795ec86737e3eefbc"
+    "ryanrs-chang/webos-ambient": "0613b6304935766e4a867ebcac97f097aa9b2377",
+    "manishslal/TV-CleanSlate": "648c9a684e39f876ea3541b795ec86737e3eefbc",
+    "ethanimooney/mtnview": "6599ec6ed8156a45a2c4cbf5527cd985a9ca505f",
+    "danielthejoker18/FreeMyTvWebOS": "7c5bc0645eeb849eea08d0925901ef3759151469",
+    "vibribbonee/luma-home-webos": "d7ff35cf19e73668169e1ea0ce6da169fb43366a",
+    "ShaneRunham/Hideout-Home": "09d58ef35050984275f96ee935e2999050c6e524"
   },
   "releases": {
-    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16; main to a3e4234 reviewed 2026-11-17; 3.5.0-3.6.2 reviewed 2026-11-18 (latest v3.6.2); 3.7.0-3.10.0 reviewed 2026-11-19 (latest v3.10.0); 3.10.1-3.11.0 reviewed 2026-11-20 (latest v3.11.0); 3.11.1-3.12.0 reviewed 2026-11-21 (latest v3.12.0); 3.12.1-3.13.0 and main to bd13c9a (#365, #370) reviewed 2026-11-22 (latest v3.13.0); main to 4d78dd6 (#388, Homebrew docs) reviewed 2026-11-23 (latest still v3.13.0); 3.13.1-3.13.2 and main to f8f7eba (#393, #396, #397, #400) reviewed 2026-11-24 (latest v3.13.2); 3.13.3-3.13.4 and main to 22e7180 (#403, #334, #359-#362) reviewed 2026-11-25 (latest v3.13.4)",
-    "aabytt/custom-screensaver-aerial": "v3.1.1 reviewed 2026-11-19",
-    "webosbrew/apps-repo": "com.ecklf.luma listed (6a3fea1) noted 2026-11-23"
+    "ecklf/lg-luma": "v2.19 merged; 3.0.0-3.4.0 reviewed 2026-11-16; main to a3e4234 reviewed 2026-11-17; 3.5.0-3.6.2 reviewed 2026-11-18 (latest v3.6.2); 3.7.0-3.10.0 reviewed 2026-11-19 (latest v3.10.0); 3.10.1-3.11.0 reviewed 2026-11-20 (latest v3.11.0); 3.11.1-3.12.0 reviewed 2026-11-21 (latest v3.12.0); 3.12.1-3.13.0 and main to bd13c9a (#365, #370) reviewed 2026-11-22 (latest v3.13.0); main to 4d78dd6 (#388, Homebrew docs) reviewed 2026-11-23 (latest still v3.13.0); 3.13.1-3.13.2 and main to f8f7eba (#393, #396, #397, #400) reviewed 2026-11-24 (latest v3.13.2); 3.13.3-3.13.4 and main to 22e7180 (#403, #334, #359-#362) reviewed 2026-11-25 (latest v3.13.4); 3.13.5 (packages #334, #359-#362, already reviewed) and main to 35e1af2 reviewed 2026-11-26 (latest v3.13.5)",
+    "aabytt/custom-screensaver-aerial": "v3.1.1 reviewed 2026-11-19; v3.1.2 (webOS 4 support, #110) reviewed 2026-11-26",
+    "webosbrew/apps-repo": "com.ecklf.luma listed (6a3fea1) noted 2026-11-23; site/category changes to bc55f62 reviewed 2026-11-26, no new launcher apps"
   },
   "items": [
     "https://repo.webosbrew.org/apps/org.aabytt.webos.custom-screensaver-aerial/",
@@ -222,6 +226,22 @@
     "https://github.com/glexe/sei",
     "https://github.com/ryanrs-chang/webos-ambient",
     "https://github.com/manishslal/TV-CleanSlate",
-    "https://github.com/TheLord83/CleanFrame-webos/commit/3af9cbb"
+    "https://github.com/TheLord83/CleanFrame-webos/commit/3af9cbb",
+    "https://github.com/ecklf/lg-luma/releases/tag/v3.13.5",
+    "https://github.com/aabytt/custom-screensaver-aerial/pull/110",
+    "https://github.com/Mokto/tvlauncher/commit/690bc16",
+    "https://github.com/Mokto/tvlauncher/commit/60bd25a",
+    "https://github.com/Mokto/tvlauncher/commit/8abf1cd",
+    "https://github.com/Mokto/tvlauncher/commit/585c529",
+    "https://github.com/Mokto/tvlauncher/commit/38797a9",
+    "https://github.com/ryanrs-chang/webos-ambient/commit/3d2ad2b",
+    "https://github.com/ryanrs-chang/webos-ambient/commit/37cc4ac",
+    "https://github.com/ethanimooney/mtnview",
+    "https://github.com/danielthejoker18/FreeMyTvWebOS",
+    "https://github.com/vibribbonee/luma-home-webos",
+    "https://github.com/ShaneRunham/Hideout-Home",
+    "https://github.com/ignaciopd3/tuned-tv",
+    "https://github.com/sarahahzub/WebOS-Chromium",
+    "https://github.com/File48/webos-voice-off"
   ]
 }
