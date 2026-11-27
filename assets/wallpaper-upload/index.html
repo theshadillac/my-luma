@@ -10,6 +10,7 @@
     <script type="module" src="app.js"></script>
     <script type="module" src="unsplash.js"></script>
     <script type="module" src="settings.js"></script>
+    <script type="module" src="plex.js"></script>
   </head>
   <body>
     <main>
@@ -137,13 +138,39 @@
         <button id="another" type="button">Add more</button>
       </section>
       <p id="status" role="status" aria-live="polite"></p>
+      <details class="backup" id="plex">
+        <summary>Spotlight: Plex</summary>
+        <p id="plex-state">
+          Spotlight shows Continue watching, Up next and Recently added from your Plex server. Paste
+          your Plex token; it is saved on the TV only and never shown again.
+        </p>
+        <form id="plex-form" class="unsplash-key">
+          <input
+            id="plex-token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Plex token"
+          />
+          <input
+            id="plex-server"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            inputmode="url"
+            placeholder="Server address (optional, found automatically)"
+          />
+          <button type="submit">Save token</button>
+        </form>
+        <button type="button" id="plex-forget" class="link" hidden>Remove Plex token</button>
+      </details>
       <details class="backup" id="backup">
         <summary>Settings backup</summary>
         <p>
           Save all of Lume's settings (favourites, collections and schedules, tiles, input names,
           clock, ambient and weather) to this phone, or put a saved copy back on the TV. Your
-          wallpapers and the Unsplash key are not included. Tile web addresses are, so keep the file
-          private.
+          wallpapers, the Unsplash key and the Plex token are not included. Tile web addresses are,
+          so keep the file private.
         </p>
         <div class="actions">
           <button id="backup-save" type="button" class="secondary">Download settings</button>

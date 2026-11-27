@@ -107,6 +107,8 @@ pub enum Event {
     Ended(u64),
     /// Settings restored from a backup on the phone page, already checked.
     Restore(Box<crate::model::Preferences>),
+    /// Spotlight's Plex rows (or why not).
+    Spotlight(Result<Vec<crate::plex::Row>, String>),
 }
 
 enum Command {
@@ -114,11 +116,13 @@ enum Command {
     Delete { id: String, selected: String },
     Suggest { query: String, page: u32 },
     AddSuggestion { id: String, collection: String },
+    Spotlight,
 }
 
 pub struct Service {
     desired: Arc<AtomicU64>,
     unsplash_ready: Arc<std::sync::atomic::AtomicBool>,
+    plex_ready: Arc<std::sync::atomic::AtomicBool>,
     wake: mpsc::Sender<Command>,
     pub receiver: mpsc::Receiver<Event>,
     active: bool,
@@ -136,6 +140,8 @@ impl Service {
         let worker_desired = desired.clone();
         let unsplash_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_unsplash = unsplash_ready.clone();
+        let plex_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_plex = plex_ready.clone();
         let (sender, receiver) = mpsc::sync_channel(4);
         let (wake, updates) = mpsc::channel();
         thread::Builder::new()
@@ -145,7 +151,10 @@ impl Service {
                     &directory,
                     &settings,
                     &worker_desired,
-                    &worker_unsplash,
+                    Ready {
+                        unsplash: &worker_unsplash,
+                        plex: &worker_plex,
+                    },
                     &sender,
                     &updates,
                     loopback_only,
@@ -155,6 +164,7 @@ impl Service {
         Ok(Self {
             desired,
             unsplash_ready,
+            plex_ready,
             wake,
             receiver,
             active: false,
@@ -183,6 +193,16 @@ impl Service {
 
     pub fn delete(&self, id: String, selected: String) {
         let _ = self.wake.send(Command::Delete { id, selected });
+    }
+
+    /// Whether a Plex token is saved on the TV (Spotlight's Plex rows can load).
+    pub fn plex_ready(&self) -> bool {
+        self.plex_ready.load(Ordering::Acquire)
+    }
+
+    /// Loads Spotlight's Plex rows; answered by `Event::Spotlight`.
+    pub fn spotlight(&self) {
+        let _ = self.wake.send(Command::Spotlight);
     }
 
     /// Whether an Unsplash access key is saved on the TV (Discover is offered).
@@ -659,13 +679,16 @@ fn worker(
     directory: &Path,
     settings: &Path,
     desired: &AtomicU64,
-    unsplash_ready: &std::sync::atomic::AtomicBool,
+    ready: Ready<'_>,
     sender: &mpsc::SyncSender<Event>,
     updates: &mpsc::Receiver<Command>,
     loopback_only: bool,
 ) {
     let mut unsplash = crate::unsplash::Client::new(directory.parent().unwrap_or(directory));
-    unsplash_ready.store(unsplash.has_key(), Ordering::Release);
+    let mut plex = crate::plex::Client::new(directory.parent().unwrap_or(directory));
+    ready.unsplash.store(unsplash.has_key(), Ordering::Release);
+    ready.plex.store(plex.has_token(), Ordering::Release);
+    let posters = directory.parent().unwrap_or(directory).join("spotlight");
     if sender.send(Event::Catalog(catalog(directory))).is_err() {
         return;
     }
@@ -677,7 +700,10 @@ fn worker(
         });
     };
     import();
-    let update = |command, unsplash: &mut crate::unsplash::Client| match command {
+    let update = |command,
+                  unsplash: &mut crate::unsplash::Client,
+                  plex: &mut crate::plex::Client| match command {
+        Command::Spotlight => sender.send(Event::Spotlight(plex.rows(&posters))).is_ok(),
         Command::Wake => {
             import();
             true
@@ -714,7 +740,7 @@ fn worker(
     loop {
         // Finish queued mutations before starting another upload session.
         for command in updates.try_iter() {
-            if !update(command, &mut unsplash) {
+            if !update(command, &mut unsplash, &mut plex) {
                 return;
             }
         }
@@ -725,7 +751,7 @@ fn worker(
         if generation == 0 || generation == handled {
             match updates.recv() {
                 Ok(command) => {
-                    if !update(command, &mut unsplash) {
+                    if !update(command, &mut unsplash, &mut plex) {
                         break;
                     }
                 }
@@ -779,6 +805,7 @@ fn worker(
                             restore: &restore,
                         },
                         &mut unsplash,
+                        &mut plex,
                         valid,
                     ) {
                         Ok(true) => {
@@ -789,8 +816,9 @@ fn worker(
                         Ok(false) => {}
                         Err(error) => eprintln!("Luma wallpaper upload: {error}"),
                     }
-                    // The phone may have saved or removed the Unsplash key.
-                    unsplash_ready.store(unsplash.has_key(), Ordering::Release);
+                    // The phone may have saved or removed the Unsplash key or Plex token.
+                    ready.unsplash.store(unsplash.has_key(), Ordering::Release);
+                    ready.plex.store(plex.has_token(), Ordering::Release);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(25))
@@ -806,6 +834,12 @@ fn worker(
             break;
         }
     }
+}
+
+/// What the worker tells the main loop about saved keys.
+struct Ready<'a> {
+    unsplash: &'a std::sync::atomic::AtomicBool,
+    plex: &'a std::sync::atomic::AtomicBool,
 }
 
 fn request(
@@ -845,6 +879,7 @@ pub fn restorable(bytes: &[u8]) -> Result<crate::model::Preferences, String> {
     Ok(preferences)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serve(
     stream: &mut TcpStream,
     host: &str,
@@ -852,6 +887,7 @@ fn serve(
     directory: &Path,
     backup: Backup<'_>,
     unsplash: &mut crate::unsplash::Client,
+    plex: &mut crate::plex::Client,
     valid: impl Fn() -> bool,
 ) -> Result<bool, String> {
     stream
@@ -910,6 +946,7 @@ fn serve(
                 "free": free,
                 "collections": collections,
                 "unsplash": unsplash.has_key(),
+                "plex": plex.has_token(),
             })
             .to_string();
             response(
@@ -961,6 +998,10 @@ fn serve(
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/settings.js"),
             ),
+            "plex.js" => (
+                "text/javascript; charset=utf-8",
+                include_bytes!("../assets/wallpaper-upload/plex.js"),
+            ),
             "storage.js" => (
                 "text/javascript; charset=utf-8",
                 include_bytes!("../assets/wallpaper-upload/storage.js"),
@@ -1000,6 +1041,34 @@ fn serve(
                 )?;
             }
             Err(error) => error_response(stream, "422 Unprocessable Content", &error)?,
+        }
+        return Ok(false);
+    }
+    if request.method == "POST"
+        && route == "plex/token"
+        && request.headers.get("x-luma-upload").map(String::as_str) == Some(token)
+    {
+        if request.length > 1024 {
+            error_response(stream, "413 Content Too Large", "Request too large")?;
+            return Ok(false);
+        }
+        let mut body = vec![0; request.length];
+        read_exact(&mut reader, &mut body, &valid, deadline)?;
+        drop(reader);
+        let input: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let text = |name: &str| input[name].as_str().unwrap_or_default().to_owned();
+        // The token is checked with the server and saved; it is never echoed back or logged.
+        match plex.set_token(&text("token"), &text("server")) {
+            Ok(()) => {
+                let body = serde_json::json!({"ok": true, "plex": plex.has_token()}).to_string();
+                response(
+                    stream,
+                    "200 OK",
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                )?;
+            }
+            Err(error) => error_response(stream, "400 Bad Request", &error)?,
         }
         return Ok(false);
     }

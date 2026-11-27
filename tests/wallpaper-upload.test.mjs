@@ -85,18 +85,21 @@ test('info reports free gallery slots and tolerates older TVs without them', asy
     free: 12,
     collections: [],
     unsplash: false,
+    plex: false,
   });
   assert.deepEqual(await loadInfo(reply({ path })), {
     path,
     free: null,
     collections: [],
     unsplash: false,
+    plex: false,
   });
   assert.deepEqual(await loadInfo(reply({ path, free: -3 })), {
     path,
     free: null,
     collections: [],
     unsplash: false,
+    plex: false,
   });
   assert.deepEqual(
     (await loadInfo(reply({ path, collections: ['Photos', 'Vintage Porsche', 3, ' '] })))

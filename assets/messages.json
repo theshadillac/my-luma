@@ -5982,5 +5982,22 @@
     "sv": "Ny samling",
     "cs": "Nová kolekce",
     "ca": "Nova col·lecció"
+  },
+  "spotlightSetting": {
+    "en": "Spotlight tab",
+    "de": "Spotlight-Tab",
+    "es": "Pestaña Spotlight",
+    "zh": "Spotlight 标签",
+    "zh-tw": "Spotlight 分頁",
+    "pt": "Aba Spotlight",
+    "it": "Scheda Spotlight",
+    "ru": "Вкладка Spotlight",
+    "pl": "Karta Spotlight",
+    "fr": "Onglet Spotlight",
+    "vi": "Thẻ Spotlight",
+    "nl": "Spotlight-tabblad",
+    "sv": "Spotlight-flik",
+    "cs": "Karta Spotlight",
+    "ca": "Pestanya Spotlight"
   }
 }

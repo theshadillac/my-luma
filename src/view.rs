@@ -8,8 +8,8 @@ use crate::{
         DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOLIDAY_REMINDERS_ROW, HOLIDAYS_ROW,
         HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
         HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW,
-        POWER_ON_ROW, Page, QUICK_PANEL_ROW, Rect, SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW,
-        Target, TextField, UI_SOUND_LEVEL_ROW, UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW,
+        POWER_ON_ROW, Page, QUICK_PANEL_ROW, Rect, SPOTLIGHT_ROW, SYSTEM_SECTION, State, Subpage,
+        TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW, UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW,
         WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
     },
     weather::{self, Unit},
@@ -2700,8 +2700,176 @@ fn weather_summary(
 }
 
 fn library(out: &mut Scene, state: &State, assets: &Assets) {
-    library_grid(out, state, assets);
-    library_toolbar(out, state, assets);
+    if state.spotlight_tabs() && state.spotlight_open {
+        spotlight(out, state, assets);
+    } else {
+        library_grid(out, state, assets);
+        library_toolbar(out, state, assets);
+    }
+    if state.spotlight_tabs() {
+        drawer_tabs(out, state, assets);
+    }
+}
+
+/// The drawer's Apps | Spotlight tabs, centred at the top (fork, with Spotlight on).
+fn drawer_tabs(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let labels = [language.t("apps"), "Spotlight"];
+    let widths = labels.map(|label| assets.width(label, text(20.8, 550, -0.02)) + 48.);
+    let gap = 7.2;
+    let mut x = (1920. - widths.iter().sum::<f32>() - gap) / 2.;
+    for (index, (label, width)) in labels.into_iter().zip(widths).enumerate() {
+        let rect = Rect::new(x, 52., width, 56.);
+        filter(
+            out,
+            state,
+            Target::DrawerTab(index),
+            rect,
+            label,
+            state.spotlight_open == (index == 1),
+        );
+        x += width + gap;
+    }
+}
+
+/// `value` shortened with an ellipsis to fit `width` at `style`.
+fn ellipsize(assets: &Assets, value: &str, style: TextStyle, width: f32) -> String {
+    if assets.width(value, style) <= width {
+        return value.to_owned();
+    }
+    let mut chars: Vec<char> = value.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let candidate = format!("{}…", chars.iter().collect::<String>().trim_end());
+        if assets.width(&candidate, style) <= width {
+            return candidate;
+        }
+    }
+    "…".into()
+}
+
+/// Spotlight's card size and spacing.
+const SPOTLIGHT_CARD: (f32, f32) = (180., 270.);
+const SPOTLIGHT_GAP: f32 = 28.;
+const SPOTLIGHT_ROW_PITCH: f32 = 404.;
+const SPOTLIGHT_TOP: f32 = 164.8;
+/// Cards whose position stays put before a row scrolls sideways.
+const SPOTLIGHT_STEADY: usize = 6;
+
+/// Spotlight: rows of Plex posters (Continue watching, Up next, Recently added).
+fn spotlight(out: &mut Scene, state: &State, assets: &Assets) {
+    let message = |out: &mut Scene, title: &str, detail: &str| {
+        out.text(
+            title,
+            Rect::new(360., 420., 1200., 44.),
+            text(32., 600, -0.02),
+            WHITE,
+            true,
+        );
+        out.text(
+            detail,
+            Rect::new(360., 476., 1200., 32.),
+            text(20.8, 500, 0.),
+            c(0xffffff, 0.72),
+            true,
+        );
+    };
+    let spot = &state.spotlight;
+    if spot.rows.is_empty() {
+        if !state.plex_ready {
+            message(
+                out,
+                "Add your Plex token to see your Plex rows",
+                "Open the phone page (Settings, Background, Upload from your phone), then Spotlight: Plex.",
+            );
+        } else if spot.loading || spot.loaded.is_none() {
+            message(out, "Loading your Plex rows…", "");
+        } else if let Some(error) = &spot.error {
+            message(out, "Plex rows couldn't load", error);
+        } else {
+            message(
+                out,
+                "Nothing to show yet",
+                "Start watching something in Plex.",
+            );
+        }
+        return;
+    }
+    let (w, h) = SPOTLIGHT_CARD;
+    let s = state.scroll;
+    // Rows scroll under the clock and tabs without showing through them.
+    out.draw
+        .push(Draw::Clip(Some(Rect::new(0., 132., 1920., 948.))));
+    for (row_index, row) in spot.rows.iter().enumerate() {
+        let top = SPOTLIGHT_TOP + row_index as f32 * SPOTLIGHT_ROW_PITCH - s;
+        if top > 1080. || top + SPOTLIGHT_ROW_PITCH < 0. {
+            continue;
+        }
+        out.text(
+            row.kind.title(),
+            Rect::new(84., top, 900., 36.),
+            text(26., 600, -0.02),
+            WHITE,
+            false,
+        );
+        let column = spot.columns.get(row_index).copied().unwrap_or(0);
+        let first = column.saturating_sub(SPOTLIGHT_STEADY);
+        for (index, item) in row.items.iter().enumerate().skip(first) {
+            let x = 84. + (index - first) as f32 * (w + SPOTLIGHT_GAP);
+            if x > 1920. {
+                break;
+            }
+            let rect = Rect::new(x, top + 52., w, h);
+            let target = Target::SpotlightCard(row_index, index);
+            let focused = state.focus == target;
+            out.shadow(rect, 12., 14., 4., if focused { 0.3 } else { 0.18 });
+            match &item.poster {
+                Some(poster) => out.image(poster.to_string_lossy().into_owned(), rect, 12., false),
+                None => {
+                    out.shape(rect, 12., c(0x1c2126, 0.92));
+                    out.text(
+                        &item.title,
+                        Rect::new(rect.x + 12., rect.y + h / 2. - 30., w - 24., 60.),
+                        text(19.2, 600, -0.01).leading(1.25),
+                        c(0xffffff, 0.85),
+                        true,
+                    );
+                }
+            }
+            if item.progress > 0. {
+                let bar = Rect::new(rect.x + 10., rect.y + h - 16., w - 20., 6.);
+                out.shape(bar, 3., c(0x000000, 0.55));
+                out.shape(
+                    Rect::new(bar.x, bar.y, (bar.w * item.progress).max(6.), bar.h),
+                    3.,
+                    c(0xebaf00, 1.),
+                );
+            }
+            if focused {
+                out.border(rect.inset(-4.), 15., 3., WHITE);
+            } else {
+                out.border(rect, 12., 1., c(0xffffff, 0.086));
+            }
+            let label = text(18.4, 600, -0.01);
+            out.text(
+                ellipsize(assets, &item.title, label, w),
+                Rect::new(x, rect.y + h + 12., w, 26.),
+                label,
+                c(0xffffff, if focused { 1. } else { 0.85 }),
+                false,
+            );
+            out.text(
+                ellipsize(assets, &item.subtitle, text(16., 500, 0.), w),
+                Rect::new(x, rect.y + h + 38., w, 24.),
+                text(16., 500, 0.),
+                c(0xffffff, 0.6),
+                false,
+            );
+            // The caption belongs to the card, so scrolling reveals it too.
+            out.control(target, Rect::new(rect.x, rect.y, w, h + 66.), true);
+        }
+    }
+    out.draw.push(Draw::Clip(None));
 }
 
 fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
@@ -3867,6 +4035,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     "appSorting",
                     "grid",
                     Some(language.t(state.preferences.app_sorting.label_key())),
+                    false,
+                ),
+                (
+                    SPOTLIGHT_ROW,
+                    "spotlightSetting",
+                    "sparkles",
+                    Some(if state.preferences.spotlight {
+                        language.t("stateOn")
+                    } else {
+                        language.t("stateOff")
+                    }),
                     false,
                 ),
                 (

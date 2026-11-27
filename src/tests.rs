@@ -5265,3 +5265,71 @@ fn magic_remote_jitter_leaves_ambient_alone() {
     assert!(!motion.real_move(&state, 30, 0, later));
     assert!(motion.real_move(&state, 30, 0, later + Duration::from_millis(100)));
 }
+
+#[test]
+fn spotlight_tabs_sit_above_the_drawer_and_load_plex_rows() {
+    let mut state = ready();
+    state.preferences.spotlight = true;
+    state.plex_ready = true;
+    state.open(1);
+    state.focus = Target::Filter(1);
+    let c = controls(&state);
+    state.direction(Direction::Up, &c);
+    assert_eq!(state.focus, Target::DrawerTab(0));
+    let c = controls(&state);
+    let effects = state.direction(Direction::Right, &c);
+    assert_eq!(state.focus, Target::DrawerTab(1));
+    assert!(state.spotlight_open);
+    assert!(matches!(effects.as_slice(), [Effect::LoadSpotlight]));
+    // A second visit within a few minutes doesn't reload.
+    let item = |key: &str| crate::plex::Item {
+        key: key.into(),
+        title: format!("Title {key}"),
+        subtitle: String::new(),
+        progress: 0.5,
+        poster_path: None,
+        poster: None,
+    };
+    state.spotlight_loaded(Ok(vec![
+        crate::plex::Row {
+            kind: crate::plex::RowKind::ContinueWatching,
+            items: vec![item("1"), item("2"), item("3")],
+        },
+        crate::plex::Row {
+            kind: crate::plex::RowKind::RecentlyAdded,
+            items: vec![item("4")],
+        },
+    ]));
+    let c = controls(&state);
+    state.direction(Direction::Down, &c);
+    assert_eq!(state.focus, Target::SpotlightCard(0, 0));
+    let c = controls(&state);
+    state.direction(Direction::Right, &c);
+    state.direction(Direction::Right, &c);
+    assert_eq!(state.focus, Target::SpotlightCard(0, 2));
+    let c = controls(&state);
+    state.direction(Direction::Down, &c);
+    assert_eq!(state.focus, Target::SpotlightCard(1, 0));
+    let c = controls(&state);
+    state.direction(Direction::Up, &c);
+    assert_eq!(
+        state.focus,
+        Target::SpotlightCard(0, 2),
+        "row position remembered"
+    );
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch(crate::state::PLEX_APP.into())]
+    );
+    // Back to Apps, then Spotlight again: no reload yet.
+    state.focus = Target::DrawerTab(1);
+    let c = controls(&state);
+    state.direction(Direction::Left, &c);
+    assert!(!state.spotlight_open);
+    assert!(state.select_drawer_tab(true).is_empty());
+    // Off: no tabs, and the drawer is just apps.
+    state.preferences.spotlight = false;
+    assert!(!state.spotlight_tabs());
+    assert!(state.select_drawer_tab(true).is_empty());
+    assert!(!state.spotlight_open);
+}

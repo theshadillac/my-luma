@@ -9,7 +9,13 @@ export async function loadInfo(fetcher) {
   const collections = Array.isArray(info.collections)
     ? info.collections.filter((name) => typeof name === 'string' && name.trim())
     : [];
-  return { path: info.path, free, collections, unsplash: info.unsplash === true };
+  return {
+    path: info.path,
+    free,
+    collections,
+    unsplash: info.unsplash === true,
+    plex: info.plex === true,
+  };
 }
 
 export async function loadStoragePath(fetcher) {

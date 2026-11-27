@@ -47,7 +47,7 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
             TILE_LIFT_ROW,
             MORE_APPS_ROW,
         ],
-        DRAWER_SECTION => vec![DRAWER_TOOLBAR_ROW, APP_SORTING_ROW],
+        DRAWER_SECTION => vec![DRAWER_TOOLBAR_ROW, APP_SORTING_ROW, SPOTLIGHT_ROW],
         AMBIENT_SECTION => vec![
             AMBIENT_ROW,
             POWER_ON_ROW,
@@ -107,6 +107,10 @@ pub const WALLPAPER_TINT_ROW: usize = 28;
 pub const HOLIDAY_REMINDERS_ROW: usize = 29;
 pub const HOLIDAYS_ROW: usize = 30;
 pub const POWER_ON_ROW: usize = 31;
+/// Spotlight: the app drawer's Apps | Spotlight tabs with Plex rows.
+pub const SPOTLIGHT_ROW: usize = 32;
+/// The Plex app on LG TVs, opened from a Spotlight card.
+pub const PLEX_APP: &str = "cdp-30";
 
 /// Falling weather drawn over Home's wallpaper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -230,6 +234,10 @@ pub enum Target {
     Input(String),
     Browse,
     Filter(usize),
+    /// The app drawer's tabs when Spotlight is on: 0 Apps, 1 Spotlight.
+    DrawerTab(usize),
+    /// A Spotlight card: row, then position in the row.
+    SpotlightCard(usize, usize),
     ClearFilter,
     Search,
     ClearSearch,
@@ -400,6 +408,8 @@ pub enum Direction {
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     Save,
+    /// Load Spotlight's Plex rows (answered by `State::spotlight_loaded`).
+    LoadSpotlight,
     /// Read the app inventory again, keeping decoded icons of unchanged apps.
     Refresh,
     /// Refresh apps: read the inventory and every app icon again.
@@ -508,6 +518,11 @@ pub struct State {
     /// An Unsplash access key is saved on the TV, so Discover is offered.
     pub unsplash_ready: bool,
     pub discover: Discover,
+    /// Whether a Plex token is saved on the TV.
+    pub plex_ready: bool,
+    /// The drawer shows Spotlight instead of the apps (only with the option on).
+    pub spotlight_open: bool,
+    pub spotlight: Spotlight,
     pub deleting_wallpaper: Option<String>,
     pub wallpaper_upload: Option<Result<crate::wallpapers::Session, String>>,
     pub tile_editor: Option<Result<crate::companion::Session, String>>,
@@ -586,6 +601,9 @@ impl State {
             gallery_collection: None,
             unsplash_ready: false,
             discover: Discover::default(),
+            plex_ready: false,
+            spotlight_open: false,
+            spotlight: Spotlight::default(),
             deleting_wallpaper: None,
             wallpaper_upload: None,
             tile_editor: None,
@@ -1184,6 +1202,7 @@ impl State {
         if self.page != Page::Apps {
             self.drawer_return = None;
         }
+        self.spotlight_open = false;
         self.focus = Target::Nav(self.page_index());
         self.scroll = 0.;
         if self.page == Page::Home {
@@ -1632,6 +1651,7 @@ impl State {
             if matches!(
                 self.focus,
                 Target::Nav(_)
+                    | Target::DrawerTab(_)
                     | Target::Filter(_)
                     | Target::ClearFilter
                     | Target::Search
@@ -1690,6 +1710,129 @@ impl State {
     }
 
     /// Whether the drawer shows its category filters and search box.
+    /// The drawer shows its Apps | Spotlight tabs.
+    pub fn spotlight_tabs(&self) -> bool {
+        self.preferences.spotlight && self.page == Page::Apps
+    }
+
+    /// Shows the drawer's apps or Spotlight; Spotlight loads its rows when they are missing
+    /// or older than a few minutes.
+    pub fn select_drawer_tab(&mut self, spotlight: bool) -> Vec<Effect> {
+        let spotlight = spotlight && self.preferences.spotlight;
+        if self.spotlight_open != spotlight {
+            self.spotlight_open = spotlight;
+            self.scroll = 0.;
+            self.dirty = true;
+        }
+        let stale = self
+            .spotlight
+            .loaded
+            .is_none_or(|loaded| loaded.elapsed() > SPOTLIGHT_STALE);
+        if spotlight && self.plex_ready && stale && !self.spotlight.loading {
+            self.spotlight.loading = true;
+            self.spotlight.error = None;
+            return vec![Effect::LoadSpotlight];
+        }
+        vec![]
+    }
+
+    /// Spotlight's rows arrived (or why not). A failed refresh keeps the rows already shown.
+    pub fn spotlight_loaded(&mut self, result: Result<Vec<crate::plex::Row>, String>) {
+        self.spotlight.loading = false;
+        self.spotlight.loaded = Some(Instant::now());
+        match result {
+            Ok(rows) => {
+                self.spotlight.columns = rows
+                    .iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        let column = self.spotlight.columns.get(index).copied().unwrap_or(0);
+                        column.min(row.items.len().saturating_sub(1))
+                    })
+                    .collect();
+                self.spotlight.rows = rows;
+                self.spotlight.error = None;
+                // Focus left on a card that no longer exists moves to the nearest one.
+                if let Target::SpotlightCard(row, column) = self.focus {
+                    self.focus = self.spotlight_card(row.min(self.spotlight.rows.len()), column);
+                }
+            }
+            Err(error) => self.spotlight.error = Some(error),
+        }
+        self.dirty = true;
+    }
+
+    /// The card at `row` (clamped), at `column` (clamped); the Spotlight tab when empty.
+    fn spotlight_card(&self, row: usize, column: usize) -> Target {
+        let rows = &self.spotlight.rows;
+        if rows.is_empty() {
+            return Target::DrawerTab(1);
+        }
+        let row = row.min(rows.len() - 1);
+        Target::SpotlightCard(row, column.min(rows[row].items.len().saturating_sub(1)))
+    }
+
+    /// Up, Down, Left and Right on the drawer tabs and Spotlight's cards.
+    fn spotlight_direction(
+        &mut self,
+        direction: Direction,
+        controls: &[Control],
+    ) -> Option<Vec<Effect>> {
+        match self.focus.clone() {
+            Target::DrawerTab(_) => {
+                match direction {
+                    Direction::Left => {
+                        self.focus(Target::DrawerTab(0), controls);
+                        return Some(self.select_drawer_tab(false));
+                    }
+                    Direction::Right => {
+                        self.focus(Target::DrawerTab(1), controls);
+                        return Some(self.select_drawer_tab(true));
+                    }
+                    Direction::Up => return Some(self.close_drawer()),
+                    Direction::Down => {
+                        let next = if self.spotlight_open {
+                            let column = self.spotlight.columns.first().copied().unwrap_or(0);
+                            self.spotlight_card(0, column)
+                        } else if let Some(top) = self.drawer_top() {
+                            top
+                        } else if let Some(app) = self.apps().first() {
+                            Target::App(app.id.clone())
+                        } else {
+                            return Some(vec![]);
+                        };
+                        self.focus(next, controls);
+                    }
+                }
+                Some(vec![])
+            }
+            Target::SpotlightCard(row, column) => {
+                let next = match direction {
+                    Direction::Left => self.spotlight_card(row, column.saturating_sub(1)),
+                    Direction::Right => self.spotlight_card(row, column + 1),
+                    Direction::Up if row == 0 => Target::DrawerTab(1),
+                    Direction::Up => {
+                        let column = self.spotlight.columns.get(row - 1).copied().unwrap_or(0);
+                        self.spotlight_card(row - 1, column)
+                    }
+                    Direction::Down if row + 1 < self.spotlight.rows.len() => {
+                        let column = self.spotlight.columns.get(row + 1).copied().unwrap_or(0);
+                        self.spotlight_card(row + 1, column)
+                    }
+                    Direction::Down => return Some(vec![]),
+                };
+                if let Target::SpotlightCard(row, column) = next
+                    && let Some(remembered) = self.spotlight.columns.get_mut(row)
+                {
+                    *remembered = column;
+                }
+                self.focus(next, controls);
+                Some(vec![])
+            }
+            _ => None,
+        }
+    }
+
     pub fn drawer_toolbar(&self) -> bool {
         self.preferences.drawer_toolbar
     }
@@ -2659,6 +2802,11 @@ impl State {
                 }
                 return vec![];
             }
+            if self.page == Page::Apps
+                && let Some(effects) = self.spotlight_direction(direction, controls)
+            {
+                return effects;
+            }
             if self.focus == Target::Search {
                 match direction {
                     Direction::Left => {
@@ -2666,6 +2814,10 @@ impl State {
                             Target::Filter(if self.hidden_count() > 0 { 5 } else { 4 }),
                             controls,
                         );
+                        return vec![];
+                    }
+                    Direction::Up if self.spotlight_tabs() => {
+                        self.focus(Target::DrawerTab(0), controls);
                         return vec![];
                     }
                     Direction::Up => return self.close_drawer(),
@@ -2680,6 +2832,10 @@ impl State {
                     Target::Filter(_) | Target::ClearFilter | Target::Search | Target::ClearSearch
                 )
             {
+                if self.spotlight_tabs() {
+                    self.focus(Target::DrawerTab(0), controls);
+                    return vec![];
+                }
                 return self.close_drawer();
             }
             // The gear stands alone at the top right: Left and Right stay on it.
@@ -2709,6 +2865,7 @@ impl State {
                     let next = match direction {
                         Direction::Up if index < APPS_COLUMNS => match self.drawer_top() {
                             Some(target) => Some(target),
+                            None if self.spotlight_tabs() => Some(Target::DrawerTab(0)),
                             None => return self.close_drawer(),
                         },
                         Direction::Up => Some(Target::App(apps[index - APPS_COLUMNS].id.clone())),
@@ -3523,6 +3680,9 @@ impl State {
                 self.pressed = None;
             }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
+            Target::DrawerTab(tab) => return self.select_drawer_tab(tab == 1),
+            // Plex for LG takes no link to a title from other apps, so a card opens Plex.
+            Target::SpotlightCard(..) => return vec![Effect::Launch(PLEX_APP.into())],
             Target::MoreApps => self.open_drawer(),
             Target::ClockPosition => {
                 self.preferences.clock_position = self.preferences.clock_position.next();
@@ -3872,6 +4032,12 @@ impl State {
                     }
                     APP_SORTING_ROW => {
                         self.preferences.app_sorting = self.preferences.app_sorting.next()
+                    }
+                    SPOTLIGHT_ROW => {
+                        self.preferences.spotlight = !self.preferences.spotlight;
+                        if !self.preferences.spotlight {
+                            self.spotlight_open = false;
+                        }
                     }
                     DRAWER_TOOLBAR_ROW => {
                         self.preferences.drawer_toolbar = !self.preferences.drawer_toolbar;
@@ -4500,6 +4666,20 @@ fn mix(from: u32, to: u32, t: f32) -> u32 {
     };
     channel(16) | channel(8) | channel(0)
 }
+
+/// Spotlight's Plex rows, as last loaded (fork).
+#[derive(Clone, Debug, Default)]
+pub struct Spotlight {
+    pub rows: Vec<crate::plex::Row>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub loaded: Option<Instant>,
+    /// The position last focused in each row, so Up and Down come back to it.
+    pub columns: Vec<usize>,
+}
+
+/// Spotlight reloads when shown after this long.
+pub const SPOTLIGHT_STALE: Duration = Duration::from_secs(5 * 60);
 
 /// The TV's Discover page: Unsplash suggestions for one collection.
 #[derive(Clone, Debug, Default)]

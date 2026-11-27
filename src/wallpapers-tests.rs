@@ -52,6 +52,7 @@ fn http(path: &Path, request: impl FnOnce(&str) -> Vec<u8>) -> (String, bool) {
                 restore: &|_| {},
             },
             &mut crate::unsplash::Client::new(&std::env::temp_dir().join("luma-no-unsplash")),
+            &mut crate::plex::Client::new(&std::env::temp_dir().join("luma-no-plex")),
             || true,
         )
         .unwrap_or(false)

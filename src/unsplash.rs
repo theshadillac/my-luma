@@ -296,7 +296,7 @@ fn parse(item: &Value) -> Option<(Photo, Source)> {
     Some((photo, source))
 }
 
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension("tmp");
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);

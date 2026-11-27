@@ -20,6 +20,7 @@ mod input_refresh;
 mod luna;
 mod model;
 mod platform;
+mod plex;
 mod raster;
 mod recents;
 mod renderer;
@@ -370,6 +371,7 @@ fn effects(
                 wallpapers.delete(id, state.preferences.background.clone())
             }
             Effect::Suggest { query, page } => wallpapers.suggest(query, page),
+            Effect::LoadSpotlight => wallpapers.spotlight(),
             Effect::AddSuggestion { id, collection } => wallpapers.add_suggestion(id, collection),
             Effect::Recent {
                 generation,
@@ -1157,6 +1159,7 @@ fn run() -> Result<(), String> {
                     }
                 }
                 wallpapers::Event::Suggestions(page, result) => state.suggestions(page, result),
+                wallpapers::Event::Spotlight(result) => state.spotlight_loaded(result),
                 wallpapers::Event::SuggestionAdded(id, result) => {
                     state.suggestion_added(&id, result)
                 }
@@ -1217,6 +1220,21 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         let unix = state::unix_now();
+        let plex_ready = wallpaper_service.plex_ready();
+        if state.plex_ready != plex_ready {
+            state.plex_ready = plex_ready;
+            state.dirty = true;
+            // A token just saved from the phone: an open Spotlight loads at once.
+            if plex_ready
+                && state.spotlight_open
+                && state
+                    .select_drawer_tab(true)
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::LoadSpotlight))
+            {
+                wallpaper_service.spotlight();
+            }
+        }
         let ready = wallpaper_service.unsplash_ready();
         if state.unsplash_ready != ready {
             state.unsplash_ready = ready;
