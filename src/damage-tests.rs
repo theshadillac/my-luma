@@ -87,19 +87,38 @@ fn older_back_buffers_need_every_change_since_their_frame() {
 }
 
 #[test]
-fn changed_clip_or_fade_state_redraws_everything() {
+fn changed_clip_or_fade_includes_the_affected_draws() {
     let mut tracker = Tracker::default();
     let clip = |y: f32| Draw::Clip(Some(Rect::new(0., y, 1920., 500.)));
     tracker.push(&[wallpaper(), clip(100.), shape(100.), Draw::Clip(None)]);
     tracker.push(&[wallpaper(), clip(120.), shape(100.), Draw::Clip(None)]);
-    assert!(tracker.damage(1).is_none());
+    assert_eq!(area(tracker.damage(1)).w, 102.);
     tracker.push(&[
         wallpaper(),
         clip(120.),
         Draw::EdgeFade(Some([0., 1., 2., 3.])),
         shape(100.),
     ]);
-    assert!(tracker.damage(1).is_none());
+    assert_eq!(area(tracker.damage(1)).w, 102.);
+}
+
+#[test]
+fn a_clip_change_redraws_the_visible_old_and_new_pixels_of_an_identical_suffix() {
+    let card = || Draw::Shape(Rect::new(0., 0., 1920., 1080.), 0., 0., [1.; 4]);
+    let clipped = |x| {
+        vec![
+            wallpaper(),
+            Draw::Clip(Some(Rect::new(x, 20., 70., 60.))),
+            card(),
+            Draw::Clip(None),
+            shape(800.),
+        ]
+    };
+    let mut tracker = Tracker::default();
+    tracker.push(&clipped(20.));
+    tracker.push(&clipped(200.));
+    let r = area(tracker.damage(1));
+    assert_eq!((r.x, r.y, r.w, r.h), (18., 18., 254., 64.));
 }
 
 #[test]

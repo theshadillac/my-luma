@@ -24,7 +24,15 @@ impl Tracker {
         let damage = if self.previous.is_empty() {
             None
         } else {
-            diff(&self.previous, commands)
+            let estimated = diff(&self.previous, commands);
+            // A diff that gave up, or found half the screen changed, is often a clip or fade
+            // change: bound the differing span by the clips actually used (upstream #373).
+            if estimated.is_some_and(|r| r.w * r.h < 1920. * 1080. / 2.) {
+                estimated
+            } else {
+                let visible = changed_span(&self.previous, commands, CLIP_PADDING);
+                Some(estimated.map_or(visible, |r| intersection(r, visible)))
+            }
         };
         self.history.push_front(damage);
         self.history.truncate(HISTORY);
@@ -50,6 +58,99 @@ impl Tracker {
         self.previous.clear();
         self.history.clear();
     }
+}
+
+/// Antialiased edges reach a little past a clip.
+const CLIP_PADDING: f32 = 2.;
+
+#[derive(Default, Clone, Copy)]
+struct PaintState {
+    clip: Option<Rect>,
+    fade: Option<[f32; 4]>,
+}
+
+impl PaintState {
+    fn advance(&mut self, command: &Draw) {
+        match command {
+            Draw::Clip(clip) => self.clip = *clip,
+            Draw::EdgeFade(fade) => self.fade = *fade,
+            _ => {}
+        }
+    }
+
+    fn accumulate(&mut self, area: &mut Rect, command: &Draw, padding: f32) -> bool {
+        self.advance(command);
+        if matches!(command, Draw::Clip(_) | Draw::EdgeFade(_)) {
+            return true;
+        }
+        let Some(bounds) = bounds(command) else {
+            // Something that can't be bounded: the whole visible area.
+            *area = union(*area, self.clip.map_or(FULL, |clip| clip.inset(-padding)));
+            return false;
+        };
+        *area = union(
+            *area,
+            self.clip
+                .map_or(bounds, |clip| intersection(bounds, clip.inset(-padding))),
+        );
+        true
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        same(&Draw::Clip(self.clip), &Draw::Clip(other.clip)) && self.fade == other.fade
+    }
+}
+
+const FULL: Rect = Rect {
+    x: 0.,
+    y: 0.,
+    w: 1920.,
+    h: 1080.,
+};
+
+fn intersection(a: Rect, b: Rect) -> Rect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    Rect::new(
+        x,
+        y,
+        ((a.x + a.w).min(b.x + b.w) - x).max(0.),
+        ((a.y + a.h).min(b.y + b.h) - y).max(0.),
+    )
+}
+
+/// Bound the differing span in both scenes by the scissors actually used to paint it.
+/// An identical suffix can still differ visually until its inherited paint state agrees.
+fn changed_span(old: &[Draw], new: &[Draw], padding: f32) -> Rect {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| same(a, b)).count();
+    let mut before = PaintState::default();
+    for command in &old[..prefix] {
+        before.advance(command);
+    }
+    let (old, new) = (&old[prefix..], &new[prefix..]);
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take_while(|(a, b)| same(a, b))
+        .count();
+    let (old, tail) = old.split_at(old.len() - suffix);
+    let mut after = before;
+    let mut area = Rect::default();
+    for command in old {
+        before.accumulate(&mut area, command, padding);
+    }
+    for command in &new[..new.len() - suffix] {
+        after.accumulate(&mut area, command, padding);
+    }
+    for command in tail {
+        if before.matches(&after) {
+            break;
+        }
+        before.accumulate(&mut area, command, padding);
+        after.accumulate(&mut area, command, padding);
+    }
+    area
 }
 
 fn diff(old: &[Draw], new: &[Draw]) -> Damage {
