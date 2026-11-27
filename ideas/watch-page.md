@@ -1,9 +1,9 @@
-# Watch page (working name): discovery, recommendations and trending
+# Spotlight: discovery, recommendations and trending
 
-Status: planning, 2026-11-27. Stephen approved storing a Plex token and a TMDB key on the TV (0600 files, like the Unsplash key; never in chats, logs or the repo).
+Status: stage 1 released as Lume 1.3.0 (2026-11-27). Named Spotlight by Stephen. Planned 2026-11-27. Stephen approved storing a Plex token and a TMDB key on the TV (0600 files, like the Unsplash key; never in chats, logs or the repo).
 
 ## Idea
-The app drawer gets its tab switcher back: Apps | Watch. Watch shows what is new, trending and worth watching across Stephen's services and Plex. Opt-in; Home untouched.
+The app drawer gets its tab switcher back: Apps | Spotlight. Spotlight shows what is new, trending and worth watching across Stephen's services and Plex. Opt-in; Home untouched.
 
 ## Services (Stephen, 2026-11-27)
 Main: YouTube TV, Plex, Netflix, Apple TV, Prime Video. Occasionally: Disney+, BritBox.
@@ -26,3 +26,10 @@ Wanted too: what's trending on network TV (he has YouTube TV).
 
 ## Principles check
 Opt-in (1, 4); posters lazy-loaded and cached, page built only when opened (2); two new secrets on the TV only, approved (5); Home untouched, page can be switched off (6).
+
+## Stage 1 as built (1.3.0)
+- Settings > App drawer > Spotlight tab (off by default). Tabs centred at the top of the drawer.
+- Rows: Continue watching (on deck with progress), Up next (rest of on deck), Recently added. Posters 240x360 via /photo/:/transcode, cached in spotlight/ next to the wallpapers, pruned to what is shown.
+- Server: phone-page address if given, else GDM. Token: phone page > Spotlight: Plex; plex-token and plex-server files, 0600.
+- OK on a card opens Plex (cdp-30). Reload when shown after 5 minutes.
+- Not yet tested against Stephen's real server.
