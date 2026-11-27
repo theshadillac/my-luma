@@ -734,3 +734,10 @@ fn settings_backup_needs_the_session_and_its_header() {
     });
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
 }
+
+#[cfg(feature = "webos")]
+#[test]
+fn free_space_is_read_for_the_wallpaper_folder() {
+    let free = super::free_bytes(std::path::Path::new("/tmp")).unwrap();
+    assert!(free > 0);
+}

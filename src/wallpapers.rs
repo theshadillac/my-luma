@@ -551,6 +551,30 @@ fn store(
     store_image(directory, decode(bytes)?, valid, collection, None, None)
 }
 
+/// Free space the TV must keep after wallpapers; a saved wallpaper takes a few MB.
+const MIN_FREE_BYTES: u64 = 300_000_000;
+
+/// Free bytes on the filesystem holding `path`, where the platform can tell.
+#[cfg(feature = "webos")]
+fn free_bytes(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: statvfs is plain old data; all zeroes is a valid value.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid C string and a statvfs owned by this frame.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    // The field types differ between 32-bit ARM and 64-bit desktop builds.
+    #[allow(clippy::unnecessary_cast)]
+    Some(stats.f_bavail as u64 * stats.f_frsize as u64)
+}
+
+#[cfg(not(feature = "webos"))]
+fn free_bytes(_: &Path) -> Option<u64> {
+    None
+}
+
 fn store_image(
     directory: &Path,
     mut image: image::RgbImage,
@@ -562,6 +586,15 @@ fn store_image(
     if catalog(directory).len() >= MAX_WALLPAPERS {
         return Err(format!(
             "The wallpaper gallery is full ({MAX_WALLPAPERS} images)"
+        ));
+    }
+    // Never fill the TV's storage with wallpapers (B118): skip the save and say so.
+    if let Some(free) = free_bytes(directory)
+        && free < MIN_FREE_BYTES
+    {
+        return Err(format!(
+            "The TV is low on storage ({} MB free), so the wallpaper wasn't saved",
+            free / 1_000_000
         ));
     }
     let original = jpeg(&image, 94)?;

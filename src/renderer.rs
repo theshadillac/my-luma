@@ -398,6 +398,8 @@ impl Renderer {
         } else {
             "#version 150\n#define varying in\n#define texture2D texture\nout vec4 out_color;\n#define gl_FragColor out_color\n#define PAINT_PRECISION\n".into()
         };
+        // Measured to judge caching compiled programs on the TV (B127).
+        let shaders_started = std::time::Instant::now();
         let program = link(
             &(vertex_prefix.clone() + include_str!("shaders/paint.vert")),
             &(fragment_prefix.clone() + include_str!("shaders/paint.frag")),
@@ -428,6 +430,10 @@ impl Renderer {
                 return Err(error);
             }
         };
+        eprintln!(
+            "Luma startup: shaders compiled in {} ms",
+            shaders_started.elapsed().as_millis()
+        );
         let mut buffer = 0;
         let mut vao = 0;
         unsafe {

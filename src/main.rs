@@ -474,6 +474,45 @@ fn pointer_motion_active(state: &State, xrel: i32, yrel: i32) -> bool {
     state.pointer || xrel != 0 || yrel != 0
 }
 
+/// Tells real Magic Remote moves from jitter for the ambient screen and its idle timer
+/// (B129). Zero moves never count; in ambient the pointer must travel a clear distance
+/// within a short time, so a remote set down on the couch leaves ambient alone.
+#[derive(Default)]
+struct AmbientMotion {
+    travel: f32,
+    since: Option<Instant>,
+}
+
+impl AmbientMotion {
+    const WAKE_DISTANCE: f32 = 48.;
+    const WINDOW: Duration = Duration::from_millis(600);
+
+    fn real_move(&mut self, state: &State, xrel: i32, yrel: i32, now: Instant) -> bool {
+        if xrel == 0 && yrel == 0 {
+            return false;
+        }
+        if state.ambient.is_none() {
+            self.travel = 0.;
+            self.since = None;
+            return true;
+        }
+        if self
+            .since
+            .is_none_or(|since| now.duration_since(since) > Self::WINDOW)
+        {
+            self.travel = 0.;
+            self.since = Some(now);
+        }
+        self.travel += ((xrel * xrel + yrel * yrel) as f32).sqrt();
+        if self.travel >= Self::WAKE_DISTANCE {
+            self.travel = 0.;
+            self.since = None;
+            return true;
+        }
+        false
+    }
+}
+
 /// Holds hover off briefly after Lume comes back to the front, so the remote's restored
 /// pointer position cannot pull focus off the first favourite (upstream #403, B96).
 #[derive(Default)]
@@ -1021,6 +1060,7 @@ fn run() -> Result<(), String> {
     let mut feedback = feedback::Feedback::default();
     let mut focused = !start_hidden;
     let mut pointer_motion = PointerMotion::default();
+    let mut ambient_motion = AmbientMotion::default();
     pointer_motion.reset();
     // Whether SDL currently declines LG's screen saver (the ambient screen holds it).
     let mut holding_screen_saver = false;
@@ -1499,7 +1539,17 @@ fn run() -> Result<(), String> {
                 Event::MouseButtonDown { .. } | Event::MouseWheel { .. } if external_input => {
                     state.finish_wake();
                 }
-                Event::MouseMotion { .. } | Event::TextInput { .. } if external_input => {
+                Event::MouseMotion { xrel, yrel, .. } if external_input => {
+                    // A resting or bumped Magic Remote sends tiny or zero moves; they must not
+                    // end ambient or keep resetting its timer (B129).
+                    if ambient_motion.real_move(&state, *xrel, *yrel, Instant::now()) {
+                        state.note_input();
+                    } else if state.ambient.is_some() {
+                        // Jitter under the ambient screen moves nothing behind it either.
+                        continue;
+                    }
+                }
+                Event::TextInput { .. } if external_input => {
                     state.note_input();
                 }
                 _ => {}

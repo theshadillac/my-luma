@@ -5240,3 +5240,28 @@ fn clock_settings_list_the_style_row() {
     assert!(texts.iter().any(|t| t == "Style"), "{texts:?}");
     assert!(texts.iter().any(|t| t == "Glass"), "{texts:?}");
 }
+
+#[test]
+fn magic_remote_jitter_leaves_ambient_alone() {
+    use std::time::{Duration, Instant};
+    let mut state = ready();
+    let mut motion = crate::AmbientMotion::default();
+    let now = Instant::now();
+    // Zero moves never count, ambient or not.
+    assert!(!motion.real_move(&state, 0, 0, now));
+    // On Home any real move counts (resets the idle timer as before).
+    assert!(motion.real_move(&state, 1, 0, now));
+    state.ambient = Some(now);
+    // Small twitches, even several, stay below the wake distance.
+    for step in 0..6 {
+        assert!(!motion.real_move(&state, 3, -2, now + Duration::from_millis(step * 50)));
+    }
+    // Twitches spread out over time never add up.
+    for step in 0..10 {
+        assert!(!motion.real_move(&state, 20, 0, now + Duration::from_secs(2 + step)));
+    }
+    // A real sweep wakes it.
+    let later = now + Duration::from_secs(30);
+    assert!(!motion.real_move(&state, 30, 0, later));
+    assert!(motion.real_move(&state, 30, 0, later + Duration::from_millis(100)));
+}
