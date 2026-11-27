@@ -936,7 +936,7 @@ impl State {
         self.dirty = true;
     }
 
-    /// The TV started turning off with Luma in front. With ambient at power on, switch to a
+    /// The TV started turning off (Luma in front or behind an app). With ambient at power on, switch to a
     /// fully faded-in ambient screen now, while the panel goes dark, so the TV wakes up
     /// straight into it. Returns whether it did.
     pub fn arm_power_on_ambient(&mut self) -> bool {

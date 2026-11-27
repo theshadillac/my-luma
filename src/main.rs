@@ -1387,8 +1387,13 @@ fn run() -> Result<(), String> {
         // does not. A jump means the TV just came back on; Luma restarts never count.
         if powering_off.swap(false, std::sync::atomic::Ordering::Relaxed) {
             // Set the ambient screen up while the panel goes dark, so it is what comes back.
-            let armed = visible && focused && state.arm_power_on_ambient();
-            eprintln!("Luma power: turning off (ambient ready: {armed})");
+            // Also behind an app: the TV often wakes to Home, and a hidden Luma would show
+            // Home first. A wake into the app drops it again (power_on_missed).
+            let armed = state.arm_power_on_ambient();
+            eprintln!(
+                "Luma power: turning off (ambient ready: {armed}, Luma in front: {})",
+                visible && focused
+            );
         }
         let woke_now = power_clock.check(std::time::SystemTime::now(), Instant::now())
             | powered_on.swap(false, std::sync::atomic::Ordering::Relaxed);
