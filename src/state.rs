@@ -3715,8 +3715,25 @@ impl State {
             }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
             Target::DrawerTab(tab) => return self.select_drawer_tab(tab == 1),
-            // Plex for LG takes no link to a title from other apps, so a card opens Plex.
-            Target::SpotlightCard(..) => return vec![Effect::Launch(PLEX_APP.into())],
+            // Apps take no links to a title from other apps: a card in a service's row opens
+            // that service's app when installed, every other card opens Plex.
+            Target::SpotlightCard(row, _) => {
+                let service = self
+                    .spotlight
+                    .rows
+                    .get(row)
+                    .and_then(|row| row.service)
+                    .and_then(crate::branding::for_key)
+                    .and_then(|brand| {
+                        brand
+                            .ids
+                            .iter()
+                            .find(|id| self.inventory.apps.iter().any(|app| app.id == **id))
+                    });
+                return vec![Effect::Launch(
+                    service.map_or(PLEX_APP.to_string(), |id| (*id).to_string()),
+                )];
+            }
             Target::MoreApps => self.open_drawer(),
             Target::ClockPosition => {
                 self.preferences.clock_position = self.preferences.clock_position.next();
@@ -4716,7 +4733,7 @@ pub struct Spotlight {
 }
 
 /// Spotlight reloads when shown after this long.
-pub const SPOTLIGHT_STALE: Duration = Duration::from_secs(5 * 60);
+pub const SPOTLIGHT_STALE: Duration = Duration::from_secs(15 * 60);
 
 /// The TV's Discover page: Unsplash suggestions for one collection.
 #[derive(Clone, Debug, Default)]

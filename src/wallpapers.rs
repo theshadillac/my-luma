@@ -703,7 +703,15 @@ fn worker(
     let update = |command,
                   unsplash: &mut crate::unsplash::Client,
                   plex: &mut crate::plex::Client| match command {
-        Command::Spotlight => sender.send(Event::Spotlight(plex.rows(&posters))).is_ok(),
+        // Rows first, with the posters already saved, then again once the rest arrived.
+        Command::Spotlight => match plex.rows(&posters) {
+            Ok(mut rows) => {
+                let shown = sender.send(Event::Spotlight(Ok(rows.clone()))).is_ok();
+                plex.fill_posters(&mut rows, &posters);
+                shown && sender.send(Event::Spotlight(Ok(rows))).is_ok()
+            }
+            Err(error) => sender.send(Event::Spotlight(Err(error))).is_ok(),
+        },
         Command::Wake => {
             import();
             true

@@ -2814,7 +2814,7 @@ fn spotlight(out: &mut Scene, state: &State, assets: &Assets) {
             continue;
         }
         out.text(
-            row.kind.title(),
+            &row.title,
             Rect::new(84., top, 900., 36.),
             text(26., 600, -0.02),
             WHITE,

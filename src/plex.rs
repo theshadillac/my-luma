@@ -23,33 +23,55 @@ pub struct Item {
     pub subtitle: String,
     /// How far into it the user is, 0 to 1; 0 when not started.
     pub progress: f32,
+    /// Where the poster comes from: a path on the server or a web address.
     #[serde(skip)]
     pub(crate) poster_path: Option<String>,
     /// The poster saved on the TV, once fetched.
     pub poster: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum RowKind {
-    ContinueWatching,
-    UpNext,
-    RecentlyAdded,
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Row {
+    pub title: String,
+    /// The Lume brand key of the service this row is about ("prime-video"); its cards open
+    /// that app. None opens Plex.
+    pub service: Option<&'static str>,
+    pub items: Vec<Item>,
 }
 
-impl RowKind {
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::ContinueWatching => "Continue watching",
-            Self::UpNext => "Up next",
-            Self::RecentlyAdded => "Recently added",
-        }
+/// Plex's discovery service: trending and recommendations for the user's chosen services.
+const DISCOVER: &str = "https://discover.provider.plex.tv";
+/// Discovery rows shown, in this order; "Trending on <service>" rows follow the first three.
+const DISCOVER_HUBS: [&str; 4] = [
+    "home.trending-for-you",
+    "home.recommended-on-services",
+    "home.new-for-you",
+    "home.watchlist-available",
+];
+const DISCOVER_LATE: [&str; 1] = ["home.top_watchlisted"];
+
+fn row(title: &str, service: Option<&'static str>, items: Vec<Item>) -> Row {
+    Row {
+        title: title.to_owned(),
+        service,
+        items,
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Row {
-    pub kind: RowKind,
-    pub items: Vec<Item>,
+/// Plex's service names, as Lume's brands (whose apps a card can open).
+fn service_brand(platform: &str) -> Option<&'static str> {
+    Some(match platform {
+        "amazon-prime-video" => "prime-video",
+        "netflix" => "netflix",
+        "appletv" | "apple-tv-plus" => "apple-tv",
+        "disney-plus" => "disney-plus",
+        "max" | "hbo-max" => "hbo-max",
+        "hulu" => "hulu",
+        "paramount-plus" => "paramount-plus",
+        "peacock" => "peacock",
+        "crunchyroll" => "crunchyroll",
+        _ => return None,
+    })
 }
 
 pub struct Client {
@@ -135,54 +157,72 @@ impl Client {
         self.server.clone()
     }
 
-    /// Spotlight's Plex rows, with posters saved into `posters`.
+    /// Spotlight's rows, with the posters already saved; `fill_posters` fetches the rest.
     pub fn rows(&mut self, posters: &Path) -> Result<Vec<Row>, String> {
         let token = self
             .token()
             .ok_or("Add your Plex token on the phone page first")?;
-        let server = self.server().ok_or("Lume couldn't find your Plex server")?;
-        let deck = self.get_json(&server, &token, "/library/onDeck");
-        let added = self.get_json(&server, &token, "/library/recentlyAdded");
-        if deck.is_err() && added.is_err() {
-            // The server may have moved (new address): look again next time.
-            self.server = None;
-            return Err(deck.err().unwrap_or_default());
-        }
-        let (continuing, next): (Vec<Item>, Vec<Item>) = deck
-            .map(|value| items(&value))
-            .unwrap_or_default()
-            .into_iter()
-            .partition(|item| item.progress > 0.);
-        let mut rows: Vec<Row> = [
-            (RowKind::ContinueWatching, continuing),
-            (RowKind::UpNext, next),
-            (
-                RowKind::RecentlyAdded,
-                added.map(|value| items(&value)).unwrap_or_default(),
-            ),
-        ]
-        .into_iter()
-        .filter(|(_, items)| !items.is_empty())
-        .map(|(kind, items)| Row { kind, items })
-        .collect();
-        let _ = std::fs::create_dir_all(posters);
-        let mut keep = Vec::new();
-        for row in &mut rows {
-            for item in &mut row.items {
-                let file = posters.join(format!("{}.jpg", item.key));
-                if !file.exists()
-                    && let Some(path) = &item.poster_path
-                    && let Ok(bytes) = self.poster(&server, &token, path)
-                {
-                    let _ = std::fs::write(&file, bytes);
+        let server = self.server();
+        let mut rows = Vec::new();
+        let mut local_error = None;
+        if let Some(server) = &server {
+            match self.get_json(server, &token, "/library/onDeck") {
+                Ok(deck) => {
+                    let continuing: Vec<Item> = items(&deck)
+                        .into_iter()
+                        .filter(|item| item.progress > 0.)
+                        .collect();
+                    rows.push(row("Continue watching", None, continuing));
                 }
-                if file.exists() {
-                    keep.push(file.clone());
-                    item.poster = Some(file);
+                Err(error) => {
+                    // The server may have moved (new address): look again next time.
+                    self.server = None;
+                    local_error = Some(error);
                 }
             }
         }
-        // Posters of items no longer shown are removed, so the cache stays small.
+        let discovered = self.discover_rows(&token);
+        let reached_discover = !discovered.is_empty();
+        rows.extend(discovered);
+        if let Some(server) = &server
+            && local_error.is_none()
+        {
+            rows.extend(self.library_rows(server, &token));
+        }
+        rows.retain(|row| !row.items.is_empty());
+        if rows.is_empty() {
+            return Err(local_error
+                .or((!reached_discover).then(|| "Lume couldn't reach Plex".to_string()))
+                .unwrap_or_else(|| "Nothing to show yet".into()));
+        }
+        for item in rows.iter_mut().flat_map(|row| row.items.iter_mut()) {
+            let file = posters.join(format!("{}.jpg", item.key));
+            if file.exists() {
+                item.poster = Some(file);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Fetches missing posters into `posters`, then removes the ones no longer shown.
+    pub fn fill_posters(&mut self, rows: &mut [Row], posters: &Path) {
+        let _ = std::fs::create_dir_all(posters);
+        let token = self.token();
+        let server = self.server.clone();
+        let mut keep = Vec::new();
+        for item in rows.iter_mut().flat_map(|row| row.items.iter_mut()) {
+            let file = posters.join(format!("{}.jpg", item.key));
+            if !file.exists()
+                && let Some(path) = &item.poster_path
+                && let Ok(bytes) = self.poster(server.as_deref(), token.as_deref(), path)
+            {
+                let _ = std::fs::write(&file, bytes);
+            }
+            if file.exists() {
+                item.poster = Some(file.clone());
+                keep.push(file);
+            }
+        }
         if let Ok(entries) = std::fs::read_dir(posters) {
             for entry in entries.flatten() {
                 if !keep.contains(&entry.path()) {
@@ -190,24 +230,120 @@ impl Client {
                 }
             }
         }
-        Ok(rows)
     }
 
-    /// A small poster (about 240 × 360) resized by the server.
-    fn poster(&self, server: &str, token: &str, path: &str) -> Result<Vec<u8>, String> {
-        let mut response = self
-            .agent
-            .get(&format!("{server}/photo/:/transcode"))
-            .query("width", "240")
-            .query("height", "360")
-            .query("minSize", "1")
-            .query("upscale", "1")
-            .query("url", path)
-            .header("X-Plex-Token", token)
-            .header("X-Plex-Product", "Lume")
-            .header("X-Plex-Client-Identifier", "lume-tv")
-            .call()
-            .map_err(|_| "A poster couldn't be loaded")?;
+    /// Plex's discovery rows for the services chosen in the user's Plex account.
+    fn discover_rows(&self, token: &str) -> Vec<Row> {
+        let Ok(home) = self.get_json(DISCOVER, token, "/hubs/sections/home") else {
+            return Vec::new();
+        };
+        discover_hubs(&home)
+            .into_iter()
+            .filter_map(|(key, title, service)| {
+                let list = self.get_json(DISCOVER, token, &key).ok()?;
+                Some(row(&title, service, items(&list)))
+            })
+            .collect()
+    }
+
+    /// From the user's own movie and TV libraries: top rated not yet watched, most played.
+    fn library_rows(&self, server: &str, token: &str) -> Vec<Row> {
+        let Ok(sections) = self.get_json(server, token, "/library/sections") else {
+            return Vec::new();
+        };
+        let libraries: Vec<(String, &str)> = sections["MediaContainer"]["Directory"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|section| {
+                let key = section["key"].as_str()?;
+                let kind = match section["type"].as_str()? {
+                    "movie" => "1",
+                    "show" => "2",
+                    _ => return None,
+                };
+                key.chars()
+                    .all(|c| c.is_ascii_digit())
+                    .then(|| (key.to_owned(), kind))
+            })
+            .collect();
+        let gather = |query: &str, score: &dyn Fn(&Value) -> f64| {
+            let mut found: Vec<(f64, Item)> = libraries
+                .iter()
+                .filter_map(|(key, kind)| {
+                    self.get_json(
+                        server,
+                        token,
+                        &format!("/library/sections/{key}/all?type={kind}&{query}"),
+                    )
+                    .ok()
+                })
+                .flat_map(|list| {
+                    list["MediaContainer"]["Metadata"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .filter_map(|value| Some((score(&value), item(&value)?)))
+                .collect();
+            found.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let mut seen = std::collections::HashSet::new();
+            found
+                .into_iter()
+                .map(|(_, item)| item)
+                .filter(|item| seen.insert(item.key.clone()))
+                .take(ROW_LIMIT)
+                .collect()
+        };
+        let rating = |value: &Value| {
+            value["audienceRating"]
+                .as_f64()
+                .or(value["rating"].as_f64())
+                .unwrap_or(0.)
+        };
+        let plays = |value: &Value| value["viewCount"].as_f64().unwrap_or(0.);
+        vec![
+            row(
+                "Top rated in your library",
+                None,
+                gather("unwatched=1&sort=audienceRating:desc", &rating),
+            ),
+            row(
+                "Most played in your library",
+                None,
+                gather("sort=viewCount:desc", &plays),
+            ),
+        ]
+    }
+
+    /// A small poster (about 240 × 360). TMDB posters come straight from TMDB at a small
+    /// size (no token sent); others are resized by the user's own server.
+    fn poster(
+        &self,
+        server: Option<&str>,
+        token: Option<&str>,
+        path: &str,
+    ) -> Result<Vec<u8>, String> {
+        let request = if let Some(name) = path.strip_prefix("https://image.tmdb.org/t/p/original/")
+        {
+            self.agent
+                .get(&format!("https://image.tmdb.org/t/p/w342/{name}"))
+        } else {
+            let (Some(server), Some(token)) = (server, token) else {
+                return Err("No server to resize the poster".into());
+            };
+            self.agent
+                .get(&format!("{server}/photo/:/transcode"))
+                .query("width", "240")
+                .query("height", "360")
+                .query("minSize", "1")
+                .query("upscale", "1")
+                .query("url", path)
+                .header("X-Plex-Token", token)
+                .header("X-Plex-Product", "Lume")
+                .header("X-Plex-Client-Identifier", "lume-tv")
+        };
+        let mut response = request.call().map_err(|_| "A poster couldn't be loaded")?;
         let mut bytes = Vec::new();
         response
             .body_mut()
@@ -219,20 +355,46 @@ impl Client {
     }
 
     fn get_json(&self, server: &str, token: &str, path: &str) -> Result<Value, String> {
-        let mut response = self
-            .agent
-            .get(&format!("{server}{path}"))
-            .query("X-Plex-Container-Start", "0")
-            .query("X-Plex-Container-Size", ROW_LIMIT.to_string())
-            .header("Accept", "application/json")
-            .header("X-Plex-Token", token)
-            .header("X-Plex-Product", "Lume")
-            .header("X-Plex-Client-Identifier", "lume-tv")
-            .call()
-            .map_err(|error| match error {
-                ureq::Error::StatusCode(401) => "Plex didn't accept the token".to_string(),
-                _ => "Lume couldn't reach your Plex server".to_string(),
-            })?;
+        let unreachable = |error: ureq::Error| match error {
+            ureq::Error::StatusCode(401) => "Plex didn't accept the token".to_string(),
+            _ => "Lume couldn't reach Plex".to_string(),
+        };
+        let mut url = format!("{server}{path}");
+        let mut hops = 0;
+        let mut response = loop {
+            let response = self
+                .agent
+                .get(&url)
+                .query("X-Plex-Container-Start", "0")
+                .query("X-Plex-Container-Size", ROW_LIMIT.to_string())
+                .header("Accept", "application/json")
+                .header("X-Plex-Token", token)
+                .header("X-Plex-Product", "Lume")
+                .header("X-Plex-Client-Identifier", "lume-tv")
+                .call()
+                .map_err(unreachable)?;
+            if !response.status().is_redirection() {
+                break response;
+            }
+            // Plex's discovery service redirects to add the user's chosen services. Follow
+            // only to the same host, so the token never goes anywhere else.
+            let location = response
+                .headers()
+                .get("location")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            let next = if location.starts_with('/') {
+                format!("{server}{location}")
+            } else {
+                location
+            };
+            hops += 1;
+            if hops > 3 || !next.starts_with(&format!("{server}/")) {
+                return Err("Lume couldn't reach Plex".into());
+            }
+            url = next;
+        };
         let limit = 4 * 1024 * 1024;
         let mut bytes = Vec::new();
         response
@@ -246,6 +408,46 @@ impl Client {
         }
         serde_json::from_slice(&bytes).map_err(|_| "Plex sent something Lume couldn't read".into())
     }
+}
+
+/// The discovery rows Spotlight shows, in order: (address, title, service brand). Trending
+/// on each of the user's services follows the first three rows.
+fn discover_hubs(home: &Value) -> Vec<(String, String, Option<&'static str>)> {
+    let hubs = home["MediaContainer"]["Hub"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let hub = |id: &str| {
+        hubs.iter()
+            .find(|hub| hub["hubIdentifier"].as_str() == Some(id))
+    };
+    let services = hubs.iter().filter(|hub| {
+        hub["hubIdentifier"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("home.trend-"))
+    });
+    DISCOVER_HUBS[..3]
+        .iter()
+        .filter_map(|id| hub(id))
+        .chain(services)
+        .chain(DISCOVER_HUBS[3..].iter().filter_map(|id| hub(id)))
+        .chain(DISCOVER_LATE.iter().filter_map(|id| hub(id)))
+        .filter_map(|hub| {
+            let key = hub["key"].as_str()?;
+            (key.starts_with("/hubs/sections/home/")
+                && key.len() <= 120
+                && key[20..]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)))
+            .then(|| {
+                (
+                    key.to_owned(),
+                    hub["title"].as_str().unwrap_or_default().to_owned(),
+                    hub["platform"].as_str().and_then(service_brand),
+                )
+            })
+        })
+        .collect()
 }
 
 fn valid_token(token: &str) -> bool {
@@ -328,7 +530,9 @@ fn item(value: &Value) -> Option<Item> {
         title,
         subtitle,
         progress,
-        poster_path: (poster.starts_with('/') && poster.len() < 300).then_some(poster),
+        poster_path: ((poster.starts_with('/') || poster.starts_with("https://"))
+            && poster.len() < 300)
+            .then_some(poster),
         poster: None,
     })
 }
@@ -408,6 +612,49 @@ mod tests {
         assert_eq!(items(&season)[0].title, "Bluey");
         assert_eq!(items(&season)[0].subtitle, "Season 3");
         assert!(items(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn discovery_rows_follow_lumes_order_and_skip_ads() {
+        let home = json!({"MediaContainer": {"Hub": [
+            {"hubIdentifier": "home.recently-released-trailers", "key": "/hubs/sections/home/recently-released-trailers", "title": "New Trailers"},
+            {"hubIdentifier": "home.top_watchlisted", "key": "/hubs/sections/home/top_watchlisted", "title": "Most Watchlisted This Week"},
+            {"hubIdentifier": "home.trending-for-you", "key": "/hubs/sections/home/trending-for-you", "title": "Trending on Your Services"},
+            {"hubIdentifier": "home.trend-amazon-prime-video", "key": "/hubs/sections/home/trend-amazon-prime-video", "title": "Trending on Prime Video", "platform": "amazon-prime-video"},
+            {"hubIdentifier": "home.watchlist-available", "key": "/hubs/sections/home/watchlist-available", "title": "Available on Your Services"},
+            {"hubIdentifier": "home.recommended-on-services", "key": "/hubs/sections/home/recommended-on-services", "title": "Recommended on Your Services"},
+            {"hubIdentifier": "home.new-for-you", "key": "https://elsewhere.example/x", "title": "New on Your Services"},
+            {"hubIdentifier": "home.festive-favorites", "key": "/hubs/sections/home/festive-favorites", "title": "Santa’s Nice List"}
+        ]}});
+        let hubs = discover_hubs(&home);
+        let titles: Vec<&str> = hubs.iter().map(|(_, title, _)| title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Trending on Your Services",
+                "Recommended on Your Services",
+                "Trending on Prime Video",
+                "Available on Your Services",
+                "Most Watchlisted This Week"
+            ]
+        );
+        assert_eq!(hubs[2].2, Some("prime-video"));
+        let list = json!({"MediaContainer": {"Metadata": [
+            {"ratingKey": "6b0a39ff7c1ba206aa77cd4a", "type": "placeholder", "url": "https://discover.provider.plex.tv/ad/tile"},
+            {"ratingKey": "5d9c0855ffd9ef001e991de0", "type": "show", "title": "Bob's Burgers", "year": 2011,
+             "thumb": "https://image.tmdb.org/t/p/original/iIHsQe3Qjs3NH62HdamyQEPeqTR.jpg"}
+        ]}});
+        let cards = items(&list);
+        assert_eq!(cards.len(), 1, "the ad tile is skipped");
+        assert_eq!(cards[0].title, "Bob's Burgers");
+        assert_eq!(cards[0].subtitle, "2011");
+        assert!(
+            cards[0]
+                .poster_path
+                .as_deref()
+                .unwrap()
+                .starts_with("https://image.tmdb.org/")
+        );
     }
 
     #[test]

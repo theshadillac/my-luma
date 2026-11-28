@@ -5292,11 +5292,13 @@ fn spotlight_tabs_sit_above_the_drawer_and_load_plex_rows() {
     };
     state.spotlight_loaded(Ok(vec![
         crate::plex::Row {
-            kind: crate::plex::RowKind::ContinueWatching,
+            title: "Continue watching".into(),
+            service: None,
             items: vec![item("1"), item("2"), item("3")],
         },
         crate::plex::Row {
-            kind: crate::plex::RowKind::RecentlyAdded,
+            title: "Trending on Prime Video".into(),
+            service: Some("prime-video"),
             items: vec![item("4")],
         },
     ]));
@@ -5320,6 +5322,20 @@ fn spotlight_tabs_sit_above_the_drawer_and_load_plex_rows() {
     assert_eq!(
         state.activate(),
         vec![Effect::Launch(crate::state::PLEX_APP.into())]
+    );
+    // A card in a service's row opens that service's app when it is installed.
+    state.focus = Target::SpotlightCard(1, 0);
+    let prime_installed = state.inventory.apps.iter().any(|app| app.id == "amazon");
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch(
+            if prime_installed {
+                "amazon"
+            } else {
+                crate::state::PLEX_APP
+            }
+            .into()
+        )]
     );
     // Back to Apps, then Spotlight again: no reload yet.
     state.focus = Target::DrawerTab(1);
@@ -5351,7 +5367,8 @@ fn the_drawer_can_open_on_spotlight() {
     assert!(!state.take_spotlight_load(), "only once while loading");
     // Rows loaded earlier: the drawer opens on the first card of the first row.
     state.spotlight_loaded(Ok(vec![crate::plex::Row {
-        kind: crate::plex::RowKind::RecentlyAdded,
+        title: "Recently added".into(),
+        service: None,
         items: vec![crate::plex::Item {
             key: "1".into(),
             title: "Dune".into(),
