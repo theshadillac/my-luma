@@ -580,11 +580,21 @@ try {
   assert.ok(cycleEnabled.ui_text.includes('Rotation'));
   assert.ok(cycleEnabled.ui_text.includes('5 min'));
   const cycledAfterRestart = await scenario('wallpaper-cycle-restart', 'down');
-  assert.equal(
+  assert.notEqual(
     cycledAfterRestart.preferences.background,
-    'san-francisco',
-    'enabled rotation advances to the next wallpaper when Luma restarts',
+    cycleEnabled.preferences.background,
+    'enabled rotation changes the wallpaper when Luma restarts',
   );
+  assert.ok(
+    Object.keys(cycledAfterRestart.preferences.rotation_queue ?? {}).length > 0,
+    'rotation keeps its shuffled pass',
+  );
+  // Rotation is shuffled; pin the next pick so the next launch lands on a known wallpaper.
+  const rotated = JSON.parse(await fs.readFile(preferences, 'utf8'));
+  for (const key of Object.keys(rotated.rotation_queue)) {
+    rotated.rotation_queue[key] = [cycleEnabled.preferences.background];
+  }
+  await fs.writeFile(preferences, JSON.stringify(rotated));
   const cycleDisabled = await scenario(
     'wallpaper-cycle-disabled',
     'settings,down,down,down,enter,up,up,right,right,right,enter,enter,enter,enter,enter',

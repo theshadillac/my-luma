@@ -5438,3 +5438,19 @@ fn every_spotlight_row_is_reachable_with_down() {
     }
     assert_eq!(state.focus, Target::DrawerTab(1));
 }
+
+#[test]
+fn a_rotation_pass_shows_every_wallpaper_not_the_same_few() {
+    // Each list (collection, holiday collection, day or night half) keeps its own pass.
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    let ids = state.wallpapers_for_test();
+    assert!(ids.len() >= 6);
+    let mut seen = std::collections::HashSet::new();
+    for step in 0..ids.len() {
+        assert!(state.cycle_wallpaper(10 + step as u64));
+        seen.insert(state.preferences.background.clone());
+    }
+    assert!(seen.len() >= ids.len() - 1, "a full pass, not the same few");
+    assert_eq!(state.preferences.rotation_queue.len(), 1);
+}

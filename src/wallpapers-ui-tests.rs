@@ -236,20 +236,32 @@ fn cycling_uses_all_uploaded_ids_but_not_deleted_or_pending_deletion_entries() {
     state.set_wallpapers(vec![first.clone(), second.clone()]);
     state.preferences.background = "northern-lights".into();
     state.deleting_wallpaper = Some(first.id.clone());
-    assert!(state.cycle_wallpaper(100));
-    assert_eq!(state.preferences.background, second.id);
-    assert!(!state.can_delete_background(&second.id));
+    let total = state.wallpapers_for_test().len();
+    let mut seen = std::collections::HashSet::new();
+    for step in 0..total * 2 {
+        let previous = state.preferences.background.clone();
+        assert!(state.cycle_wallpaper(100 + step as u64));
+        assert_ne!(state.preferences.background, previous);
+        assert_ne!(state.preferences.background, first.id, "pending deletion");
+        seen.insert(state.preferences.background.clone());
+    }
+    assert!(seen.contains(&second.id));
     assert!(state.previous_background.is_none());
-    assert!(state.cycle_wallpaper(200));
-    assert_eq!(state.preferences.background, "slate");
+    // Without the pending deletion, one pass shows every wallpaper, the first upload too.
     state.deleting_wallpaper = None;
-    state.preferences.background = "northern-lights".into();
-    assert!(state.cycle_wallpaper(300));
-    assert_eq!(state.preferences.background, first.id);
-    state.preferences.background = "dunes".into();
+    state.preferences.rotation_queue.clear();
+    let mut seen = std::collections::HashSet::new();
+    for step in 0..state.wallpapers_for_test().len() {
+        assert!(state.cycle_wallpaper(1_000 + step as u64));
+        seen.insert(state.preferences.background.clone());
+    }
+    assert!(seen.contains(&first.id));
+    // Deleted built-ins never come back.
     state.preferences.deleted_backgrounds = vec!["san-francisco".into()];
-    assert!(state.cycle_wallpaper(400));
-    assert_eq!(state.preferences.background, "summit");
+    for step in 0..30 {
+        assert!(state.cycle_wallpaper(2_000 + step));
+        assert_ne!(state.preferences.background, "san-francisco");
+    }
 }
 
 #[test]
@@ -302,7 +314,7 @@ fn former_exclusions_are_ignored_and_only_the_on_off_state_is_saved() {
     let mut state = State::new(preferences);
     assert!(state.preferences.wallpaper_cycle);
     assert!(state.cycle_wallpaper(100));
-    assert_eq!(state.preferences.background, "san-francisco");
+    assert_ne!(state.preferences.background, "dunes");
     let saved = serde_json::to_value(state.preferences).unwrap();
     assert_eq!(saved["wallpaper_cycle"], true);
     assert!(saved.get("wallpaper_skip").is_none());

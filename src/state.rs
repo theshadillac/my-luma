@@ -2002,6 +2002,12 @@ impl State {
     /// Wallpapers for this time of day, or all of them when day and night is off or a set
     /// is empty.
     fn wallpapers_for(&self, night: Option<bool>) -> Vec<String> {
+        self.rotation_list(night).1
+    }
+
+    /// The list rotation draws from now, with a name for it (its collection and, with day and
+    /// night on, which half), so each list keeps its own shuffle.
+    fn rotation_list(&self, night: Option<bool>) -> (String, Vec<String>) {
         let usable = |id: &&str| self.deleting_wallpaper.as_deref() != Some(*id);
         // Mix in: alternate, the holiday after anything else and back again.
         let source = match &self.collection.mix {
@@ -2018,7 +2024,9 @@ impl State {
             .filter(usable)
             .map(str::to_owned)
             .collect();
+        let mut name = source.to_owned();
         if all.is_empty() {
+            name = "all".into();
             all = self
                 .all_background_ids()
                 .filter(usable)
@@ -2026,14 +2034,21 @@ impl State {
                 .collect();
         }
         let Some(night) = night.filter(|_| self.preferences.day_night) else {
-            return all;
+            return (name, all);
         };
         let matching: Vec<String> = all
             .iter()
             .filter(|id| self.night_wallpaper(id) == night)
             .cloned()
             .collect();
-        if matching.is_empty() { all } else { matching }
+        if matching.is_empty() {
+            (name, all)
+        } else {
+            (
+                format!("{name}|{}", if night { "night" } else { "day" }),
+                matching,
+            )
+        }
     }
 
     /// Day and night is on and the wallpaper belongs to the other half of the day.
@@ -2050,18 +2065,39 @@ impl State {
     /// Advances rotation, or swaps to the right half of day and night, with a crossfade.
     pub fn cycle_wallpaper_at(&mut self, now: time::OffsetDateTime) -> bool {
         let night = self.is_night(now);
-        let ids = self.wallpapers_for(Some(night));
-        self.cycle_through(ids, now.unix_timestamp().max(0) as u64)
+        let list = self.rotation_list(Some(night));
+        let seed = now.unix_timestamp_nanos() as u64;
+        self.cycle_through(list, now.unix_timestamp().max(0) as u64, seed)
+    }
+
+    #[cfg(test)]
+    pub fn wallpapers_for_test(&self) -> Vec<String> {
+        self.wallpapers_for(None)
     }
 
     #[cfg(test)]
     pub fn cycle_wallpaper(&mut self, now: u64) -> bool {
-        let ids = self.wallpapers_for(None);
-        self.cycle_through(ids, now)
+        let list = self.rotation_list(None);
+        self.cycle_through(list, now, now.wrapping_mul(0x9e37_79b9_7f4a_7c15))
     }
 
-    fn cycle_through(&mut self, ids: Vec<String>, now: u64) -> bool {
-        let next = crate::wallpaper_cycle::next(&ids, &self.preferences.background);
+    /// Rotation shuffles: every wallpaper of the list once per pass, in random order. Each
+    /// list keeps its own pass, so alternating with a holiday collection or between day and
+    /// night never restarts at the same first wallpaper.
+    fn cycle_through(&mut self, (name, ids): (String, Vec<String>), now: u64, seed: u64) -> bool {
+        // Lists that no longer exist (renamed or removed collections) are forgotten.
+        let mut queues = std::mem::take(&mut self.preferences.rotation_queue);
+        queues.retain(|key, _| {
+            *key == name
+                || key
+                    .split('|')
+                    .next()
+                    .is_some_and(|source| source == "all" || self.collection_size(source) > 0)
+        });
+        let queue = queues.entry(name).or_default();
+        let next =
+            crate::wallpaper_cycle::shuffled(&ids, &self.preferences.background, queue, seed);
+        self.preferences.rotation_queue = queues;
         self.preferences.wallpaper_changed = now;
         self.mix_due = false;
         let Some(id) = next else {

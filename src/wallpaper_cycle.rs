@@ -76,16 +76,28 @@ pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D
     })
 }
 
-/// Advance in gallery order and wrap; unavailable images are absent from `ids`.
-pub fn next(ids: &[String], current: &str) -> Option<String> {
-    let start = ids
-        .iter()
-        .position(|id| id == current)
-        .map_or(0, |index| index + 1);
-    (0..ids.len())
-        .map(|offset| &ids[(start + offset) % ids.len()])
-        .find(|id| *id != current)
-        .cloned()
+/// Shuffled rotation: the next wallpaper from `queue`, the ones not yet shown in this pass.
+/// Gone wallpapers are dropped; an empty queue starts a new pass in a new random order. The
+/// current wallpaper never comes straight back. `seed` varies each call (the clock).
+pub fn shuffled(
+    ids: &[String],
+    current: &str,
+    queue: &mut Vec<String>,
+    seed: u64,
+) -> Option<String> {
+    queue.retain(|id| ids.contains(id) && id != current);
+    if queue.is_empty() {
+        *queue = ids.iter().filter(|id| *id != current).cloned().collect();
+        // Fisher-Yates with a small xorshift generator; good enough to shuffle wallpapers.
+        let mut state = seed | 1;
+        for index in (1..queue.len()).rev() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            queue.swap(index, (state % (index as u64 + 1)) as usize);
+        }
+    }
+    (!queue.is_empty()).then(|| queue.remove(0))
 }
 
 #[cfg(test)]
@@ -93,14 +105,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_available_background_participates_in_order_and_wraps() {
-        let ids = vec!["slate".into(), "dunes".into(), "custom-id".into()];
-        assert_eq!(next(&ids, "slate").as_deref(), Some("dunes"));
-        assert_eq!(next(&ids, "dunes").as_deref(), Some("custom-id"));
-        assert_eq!(next(&ids, "custom-id").as_deref(), Some("slate"));
-        assert_eq!(next(&ids, "missing").as_deref(), Some("slate"));
-        assert_eq!(next(&["slate".into()], "slate"), None);
-        assert_eq!(next(&[], "slate"), None);
+    fn shuffle_shows_every_wallpaper_once_per_pass_in_varying_order() {
+        let ids: Vec<String> = (0..12).map(|i| format!("w{i}")).collect();
+        let mut queue = Vec::new();
+        let mut current = "w0".to_string();
+        let mut seen = std::collections::HashSet::new();
+        let mut order = Vec::new();
+        for step in 0..11 {
+            let next = shuffled(&ids, &current, &mut queue, 1_000 + step).unwrap();
+            assert_ne!(next, current);
+            assert!(seen.insert(next.clone()), "{next} came twice in one pass");
+            order.push(next.clone());
+            current = next;
+        }
+        assert_eq!(seen.len(), 11, "every wallpaper but the starting one");
+        assert!(queue.is_empty());
+        // The next pass starts again, in another order, never repeating the current one.
+        let next = shuffled(&ids, &current, &mut queue, 99_999).unwrap();
+        assert_ne!(next, current);
+        assert_eq!(queue.len(), 10);
+        let sorted: Vec<String> = (1..12).map(|i| format!("w{i}")).collect();
+        assert_ne!(order, sorted, "not gallery order");
+        // Removed wallpapers leave the queue; one wallpaper alone never changes.
+        let mut queue = vec!["gone".into(), "w3".into()];
+        assert_eq!(shuffled(&ids, "w1", &mut queue, 5).as_deref(), Some("w3"));
+        assert_eq!(shuffled(&["w1".into()], "w1", &mut Vec::new(), 5), None);
     }
 
     #[test]

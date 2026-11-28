@@ -637,6 +637,10 @@ pub struct Preferences {
     pub wallpaper_cycle: bool,
     /// How often the wallpaper changes while `wallpaper_cycle` is on.
     pub cycle_interval: crate::wallpaper_cycle::Interval,
+    /// Rotation's shuffle: for each list it draws from (a collection, its day or night half),
+    /// the wallpapers not yet shown in this pass (fork).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub rotation_queue: BTreeMap<String, Vec<String>>,
     pub wallpaper_gradient: bool,
     /// Used while the gradient is on.
     pub gradient_strength: GradientStrength,
@@ -741,6 +745,7 @@ impl Default for Preferences {
             landing_layout: false,
             wallpaper_cycle: false,
             cycle_interval: crate::wallpaper_cycle::Interval::default(),
+            rotation_queue: BTreeMap::new(),
             wallpaper_gradient: true,
             gradient_strength: GradientStrength::default(),
             wallpaper_changed: 0,
