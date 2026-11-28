@@ -15,7 +15,7 @@ case "$SHA" in ''|*[!0-9a-f]*) exit 1 ;; esac
 [ ${#SHA} = 64 ] || exit 1
 case "$VERSION" in ''|*[!0-9.]*) exit 1 ;; esac
 case "$APP_DIR" in
-  /media/developer/apps/usr/palm/applications/com.ecklf.luma|/media/cryptofs/apps/usr/palm/applications/com.ecklf.luma|/usr/palm/applications/com.ecklf.luma) ;;
+  /media/developer/apps/usr/palm/applications/com.theshadillac.lume|/media/cryptofs/apps/usr/palm/applications/com.theshadillac.lume|/usr/palm/applications/com.theshadillac.lume) ;;
   *) exit 1 ;;
 esac
 [ "$(id -u)" = 0 ] || exit 1
@@ -53,11 +53,11 @@ publish starting 'Preparing the verified package.'
 cp "$IPK" "$WORK/package.ipk" || fail 'Cannot stage the downloaded package.'
 IPK="$WORK/package.ipk"
 [ "$(sha256sum "$IPK" | cut -d' ' -f1)" = "$SHA" ] || fail 'Package checksum mismatch.'
-publish installing 'Installing Luma.'
+publish installing 'Installing Lume.'
 log "installing $VERSION"
 OUT="$WORK/install"
 luna-send -i -w 240000 luna://com.webos.appInstallService/dev/install \
-  "{\"id\":\"com.ecklf.luma\",\"ipkUrl\":\"$IPK\",\"subscribe\":true}" >"$OUT" 2>&1 </dev/null &
+  "{\"id\":\"com.theshadillac.lume\",\"ipkUrl\":\"$IPK\",\"subscribe\":true}" >"$OUT" 2>&1 </dev/null &
 SEND=$!
 i=0
 while [ $i -lt 240 ]; do
@@ -101,7 +101,7 @@ recover_home() {
      ! awk '$2 == "/usr/bin/com.webos.app.home" || $2 == "/usr/palm/applications/com.webos.app.home" || $2 == "/usr/bin/com.webos.app.fullhome" || $2 == "/usr/palm/applications/com.webos.app.fullhome" { found=1 } END { exit !found }' /proc/mounts &&
      [ ! -e /var/run/luma-home ]; then
     launch "$HOME_ID" || fail 'LG Home was restored but could not be opened.'
-    fail 'Update installed, but Home takeover failed; LG Home restored. Enable Luma Home again to retry.'
+    fail 'Update installed, but Home takeover failed; LG Home restored. Enable Lume Home again to retry.'
   fi
   fail 'Update installed, but Home recovery needs attention; see /var/lib/luma-update/update.log.'
 }
@@ -110,6 +110,6 @@ if grep -q '"enabled": *true' "$HOME_STATE/state.json" 2>/dev/null; then
   if ! printf 'y\n' | sh "$APP_DIR/home.sh" enable "$APP_DIR" "$HOME_ID" >>"$LOG" 2>&1; then recover_home; fi
   launch "$HOME_ID" || recover_home
 else
-  launch com.ecklf.luma || fail 'Update installed, but Luma could not be opened.'
+  launch com.theshadillac.lume || fail 'Update installed, but Lume could not be opened.'
 fi
-publish success 'Luma was updated and reopened.'
+publish success 'Lume was updated and reopened.'

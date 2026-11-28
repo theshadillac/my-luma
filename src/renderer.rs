@@ -62,6 +62,10 @@ impl TextStyle {
 #[derive(Clone)]
 pub enum Draw {
     Shape(Rect, f32, f32, Color),
+    /// A filled rounded bar turned by an angle (radians, clockwise) about its own centre:
+    /// analog clock hands and ticks. Rotating the corners leaves the shape's local
+    /// rounded-corner maths untouched, so the paint shader needs no change.
+    Rotated(Rect, f32, f32, Color),
     RoundedGradient(Rect, f32, Color, Color),
     Shadow(Rect, f32, f32, Color),
     Text(String, Rect, TextStyle, Color, bool),
@@ -294,7 +298,7 @@ fn profile_skip(command: &Draw) -> bool {
         }
         Draw::Image(..) | Draw::TintedImage(..) => "image",
         Draw::AppImage(..) => "app",
-        Draw::Shape(..) => "shape",
+        Draw::Shape(..) | Draw::Rotated(..) => "shape",
         Draw::RoundedGradient(..) => "gradient",
         Draw::Shadow(..) => "shadow",
         Draw::Text(..) => "text",
@@ -394,6 +398,8 @@ impl Renderer {
         } else {
             "#version 150\n#define varying in\n#define texture2D texture\nout vec4 out_color;\n#define gl_FragColor out_color\n#define PAINT_PRECISION\n".into()
         };
+        // Measured to judge caching compiled programs on the TV (B127).
+        let shaders_started = std::time::Instant::now();
         let program = link(
             &(vertex_prefix.clone() + include_str!("shaders/paint.vert")),
             &(fragment_prefix.clone() + include_str!("shaders/paint.frag")),
@@ -424,6 +430,10 @@ impl Renderer {
                 return Err(error);
             }
         };
+        eprintln!(
+            "Luma startup: shaders compiled in {} ms",
+            shaders_started.elapsed().as_millis()
+        );
         let mut buffer = 0;
         let mut vao = 0;
         unsafe {
@@ -574,6 +584,39 @@ impl Renderer {
         texture: GLuint,
     ) {
         self.gradient_quad(rect, uv, radius, border, [color, color], texture, None);
+    }
+
+    /// A rounded bar turned about its centre. Only the screen corners rotate; the local
+    /// shape coordinates stay axis-aligned, so edges stay as smooth as an unrotated shape.
+    fn rotated_quad(&mut self, rect: Rect, radius: f32, angle: f32, color: Color) {
+        if rect.w <= 0. || rect.h <= 0. {
+            return;
+        }
+        let (sin, cos) = angle.sin_cos();
+        let (cx, cy) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
+        // One pixel of padding keeps the antialiased edge inside the quad.
+        let (hw, hh) = (rect.w / 2. + 1., rect.h / 2. + 1.);
+        let start = self.vertices.len() / 14;
+        for (x, y) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
+            let (lx, ly) = ((x * 2. - 1.) * hw, (y * 2. - 1.) * hh);
+            self.vertices.extend_from_slice(&[
+                cx + lx * cos - ly * sin,
+                cy + lx * sin + ly * cos,
+                x,
+                y,
+                color[0],
+                color[1],
+                color[2],
+                color[3],
+                lx,
+                ly,
+                rect.w / 2.,
+                rect.h / 2.,
+                radius,
+                0.,
+            ]);
+        }
+        self.paint_batch(start, 6, self.white.id, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1243,6 +1286,9 @@ impl Renderer {
                     *color,
                     self.white.id,
                 ),
+                Draw::Rotated(rect, radius, angle, color) => {
+                    self.rotated_quad(*rect, *radius, *angle, *color)
+                }
                 Draw::RoundedGradient(rect, radius, top, bottom) => self.gradient_quad(
                     *rect,
                     [0., 0., 1., 1.],

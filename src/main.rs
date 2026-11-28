@@ -5,11 +5,14 @@ mod app_artwork;
 #[path = "app-subscription.rs"]
 mod app_subscription;
 mod branding;
+mod collections;
 mod companion;
 mod damage;
 mod diagnostics;
 mod egl_damage;
+mod feedback;
 mod font;
+mod font_metrics;
 mod i18n;
 #[path = "input-refresh.rs"]
 mod input_refresh;
@@ -17,6 +20,7 @@ mod input_refresh;
 mod luna;
 mod model;
 mod platform;
+mod plex;
 mod raster;
 mod recents;
 mod renderer;
@@ -28,6 +32,7 @@ mod storage;
 mod text_rendering;
 #[path = "tile-editor.rs"]
 mod tile_editor;
+mod unsplash;
 mod update;
 mod vector;
 mod view;
@@ -44,6 +49,7 @@ mod webos_compat;
 #[cfg(test)]
 mod tests;
 
+use feedback::{Cue, Route};
 use platform::{Platform, Request, Response};
 use raster::Size;
 use sdl2::{
@@ -63,6 +69,8 @@ use time::OffsetDateTime;
 #[derive(Default)]
 struct Options {
     webos_home: bool,
+    /// SAM preload launches must stay in the background until an ordinary Home launch.
+    preload: Option<String>,
     assets: Option<PathBuf>,
     preferences: Option<PathBuf>,
     screenshot: Option<PathBuf>,
@@ -81,6 +89,26 @@ struct Options {
 }
 
 impl Options {
+    fn apply_launch_metadata(&mut self, metadata: &serde_json::Value) {
+        // Luma's staged Home passes nid; LG's executable-based Home passes appId.
+        self.webos_home = ["nid", "appId"].iter().any(|key| {
+            metadata
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(platform::is_home_id)
+        }) || platform::runs_as_lg_home();
+        self.preload = self
+            .webos_home
+            .then(|| metadata.get("preload").and_then(serde_json::Value::as_str))
+            .flatten()
+            .filter(|mode| !mode.is_empty())
+            .map(str::to_owned);
+    }
+
+    fn start_hidden(&self) -> bool {
+        self.webos_home && self.preload.is_some()
+    }
+
     fn parse() -> Result<Self, String> {
         let mut result = Self::default();
         let mut args = std::env::args().skip(1).peekable();
@@ -96,17 +124,7 @@ impl Options {
             if let Some(argument) = args.next() {
                 let metadata: serde_json::Value =
                     serde_json::from_str(&argument).map_err(|error| error.to_string())?;
-                // Luma's own Home manifest passes "nid"; LG's Home manifest (Luma run in
-                // place of LG's Home executable) passes "appId" with lifecycle v2.
-                result.webos_home = metadata
-                    .get("nid")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(platform::is_home_id)
-                    || metadata
-                        .get("appId")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(platform::is_home_id)
-                    || platform::runs_as_lg_home();
+                result.apply_launch_metadata(&metadata);
             }
             eprintln!("Luma webOS launch parameters accepted");
         }
@@ -352,6 +370,9 @@ fn effects(
             Effect::DeleteWallpaper(id) => {
                 wallpapers.delete(id, state.preferences.background.clone())
             }
+            Effect::Suggest { query, page } => wallpapers.suggest(query, page),
+            Effect::LoadSpotlight => wallpapers.spotlight(),
+            Effect::AddSuggestion { id, collection } => wallpapers.add_suggestion(id, collection),
             Effect::Recent {
                 generation,
                 command,
@@ -391,7 +412,8 @@ fn script(
         "right" => state.direction(Direction::Right, controls),
         "enter" => state.activate(),
         "back" => state.back(),
-        "recents" | "hold-back" => state.open_recents(),
+        "recents" => state.open_recents(),
+        "hold-back" => state.back_recents(),
         "menu" => {
             state.options();
             vec![]
@@ -446,6 +468,91 @@ fn compose(
         view::scene_with_pill(state, assets, pill, width, now)
     } else {
         scene
+    }
+}
+
+/// Zero-movement Magic Remote events must not steal remote focus (upstream #400, B88).
+fn pointer_motion_active(state: &State, xrel: i32, yrel: i32) -> bool {
+    state.pointer || xrel != 0 || yrel != 0
+}
+
+/// Tells real Magic Remote moves from jitter for the ambient screen and its idle timer
+/// (B129). Zero moves never count; in ambient the pointer must travel a clear distance
+/// within a short time, so a remote set down on the couch leaves ambient alone.
+#[derive(Default)]
+struct AmbientMotion {
+    travel: f32,
+    since: Option<Instant>,
+}
+
+impl AmbientMotion {
+    const WAKE_DISTANCE: f32 = 48.;
+    const WINDOW: Duration = Duration::from_millis(600);
+
+    fn real_move(&mut self, state: &State, xrel: i32, yrel: i32, now: Instant) -> bool {
+        if xrel == 0 && yrel == 0 {
+            return false;
+        }
+        if state.ambient.is_none() {
+            self.travel = 0.;
+            self.since = None;
+            return true;
+        }
+        if self
+            .since
+            .is_none_or(|since| now.duration_since(since) > Self::WINDOW)
+        {
+            self.travel = 0.;
+            self.since = Some(now);
+        }
+        self.travel += ((xrel * xrel + yrel * yrel) as f32).sqrt();
+        if self.travel >= Self::WAKE_DISTANCE {
+            self.travel = 0.;
+            self.since = None;
+            return true;
+        }
+        false
+    }
+}
+
+/// Holds hover off briefly after Lume comes back to the front, so the remote's restored
+/// pointer position cannot pull focus off the first favourite (upstream #403, B96).
+#[derive(Default)]
+struct PointerMotion {
+    position: Option<(i32, i32)>,
+    suppress_until: Option<Instant>,
+}
+
+impl PointerMotion {
+    fn reset(&mut self) {
+        self.reset_at(Instant::now());
+    }
+
+    fn reset_at(&mut self, now: Instant) {
+        self.position = None;
+        self.suppress_until = Some(now + Duration::from_millis(750));
+    }
+
+    fn accept(&mut self, state: &State, x: i32, y: i32, xrel: i32, yrel: i32) -> bool {
+        self.accept_at(state, (x, y), (xrel, yrel), Instant::now())
+    }
+
+    fn accept_at(
+        &mut self,
+        state: &State,
+        position: (i32, i32),
+        relative: (i32, i32),
+        now: Instant,
+    ) -> bool {
+        let previous = self.position.replace(position);
+        // Track the pointer during the grace period without letting it take focus.
+        if self.suppress_until.is_some_and(|until| now < until) {
+            return false;
+        }
+        // webOS may report the restored cursor with a nonzero delta; the first event after a
+        // reset only sets a baseline.
+        previous.is_some_and(|previous| previous != position)
+            && pointer_motion_active(state, relative.0, relative.1)
     }
 }
 
@@ -668,7 +775,13 @@ fn run() -> Result<(), String> {
         !options.script.is_empty(),
         options.test_update_version.is_some(),
     );
+    if webos && let Some(directory) = preferences_path.parent() {
+        app_artwork::set_disk_cache(directory.join("icon-cache"));
+    }
     let mut state = State::new(initial_preferences);
+    if storage::legacy_pending() {
+        state.notify(state.preferences.language.t("legacyNotCopied"));
+    }
     if let Some(version) = &options.test_update_version {
         eprintln!(
             "Luma update preview: simulated version {version}; public release check disabled"
@@ -753,9 +866,16 @@ fn run() -> Result<(), String> {
     } else {
         Size::new(1280, 720)
     });
+    let start_hidden = options.start_hidden();
+    if let Some(mode) = &options.preload {
+        eprintln!("Luma launch: preload={mode}; starting hidden until Home is launched");
+    }
     let create_window = || {
         let mut builder = video.window("Luma", requested.width, requested.height);
         builder.opengl().allow_highdpi().position_centered();
+        if start_hidden {
+            builder.hidden();
+        }
         if options.fullscreen || (webos && options.resolution.is_none()) {
             builder.fullscreen_desktop();
         } else if webos {
@@ -837,105 +957,119 @@ fn run() -> Result<(), String> {
     #[cfg(not(all(feature = "webos", target_os = "linux", target_arch = "arm")))]
     let (lifecycle_event, end_registration): (Option<u32>, Option<EndRegistration>) = (None, None);
     #[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
-    let (lifecycle_event, end_registration): (Option<u32>, Option<EndRegistration>) =
-        if webos && options.webos_home {
-            let subsystem = sdl.event()?;
-            // SAFETY: registers one SDL user event type before any are pushed.
-            let event_type = unsafe { subsystem.register_event()? };
-            let pusher = move |sender: sdl2::event::EventSender| {
-                move |lifecycle: platform::Lifecycle| {
-                    let code = match lifecycle {
-                        platform::Lifecycle::Relaunch => 1,
-                        platform::Lifecycle::Close => 2,
-                    };
-                    let _ = sender.push_event(Event::User {
-                        timestamp: 0,
-                        window_id: 0,
-                        type_: event_type,
-                        code,
-                        data1: std::ptr::null_mut(),
-                        data2: std::ptr::null_mut(),
-                    });
-                }
-            };
-            // SAFETY: geteuid has no preconditions.
-            let as_root = unsafe { libc::geteuid() } == 0;
-            if platform::runs_as_lg_home() {
-                // In place of LG's Home executable (webOS 5/6), LG's role is bound to that path,
-                // so Luma registers through lifecycle v2 on its own connection.
-                let push = pusher(subsystem.event_sender());
-                luna::subscribe(
-                    Some(platform::home_id()),
-                    "luna://com.webos.applicationManager/registerApp",
-                    &serde_json::json!({"id": platform::home_id()}),
-                    // sam answers "registered" at once; without it sam would end Home later.
-                    Duration::from_secs(10),
-                    move |message| {
-                        eprintln!("Luma lifecycle: {message}");
-                        let refused = message
-                            .get("returnValue")
-                            .and_then(serde_json::Value::as_bool)
-                            == Some(false);
-                        match platform::Lifecycle::from_reply(&message) {
-                            Some(lifecycle) => push(lifecycle),
-                            // Registration lost (e.g. sam restarted): quit, so sam starts Home
-                            // afresh.
-                            None if refused => push(platform::Lifecycle::Close),
-                            None => {}
-                        }
-                    },
-                )?;
-                (Some(event_type), None)
-            } else if !as_root {
-                (None, None)
-            } else if std::path::Path::new(platform::HOME_LIFECYCLE_OFF).exists() {
-                eprintln!(
-                    "Luma lifecycle: {} exists; Home stays unregistered",
-                    platform::HOME_LIFECYCLE_OFF
-                );
-                (None, None)
-            } else {
-                // A staged Home manifest (webOS 10/11) runs Luma's own executable as root under
-                // LG's app-ID based Home role, which Luma's connection cannot claim. Hold the
-                // registration as that app through `luna-send -a`; sam then expects lifecycle v1.
-                // This does not wait for sam: until it answers, Home is simply unregistered.
-                let push = pusher(subsystem.event_sender());
-                let close = pusher(subsystem.event_sender());
-                match luna::subscribe_as_app(
-                    platform::home_id(),
-                    "luna://com.webos.applicationManager/registerNativeApp",
-                    &serde_json::json!({}),
-                    Duration::from_secs(10),
-                    move |message| {
-                        eprintln!("Luma lifecycle: {message}");
-                        if let Some(lifecycle) = platform::Lifecycle::from_reply(&message) {
-                            push(lifecycle);
-                        }
-                    },
-                    // A registration sam had accepted is gone: quit, so sam starts Home afresh.
-                    // Never accepted: stay, unregistered, as before.
-                    move |registered| {
-                        if registered {
-                            close(platform::Lifecycle::Close);
-                        }
-                    },
-                ) {
-                    Ok(subscription) => (
-                        Some(event_type),
-                        Some(Box::new(move || subscription.end()) as EndRegistration),
-                    ),
-                    Err(error) => {
-                        eprintln!("Luma lifecycle: {error}; Home stays unregistered");
-                        (None, None)
+    let (lifecycle_event, end_registration): (Option<u32>, Option<EndRegistration>) = if webos
+        && options.webos_home
+    {
+        let subsystem = sdl.event()?;
+        // SAFETY: registers one SDL user event type before any are pushed.
+        let event_type = unsafe { subsystem.register_event()? };
+        let pusher = move |sender: sdl2::event::EventSender| {
+            move |lifecycle: platform::Lifecycle| {
+                let code = match lifecycle {
+                    platform::Lifecycle::Relaunch => 1,
+                    platform::Lifecycle::Close => 2,
+                };
+                let _ = sender.push_event(Event::User {
+                    timestamp: 0,
+                    window_id: 0,
+                    type_: event_type,
+                    code,
+                    data1: std::ptr::null_mut(),
+                    data2: std::ptr::null_mut(),
+                });
+            }
+        };
+        // SAFETY: geteuid has no preconditions.
+        let as_root = unsafe { libc::geteuid() } == 0;
+        if platform::runs_as_lg_home() {
+            // In place of LG's Home executable (webOS 5/6), LG's role is bound to that path,
+            // so Luma registers through lifecycle v2 on its own connection.
+            let push = pusher(subsystem.event_sender());
+            luna::subscribe(
+                Some(platform::home_id()),
+                "luna://com.webos.applicationManager/registerApp",
+                &serde_json::json!({"id": platform::home_id()}),
+                // sam answers "registered" at once; without it sam would end Home later.
+                Duration::from_secs(10),
+                move |message| {
+                    eprintln!("Luma lifecycle: {message}");
+                    let refused = message
+                        .get("returnValue")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(false);
+                    match platform::Lifecycle::from_reply(&message) {
+                        Some(lifecycle) => push(lifecycle),
+                        // Registration lost (e.g. sam restarted): quit, so sam starts Home
+                        // afresh.
+                        None if refused => push(platform::Lifecycle::Close),
+                        None => {}
                     }
+                },
+            )?;
+            (Some(event_type), None)
+        } else if !as_root {
+            (None, None)
+        } else if platform::home_lifecycle_disabled(
+            std::path::Path::new(platform::HOME_LIFECYCLE_OFF),
+            env!("CARGO_PKG_VERSION"),
+        ) {
+            eprintln!(
+                "Luma lifecycle: {} keeps fallback active for this version; Home stays unregistered",
+                platform::HOME_LIFECYCLE_OFF
+            );
+            (None, None)
+        } else {
+            // A staged Home manifest (webOS 10/11) runs Luma's own executable as root under
+            // LG's app-ID based Home role, which Luma's connection cannot claim. Hold the
+            // registration as that app through `luna-send -a`; sam then expects lifecycle v1.
+            // This does not wait for sam: until it answers, Home is simply unregistered.
+            let push = pusher(subsystem.event_sender());
+            let close = pusher(subsystem.event_sender());
+            match luna::subscribe_as_app(
+                platform::home_id(),
+                "luna://com.webos.applicationManager/registerNativeApp",
+                &serde_json::json!({}),
+                Duration::from_secs(10),
+                move |message| {
+                    eprintln!("Luma lifecycle: {message}");
+                    if let Some(lifecycle) = platform::Lifecycle::from_reply(&message) {
+                        push(lifecycle);
+                    }
+                },
+                // A registration sam had accepted is gone: quit, so sam starts Home afresh.
+                // Never accepted: stay, unregistered, as before.
+                move |registered| {
+                    if registered {
+                        close(platform::Lifecycle::Close);
+                    }
+                },
+            ) {
+                Ok(subscription) => (
+                    Some(event_type),
+                    Some(Box::new(move || subscription.end()) as EndRegistration),
+                ),
+                Err(error) => {
+                    eprintln!("Luma lifecycle: {error}; Home stays unregistered");
+                    (None, None)
                 }
             }
-        } else {
-            (None, None)
-        };
+        }
+    } else {
+        (None, None)
+    };
     // Whether a staged Home's relaunch reached the front; see platform::ForegroundCheck.
     let mut foreground = platform::ForegroundCheck::default();
-    let mut focused = true;
+    let mut feedback = feedback::Feedback::default();
+    let mut focused = !start_hidden;
+    let mut pointer_motion = PointerMotion::default();
+    let mut ambient_motion = AmbientMotion::default();
+    pointer_motion.reset();
+    // Whether SDL currently declines LG's screen saver (the ambient screen holds it).
+    let mut holding_screen_saver = false;
+    // A key that woke the ambient screen: its release is swallowed too.
+    let mut wake_key: Option<sdl2::keyboard::Scancode> = None;
+    let mut wake_button = false;
+    let mut was_in_backgrounds = false;
     let mut press: Option<Press> = None;
     let mut back_button = BackButton::default();
     let initial_nav = view::navigation(&assets, state.preferences.language);
@@ -944,12 +1078,24 @@ fn run() -> Result<(), String> {
     let mut last_frame = Instant::now();
     let mut last_minute = None;
     let mut frame = 0u64;
-    let mut visible = true;
+    let mut visible = !start_hidden;
     let mut running = true;
     let mut queued_event = None;
+    // SDL starts text input during video init. Keep it off until Luma's keyboard opens: on
+    // webOS 4 some remote keys otherwise arrive as TEXTINPUT with invalid UTF-8, and sdl2
+    // panics converting them ("Invalid TextInput string") before Luma sees the event.
+    video.text_input().stop();
     let mut text_active = false;
     let mut initial_focus = options.script.is_empty();
     let mut startup_cycle_pending = state.preferences.wallpaper_cycle;
+    let mut power_clock = platform::PowerClock::new(std::time::SystemTime::now(), Instant::now());
+    let powered_on = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let powering_off = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
+    if options.webos_home {
+        watch_power(powered_on.clone(), powering_off.clone());
+    }
+    let mut woke: Option<Instant> = None;
     let mut wallpapers_scanned = false;
     let launched = Instant::now();
     // When to ask for the inventory again after a failed load (State::inventory_failed).
@@ -978,6 +1124,12 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         state.tick();
+        // Opening Settings → Background imports any images waiting in the import folder.
+        let in_backgrounds = state.page == state::Page::Settings && state.section == 1;
+        if in_backgrounds && !was_in_backgrounds {
+            wallpaper_service.refresh();
+        }
+        was_in_backgrounds = in_backgrounds;
         wallpaper_service.set_active(wallpaper_upload_active(&state, webos, focused, visible));
         while let Ok(event) = wallpaper_service.receiver.try_recv() {
             match event {
@@ -995,6 +1147,21 @@ fn run() -> Result<(), String> {
                     }
                     state.wallpaper_upload = Some(result);
                     state.dirty = true;
+                }
+                wallpapers::Event::Restore(restored) => {
+                    state.restore_preferences(*restored);
+                    if let Err(error) = storage::save(&preferences_path, &state.preferences) {
+                        eprintln!("{error}");
+                        state.notify(state.preferences.language.t("savedError"));
+                    } else {
+                        platform.sync_splash(state.preferences.splash_background());
+                        state.notify(state.preferences.language.t("settingsRestored"));
+                    }
+                }
+                wallpapers::Event::Suggestions(page, result) => state.suggestions(page, result),
+                wallpapers::Event::Spotlight(result) => state.spotlight_loaded(result),
+                wallpapers::Event::SuggestionAdded(id, result) => {
+                    state.suggestion_added(&id, result)
                 }
                 wallpapers::Event::Ended(generation)
                     if generation == wallpaper_service.generation()
@@ -1048,7 +1215,51 @@ fn run() -> Result<(), String> {
             }
         }
         state.dirty |= assets.artwork.poll();
+        if feedback.check() {
+            state.ui_sounds_detail = feedback.diagnosis();
+            state.dirty = true;
+        }
         let unix = state::unix_now();
+        if state.take_spotlight_load() {
+            wallpaper_service.spotlight();
+        }
+        let plex_ready = wallpaper_service.plex_ready();
+        if state.plex_ready != plex_ready {
+            state.plex_ready = plex_ready;
+            state.dirty = true;
+            // A token just saved from the phone: an open Spotlight loads at once.
+            if plex_ready
+                && state.spotlight_open
+                && state
+                    .select_drawer_tab(true)
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::LoadSpotlight))
+            {
+                wallpaper_service.spotlight();
+            }
+        }
+        let ready = wallpaper_service.unsplash_ready();
+        if state.unsplash_ready != ready {
+            state.unsplash_ready = ready;
+            state.dirty = true;
+        }
+        // Collections are only known once the gallery has been scanned.
+        if wallpapers_scanned {
+            state.refresh_collection(now);
+            if focused && visible {
+                let pending = state.remind_holiday(now);
+                running &= effects(
+                    pending,
+                    &mut state,
+                    &platform,
+                    &preferences_path,
+                    &weather_service,
+                    &wallpaper_service,
+                    &webhook_service,
+                    &updates,
+                );
+            }
+        }
         let startup_cycle = wallpaper_cycle::startup_due(
             state.preferences.wallpaper_cycle,
             startup_cycle_pending,
@@ -1060,15 +1271,18 @@ fn run() -> Result<(), String> {
             && state.overlay.is_none()
             && state.moving.is_none()
             && state.deleting_wallpaper.is_none()
-            && !state.animating()
+            && !state.transitioning()
             && (startup_cycle
+                || (wallpapers_scanned && state.collection_due())
+                || state.day_night_due(now)
                 || wallpaper_cycle::due(
                     state.preferences.wallpaper_cycle,
+                    state.preferences.cycle_interval,
                     state.preferences.wallpaper_changed,
                     unix,
                 ))
         {
-            let cycled = state.cycle_wallpaper(unix);
+            let cycled = state.cycle_wallpaper_at(now);
             if startup_cycle {
                 startup_cycle_pending = false;
             }
@@ -1078,6 +1292,17 @@ fn run() -> Result<(), String> {
         }
         while let Ok(response) = updates.receiver.try_recv() {
             state.install_response(response);
+        }
+        if std::mem::take(&mut state.reset_icon_cache) {
+            assets.artwork.reset_icon_cache();
+            assets.artwork.prefetch(
+                state
+                    .inventory
+                    .apps
+                    .iter()
+                    .filter(|app| crate::branding::for_key(&app.brand).is_none())
+                    .filter_map(|app| app.icon.clone()),
+            );
         }
         while let Ok(response) = platform.receiver.try_recv() {
             match response {
@@ -1107,9 +1332,11 @@ fn run() -> Result<(), String> {
                             .filter(|app| crate::branding::for_key(&app.brand).is_none())
                             .filter_map(|app| app.icon.clone()),
                     );
+                    // The wallpaper-first Home starts in the header, with the favourites lowered.
                     if initial_focus
                         && state.focus == Target::Nav(0)
                         && state.page == state::Page::Home
+                        && !state.preferences.landing_layout
                     {
                         state.focus = state.first_content();
                     }
@@ -1133,7 +1360,7 @@ fn run() -> Result<(), String> {
                         eprintln!("Luma HDMI refresh: {error}");
                     }
                 }
-                Response::Launched(result) => {
+                Response::Launched { id, result } => {
                     state.launching = false;
                     match result {
                         Err(error) => {
@@ -1143,6 +1370,17 @@ fn run() -> Result<(), String> {
                         Ok(()) => {
                             state.notice = None;
                             state.dirty = true;
+                            let pending = state.record_app_launch(&id);
+                            running &= effects(
+                                pending,
+                                &mut state,
+                                &platform,
+                                &preferences_path,
+                                &weather_service,
+                                &wallpaper_service,
+                                &webhook_service,
+                                &updates,
+                            );
                         }
                     }
                 }
@@ -1169,7 +1407,14 @@ fn run() -> Result<(), String> {
                         && generation == state.recents.generation
                         && result.is_ok()
                         && matches!(command, recents::Command::Launch(_));
-                    let pending = state.recent_response(generation, command, result);
+                    let launched = match (&command, &result) {
+                        (recents::Command::Launch(id), Ok(_)) if webos => Some(id.clone()),
+                        _ => None,
+                    };
+                    let mut pending = state.recent_response(generation, command, result);
+                    if let Some(id) = launched {
+                        pending.extend(state.record_app_launch(&id));
+                    }
                     if preview {
                         state.notify(state.preferences.language.t("recentDesktop"));
                     }
@@ -1199,6 +1444,47 @@ fn run() -> Result<(), String> {
             state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
         weather_tick(&mut state, &weather_service, visible);
+        // Standby suspends the TV: the wall clock moves on while Instant (CLOCK_MONOTONIC)
+        // does not. A jump means the TV just came back on; Luma restarts never count.
+        if powering_off.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            // Set the ambient screen up while the panel goes dark, so it is what comes back.
+            // Also behind an app: the TV often wakes to Home, and a hidden Luma would show
+            // Home first. A wake into the app drops it again (power_on_missed).
+            let armed = state.arm_power_on_ambient();
+            eprintln!(
+                "Luma power: turning off (ambient ready: {armed}, Luma in front: {})",
+                visible && focused
+            );
+        }
+        let woke_now = power_clock.check(std::time::SystemTime::now(), Instant::now())
+            | powered_on.swap(false, std::sync::atomic::Ordering::Relaxed);
+        if woke_now {
+            eprintln!("Luma power: back from standby");
+            woke = Some(Instant::now());
+        }
+        if let Some(since) = woke {
+            if visible && focused {
+                state.powered_on();
+                woke = None;
+            } else if since.elapsed() > Duration::from_secs(15) {
+                // The TV came back to an app or input: leave Luma as it was, without the
+                // ambient screen set up at power off.
+                state.power_on_missed();
+                woke = None;
+            }
+        }
+        state.ambient_tick(visible && focused);
+        let hold = state.ambient_holds_screen_saver();
+        if hold != holding_screen_saver {
+            // SDL-webOS answers tvpower's screen saver requests from this: disabled keeps
+            // LG's screen saver away while the ambient screen stands in for it.
+            if hold {
+                video.disable_screen_saver();
+            } else {
+                video.enable_screen_saver();
+            }
+            holding_screen_saver = hold;
+        }
         if std::mem::take(&mut state.update_check_requested) {
             if let Some(version) = &options.test_update_version {
                 state.update_response(Ok(
@@ -1242,8 +1528,58 @@ fn run() -> Result<(), String> {
             if script_owns_input && external_input {
                 continue;
             }
-            // Remote keys only reach the focused surface.
-            if matches!(event, Event::KeyDown { .. } | Event::KeyUp { .. }) {
+            // Any input resets the ambient screen's timer; the input that wakes it does
+            // nothing else, release included (a pointer move only shows the pointer again).
+            match &event {
+                Event::KeyUp { scancode, .. } if wake_key.is_some() && *scancode == wake_key => {
+                    wake_key = None;
+                    continue;
+                }
+                Event::KeyDown {
+                    scancode, repeat, ..
+                } => {
+                    if state.note_input() {
+                        wake_key = *scancode;
+                        continue;
+                    }
+                    if *repeat && wake_key.is_some() && *scancode == wake_key {
+                        continue;
+                    }
+                    // A second press mid-wake finishes it and acts at once.
+                    state.finish_wake();
+                }
+                Event::MouseButtonUp { .. } if external_input && wake_button => {
+                    wake_button = false;
+                    continue;
+                }
+                Event::MouseButtonDown { .. } if external_input && state.note_input() => {
+                    wake_button = true;
+                    continue;
+                }
+                Event::MouseWheel { .. } if external_input && state.note_input() => continue,
+                Event::MouseButtonDown { .. } | Event::MouseWheel { .. } if external_input => {
+                    state.finish_wake();
+                }
+                Event::MouseMotion { xrel, yrel, .. } if external_input => {
+                    // A resting or bumped Magic Remote sends tiny or zero moves; they must not
+                    // end ambient or keep resetting its timer (B129).
+                    if ambient_motion.real_move(&state, *xrel, *yrel, Instant::now()) {
+                        state.note_input();
+                    } else if state.ambient.is_some() {
+                        // Jitter under the ambient screen moves nothing behind it either.
+                        continue;
+                    }
+                }
+                Event::TextInput { .. } if external_input => {
+                    state.note_input();
+                }
+                _ => {}
+            }
+            // Remote keys and pointer clicks only reach the focused surface.
+            if matches!(
+                event,
+                Event::KeyDown { .. } | Event::KeyUp { .. } | Event::MouseButtonDown { .. }
+            ) {
                 focused = true;
                 foreground.confirmed();
             }
@@ -1264,6 +1600,8 @@ fn run() -> Result<(), String> {
                 eprintln!("Luma window: {win_event:?}");
             }
             let mut pending = vec![];
+            let before_input = Route::capture(&state);
+            let mut cue = None;
             match event {
                 Event::Quit { .. } => running = false,
                 Event::User { type_, code, .. } if Some(type_) == lifecycle_event => {
@@ -1271,6 +1609,7 @@ fn run() -> Result<(), String> {
                         press = None;
                         back_button.cancel();
                         pending = state.return_home();
+                        pointer_motion.reset();
                         // A staged Home must come forward itself. If it does not, its
                         // registration would leave the Home key dead: check below.
                         if end_registration.is_some() {
@@ -1305,12 +1644,17 @@ fn run() -> Result<(), String> {
                         tile_editor_service.set_active(false, &[]);
                         visible = false;
                         focused = false;
+                        pointer_motion.reset();
                         press = None;
                         back_button.cancel();
                         if matches!(state.overlay, Some(Overlay::SystemKeyboard)) {
                             pending = state.finish_text_input();
                         }
                         profile.pause();
+                    }
+                    WindowEvent::Leave => {
+                        state.hover = None;
+                        state.dirty = true;
                     }
                     WindowEvent::FocusLost => {
                         if webos {
@@ -1324,6 +1668,7 @@ fn run() -> Result<(), String> {
                             tile_editor_service.set_active(false, &[]);
                         }
                         focused = false;
+                        pointer_motion.reset();
                         press = None;
                         back_button.cancel();
                     }
@@ -1372,37 +1717,46 @@ fn run() -> Result<(), String> {
                                 press = None;
                                 back_button.cancel();
                                 pending = state.return_home();
+                                pointer_motion.reset();
+                                cue = Some(Cue::Back);
                             }
                         }
                         _ if native_hold => {
                             if !repeat && back_button.native_hold(Instant::now()) {
                                 press = None;
-                                pending = state.open_recents();
+                                pending = state.back_recents();
+                                cue = Some(Cue::Select);
                             }
                         }
                         key if is_back(key, webos) => {
                             if !repeat {
                                 press = None;
                                 pending = back_button.key_down(&mut state, key, Instant::now());
+                                cue = Some(Cue::Back);
                             }
                         }
                         Keycode::Up if !repeat || !state.recents_open() => {
                             pending = state.direction(Direction::Up, &scene.controls);
+                            cue = Some(Cue::Navigate);
                         }
                         Keycode::Down => {
-                            pending = state.direction(Direction::Down, &scene.controls)
+                            pending = state.direction(Direction::Down, &scene.controls);
+                            cue = Some(Cue::Navigate);
                         }
                         Keycode::Left => {
-                            pending = state.direction(Direction::Left, &scene.controls)
+                            pending = state.direction(Direction::Left, &scene.controls);
+                            cue = Some(Cue::Navigate);
                         }
                         Keycode::Right => {
-                            pending = state.direction(Direction::Right, &scene.controls)
+                            pending = state.direction(Direction::Right, &scene.controls);
+                            cue = Some(Cue::Navigate);
                         }
                         Keycode::Return | Keycode::KpEnter
                             if matches!(state.overlay, Some(Overlay::SystemKeyboard)) =>
                         {
                             press = None;
                             pending = state.finish_text_input();
+                            cue = Some(Cue::Select);
                         }
                         Keycode::Return | Keycode::KpEnter if !repeat => {
                             press = Some(Press {
@@ -1416,6 +1770,7 @@ fn run() -> Result<(), String> {
                         Keycode::Backspace if !repeat => {
                             press = None;
                             pending = state.back();
+                            cue = Some(Cue::Back);
                         }
                         Keycode::Clear
                             if matches!(state.overlay, Some(Overlay::SystemKeyboard)) =>
@@ -1426,6 +1781,7 @@ fn run() -> Result<(), String> {
                         Keycode::M | Keycode::Menu if !repeat && state.overlay.is_none() => {
                             press = None;
                             state.options();
+                            cue = Some(Cue::Select);
                         }
                         Keycode::F5 if !repeat => pending.push(Effect::Reload),
                         _ => {}
@@ -1441,10 +1797,11 @@ fn run() -> Result<(), String> {
                 } if is_back(key, webos) => {
                     if let Some(long) = back_button.release(key, Instant::now()) {
                         pending = if long {
-                            state.open_recents()
+                            state.back_recents()
                         } else {
                             state.back()
                         };
+                        cue = Some(if long { Cue::Select } else { Cue::Back });
                     }
                 }
                 Event::KeyUp {
@@ -1457,15 +1814,26 @@ fn run() -> Result<(), String> {
                         && held.target == state.focus
                     {
                         pending = state.activate();
+                        cue = Some(Cue::Select);
                     }
                 }
-                Event::MouseMotion { x, y, .. }
-                    if state.moving.is_none()
-                        && !matches!(state.overlay, Some(Overlay::SystemKeyboard)) =>
+                Event::MouseMotion {
+                    x, y, xrel, yrel, ..
+                } if state.moving.is_none()
+                    && !matches!(state.overlay, Some(Overlay::SystemKeyboard))
+                    && pointer_motion_active(&state, xrel, yrel)
+                    && (!webos
+                        || (focused
+                            && visible
+                            && pointer_motion.accept(&state, x, y, xrel, yrel))) =>
                 {
                     let hovered = hit(&scene.controls, &window, x, y, &state);
                     if let Some(target) = hovered.clone() {
                         state.pointer_focus(target);
+                    }
+                    if state.hover != hovered {
+                        state.hover = hovered.clone();
+                        state.dirty = true;
                     }
                     if press
                         .as_ref()
@@ -1513,13 +1881,15 @@ fn run() -> Result<(), String> {
                             && hit(&scene.controls, &window, x, y, &state).as_ref()
                                 == Some(&held.target) =>
                     {
-                        pending = state.activate()
+                        pending = state.activate();
+                        cue = Some(Cue::Select);
                     }
                     None if scene.modal.is_some_and(|rect| {
                         pointer_position(&window, x, y).is_some_and(|(x, y)| !rect.contains(x, y))
                     }) =>
                     {
-                        pending = state.back()
+                        pending = state.back();
+                        cue = Some(Cue::Back);
                     }
                     _ => {}
                 },
@@ -1532,6 +1902,7 @@ fn run() -> Result<(), String> {
                         } else {
                             Direction::Left
                         });
+                        cue = Some(Cue::Navigate);
                     }
                     state.pointer = false;
                     state.dirty = true;
@@ -1553,6 +1924,31 @@ fn run() -> Result<(), String> {
                     }
                 }
                 _ => {}
+            }
+            feedback.sync(state.preferences.ui_sounds, focused && visible);
+            if !state.preferences.ui_sounds && state.ui_sounds_unavailable {
+                state.ui_sounds_unavailable = false;
+            }
+            if state.preferences.ui_sounds
+                && focused
+                && visible
+                && !scripted_input
+                && let Some(cue) = before_input.cue(cue, &state, !pending.is_empty())
+            {
+                feedback.play(
+                    &sdl,
+                    cue,
+                    state.preferences.ui_sound_level,
+                    state.preferences.ui_sound_output.as_deref(),
+                );
+                if state.ui_sound_outputs.is_empty() {
+                    state.ui_sound_outputs = feedback::Feedback::outputs(&sdl);
+                    state.dirty = true;
+                }
+                if state.ui_sounds_unavailable != feedback.failed {
+                    state.ui_sounds_unavailable = feedback.failed;
+                    state.dirty = true;
+                }
             }
             running &= effects(
                 pending,
@@ -1588,7 +1984,15 @@ fn run() -> Result<(), String> {
         }
         if back_button.held(Instant::now()) {
             press = None;
-            let pending = state.open_recents();
+            let pending = state.back_recents();
+            if state.preferences.ui_sounds && focused && visible && !scripted_input {
+                feedback.play(
+                    &sdl,
+                    Cue::Select,
+                    state.preferences.ui_sound_level,
+                    state.preferences.ui_sound_output.as_deref(),
+                );
+            }
             running &= effects(
                 pending,
                 &mut state,
@@ -1606,7 +2010,23 @@ fn run() -> Result<(), String> {
         {
             held.held = true;
             state.pressed = None;
+            let before_hold = Route::capture(&state);
             state.hold();
+            if state.preferences.ui_sounds
+                && focused
+                && visible
+                && !scripted_input
+                && before_hold
+                    .cue(Some(Cue::Navigate), &state, false)
+                    .is_some()
+            {
+                feedback.play(
+                    &sdl,
+                    Cue::Select,
+                    state.preferences.ui_sound_level,
+                    state.preferences.ui_sound_output.as_deref(),
+                );
+            }
         }
         if !state.loading
             && frame.is_multiple_of(3)
@@ -1830,7 +2250,10 @@ fn run() -> Result<(), String> {
                 "Luma lifecycle: a relaunch did not bring Luma to the front; creating {}",
                 platform::HOME_LIFECYCLE_OFF
             );
-            if let Err(error) = std::fs::write(platform::HOME_LIFECYCLE_OFF, b"") {
+            if let Err(error) = platform::disable_home_lifecycle(
+                std::path::Path::new(platform::HOME_LIFECYCLE_OFF),
+                env!("CARGO_PKG_VERSION"),
+            ) {
                 eprintln!("Luma lifecycle: {error}");
             }
             end_registration();
@@ -1956,4 +2379,54 @@ fn hit(
 ) -> Option<Target> {
     let (x, y) = pointer_position(window, x, y)?;
     state.hit_test(controls, x, y)
+}
+
+/// Sets `flag` each time the TV comes back on from standby (tvpower's state returns to
+/// "Active"). Failing to subscribe only costs the power-on choice; the clock check remains.
+#[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
+fn watch_power(
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    off: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let uri = "luna://com.webos.service.tvpower/power/getPowerState";
+    let payload = serde_json::json!({"subscribe": true});
+    let on_message = |flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+                      off: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+        let mut watch = platform::PowerWatch::default();
+        move |reply: serde_json::Value| match watch.update(&reply) {
+            Some(platform::PowerChange::On) => {
+                eprintln!("Luma power: screen back on");
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Some(platform::PowerChange::Off) => {
+                off.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            None => {}
+        }
+    };
+    match luna::subscribe(
+        None,
+        uri,
+        &payload,
+        Duration::from_secs(5),
+        on_message(flag.clone(), off.clone()),
+    ) {
+        Ok(()) => eprintln!("Luma power: watching tvpower"),
+        Err(error) => {
+            eprintln!("Luma power: {error}; retrying as {}", platform::home_id());
+            // As root, act for the Home app id, like the lifecycle registration does.
+            match luna::subscribe_as_app(
+                platform::home_id(),
+                uri,
+                &payload,
+                Duration::from_secs(5),
+                on_message(flag, off),
+                |_| eprintln!("Luma power: tvpower subscription ended"),
+            ) {
+                // Keep the subscription (and its luna-send child) for the life of Luma.
+                Ok(subscription) => std::mem::forget(subscription),
+                Err(error) => eprintln!("Luma power: {error}"),
+            }
+        }
+    }
 }

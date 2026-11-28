@@ -1,10 +1,10 @@
 {
-  "id": "com.ecklf.luma",
-  "version": "2.17.0",
+  "id": "com.theshadillac.lume",
+  "version": "1.4.3",
   "vendor": "Luma",
   "type": "native",
   "main": "luma",
-  "title": "Luma",
+  "title": "Lume",
   "icon": "app-icon.png",
   "largeIcon": "app-icon-large.png",
   "appDescription": "A remote-first native webOS launcher.",

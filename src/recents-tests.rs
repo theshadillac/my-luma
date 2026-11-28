@@ -14,7 +14,7 @@ fn accept(state: &mut State, entries: Vec<recents::Entry>) {
 fn system_history_preserves_order_and_inputs_and_rejects_invalid_entries() {
     let entries = recents::normalize(&json!({"ready": true, "recentsAppList": [
         {"appId":"youtube.leanback.v4", "title":" YouTube\n "},
-        {"appId":"com.ecklf.luma"}, {"appId":"com.webos.app.home"},
+        {"appId":"com.theshadillac.lume"}, {"appId":"com.webos.app.home"},
         {"appId":"com.luma.launcher"}, {"appId":"invalid; command"},
         {"appId":"com.webos.app.hdmi1", "title":"Console"},
         {"appId":"netflix", "title":"Netflix"},
@@ -54,7 +54,7 @@ fn actions_match_stock_home_without_synthetic_process_kills() {
         )
     );
     for id in [
-        "com.ecklf.luma",
+        "com.theshadillac.lume",
         "com.webos.app.home",
         "invalid'; command",
         "",
@@ -303,18 +303,14 @@ fn a_short_back_on_home_opens_recents_and_the_next_press_restores_the_app() {
 }
 
 #[test]
-fn home_header_has_only_navigation_and_tv_settings() {
+fn home_header_has_only_the_gear() {
     let state = ready();
     let header: Vec<_> = controls(&state)
         .into_iter()
         .filter(|control| control.rect.y < 120.)
         .collect();
-    assert_eq!(header.len(), 4);
-    assert!(
-        header
-            .iter()
-            .all(|control| matches!(control.target, Target::Nav(_) | Target::TvSettings))
-    );
+    assert_eq!(header.len(), 1);
+    assert_eq!(header[0].target, Target::Nav(2));
 }
 
 #[test]
@@ -931,4 +927,43 @@ fn empty_recents_has_no_explanatory_subtitle() {
         })
         .collect();
     assert_eq!(texts, ["No recent apps"]);
+}
+
+#[test]
+fn the_back_button_shortcut_to_recent_apps_can_be_turned_off() {
+    use crate::state::BACK_RECENTS_ROW;
+    let mut state = ready();
+    assert!(state.preferences.back_recents, "on by default");
+    // Back on Home and a held Back both go through the same gate.
+    assert!(!state.back().is_empty());
+    assert!(state.recents_open());
+    state.back();
+    assert!(!state.recents_open());
+    // Settings → Controls & sound: the row comes first and switches the shortcut off.
+    state.open(2);
+    state.section = crate::state::CONTROLS_SECTION;
+    let general = controls(&state);
+    let row = |id| {
+        general
+            .iter()
+            .find(|c| c.target == Target::Setting(id))
+            .unwrap()
+            .rect
+            .y
+    };
+    assert!(row(BACK_RECENTS_ROW) < 250.);
+    state.focus = Target::Setting(BACK_RECENTS_ROW);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(!state.preferences.back_recents);
+    state.open(0);
+    assert!(state.back().is_empty());
+    assert!(state.back_recents().is_empty());
+    assert!(!state.recents_open());
+    // Other ways to close overlays and leave pages are unchanged.
+    state.open(1);
+    state.back();
+    assert_eq!(state.page, Page::Home);
+    state.preferences.back_recents = true;
+    assert!(!state.back_recents().is_empty());
+    assert!(state.recents_open());
 }

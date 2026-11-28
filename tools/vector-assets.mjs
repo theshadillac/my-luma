@@ -32,7 +32,6 @@ export async function generateVectorAssets() {
         'disney-plus',
         'prime-video',
         'das-erste',
-        'plex',
         'hbo-max',
         'paramount-plus',
         'twitch',

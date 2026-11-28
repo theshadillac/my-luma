@@ -11,7 +11,10 @@ use std::{collections::HashSet, sync::mpsc, thread};
 #[path = "platform-install.rs"]
 mod installation;
 
-pub const APP_ID: &str = "com.ecklf.luma";
+pub const APP_ID: &str = "com.theshadillac.lume";
+/// The id My Luma used until 11.0 (shared with upstream Luma). Its data is copied on first
+/// start and it is hidden from Luma's lists, never uninstalled from inside Luma.
+pub const LEGACY_APP_ID: &str = "com.ecklf.luma";
 pub const HOME_ID: &str = "com.webos.app.home";
 pub const FULL_HOME_ID: &str = "com.webos.app.fullhome";
 
@@ -60,14 +63,60 @@ pub fn runs_as_lg_home() -> bool {
     })
 }
 
-/// While this file exists, a staged Home (webOS 10/11) does not register with sam and is
-/// restarted per Home key as before. Luma creates it when a relaunch did not bring it to the
-/// front; delete it to try registering again.
+/// A staged Home (webOS 10/11) falls back to restarting per Home key when registration
+/// failed to bring it forward. The marker records the failing Luma version, so a different
+/// release can retry without leaving users permanently on the restart path.
 #[cfg_attr(
     not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
     allow(dead_code)
 )]
 pub const HOME_LIFECYCLE_OFF: &str = "/var/lib/luma-home/no-lifecycle";
+
+#[cfg_attr(
+    not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
+    allow(dead_code)
+)]
+pub fn home_lifecycle_disabled(path: &std::path::Path, version: &str) -> bool {
+    match std::fs::read(path) {
+        // Legacy markers were empty and could survive many releases. Retry once; a failed
+        // foreground check writes the current version before ending the registration.
+        Ok(marker) if marker.is_empty() => {
+            eprintln!("Luma lifecycle: retrying registration after a legacy fallback");
+            false
+        }
+        Ok(marker) => match serde_json::from_slice::<Value>(&marker)
+            .ok()
+            .and_then(|value| value.get("version")?.as_str().map(str::to_owned))
+            .filter(|value| !value.is_empty())
+        {
+            Some(failed_version) if failed_version != version => {
+                eprintln!(
+                    "Luma lifecycle: retrying registration after fallback in {failed_version} (now {version})"
+                );
+                false
+            }
+            Some(_) => true,
+            // Unknown or damaged markers must not silently bypass the safety fallback.
+            None => {
+                eprintln!("Luma lifecycle: unreadable fallback marker contents; keeping fallback");
+                true
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            eprintln!("Luma lifecycle: cannot read fallback marker: {error}; keeping fallback");
+            true
+        }
+    }
+}
+
+#[cfg_attr(
+    not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
+    allow(dead_code)
+)]
+pub fn disable_home_lifecycle(path: &std::path::Path, version: &str) -> std::io::Result<()> {
+    std::fs::write(path, json!({"version": version}).to_string())
+}
 
 /// Whether a relaunch actually brought a staged Home (webOS 10/11) to the front. Only the
 /// compositor's focus or remote input counts: SDL_ShowWindow emits Shown by itself, so Shown
@@ -186,7 +235,10 @@ pub enum Request {
 pub enum Response {
     Inventory(Result<(Inventory, Option<String>), String>),
     Inputs(Result<Vec<Input>, String>),
-    Launched(Result<(), String>),
+    Launched {
+        id: String,
+        result: Result<(), String>,
+    },
     Uninstalled {
         id: String,
         result: Result<(), String>,
@@ -325,21 +377,24 @@ impl Platform {
                         });
                         Response::Uninstalled { id, result }
                     }
-                    Request::Launch(id) => Response::Launched(if webos {
-                        if crate::scroll_preview::is_placeholder(&id) {
-                            Err("Scroll preview cards cannot be launched".into())
-                        } else if !valid_app_id(&id) {
-                            Err("Invalid application identifier".into())
+                    Request::Launch(id) => Response::Launched {
+                        result: if webos {
+                            if crate::scroll_preview::is_placeholder(&id) {
+                                Err("Scroll preview cards cannot be launched".into())
+                            } else if !valid_app_id(&id) {
+                                Err("Invalid application identifier".into())
+                            } else {
+                                call(
+                                    "luna://com.webos.applicationManager/launch",
+                                    json!({"id": id}),
+                                )
+                                .map(|_| ())
+                            }
                         } else {
-                            call(
-                                "luna://com.webos.applicationManager/launch",
-                                json!({"id": id}),
-                            )
-                            .map(|_| ())
-                        }
-                    } else {
-                        Ok(())
-                    }),
+                            Ok(())
+                        },
+                        id,
+                    },
                     Request::SyncSplash(background) => {
                         if webos
                             && splash_enabled
@@ -507,6 +562,7 @@ pub fn can_uninstall(id: &str) -> bool {
         && !matches!(
             id,
             APP_ID
+                | LEGACY_APP_ID
                 | HOME_ID
                 | "com.luma.native"
                 | "com.luma.launcher"
@@ -797,6 +853,7 @@ pub fn normalize_apps(raw: &Value) -> Result<Vec<App>, String> {
         let live = id == "com.webos.app.livetv";
         let visible = entry.get("visible");
         if id == APP_ID
+            || id == LEGACY_APP_ID
             || id == "com.luma.native"
             || id == "com.luma.launcher"
             || id == "com.luma.launcher.native"
@@ -947,5 +1004,85 @@ mod home_identity_tests {
     fn both_home_variants_are_hidden_from_application_inventory() {
         let raw = json!([{"id":HOME_ID,"title":"Home","visible":true}, {"id":FULL_HOME_ID,"title":"Home","visible":true}]);
         assert!(normalize_apps(&raw).unwrap().is_empty());
+    }
+}
+
+/// Notices the TV coming back from standby. Standby suspends the system, so the wall clock
+/// jumps ahead while the monotonic clock (Rust's `Instant`) does not count the time asleep.
+#[derive(Debug)]
+pub struct PowerClock {
+    wall: std::time::SystemTime,
+    monotonic: std::time::Instant,
+}
+
+impl PowerClock {
+    /// More unexplained wall-clock time than this between two checks means the TV slept.
+    /// Clock corrections (NTP) are far smaller; daylight saving does not move UTC.
+    pub const SLEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
+    pub fn new(wall: std::time::SystemTime, monotonic: std::time::Instant) -> Self {
+        Self { wall, monotonic }
+    }
+
+    /// True once per return from standby.
+    pub fn check(&mut self, wall: std::time::SystemTime, monotonic: std::time::Instant) -> bool {
+        let awake = monotonic.saturating_duration_since(self.monotonic);
+        let passed = wall.duration_since(self.wall).unwrap_or_default();
+        self.wall = wall;
+        self.monotonic = monotonic;
+        passed > awake + Self::SLEEP
+    }
+}
+
+/// Follows tvpower's getPowerState replies. Turning the TV off with the remote puts a G5
+/// in "Active Standby" with Luma still running (no suspend), so the clocks don't jump; the
+/// return to "Active" is the power-on.
+#[derive(Debug, Default)]
+#[cfg_attr(
+    not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
+    allow(dead_code)
+)]
+pub struct PowerWatch {
+    standby: bool,
+    off_announced: bool,
+}
+
+/// A power change worth acting on, from tvpower's getPowerState replies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerChange {
+    /// The TV started turning off (the first "off" reply, while the screen is still lit).
+    Off,
+    /// The TV is fully back on ("Active" after any other state).
+    On,
+}
+
+#[cfg_attr(
+    not(all(feature = "webos", target_os = "linux", target_arch = "arm")),
+    allow(dead_code)
+)]
+impl PowerWatch {
+    /// Off once when the TV starts turning off; On once per return to "Active" after any
+    /// other state.
+    pub fn update(&mut self, reply: &serde_json::Value) -> Option<PowerChange> {
+        let state = reply.get("state").and_then(serde_json::Value::as_str)?;
+        let off = reply.get("onOff").and_then(serde_json::Value::as_str) == Some("off");
+        if state == "Active" && !off {
+            self.off_announced = false;
+            return std::mem::take(&mut self.standby).then_some(PowerChange::On);
+        }
+        if state != "Active" {
+            self.standby = true;
+        }
+        if (off || state != "Active") && !self.off_announced && !self.standby_was_on_reply(reply) {
+            self.off_announced = true;
+            return Some(PowerChange::Off);
+        }
+        None
+    }
+
+    /// "Prepare Power On" and "Screen On" replies come while still in standby; they are
+    /// the way back, not a new power off.
+    fn standby_was_on_reply(&self, reply: &serde_json::Value) -> bool {
+        reply.get("onOff").and_then(serde_json::Value::as_str) == Some("on")
     }
 }

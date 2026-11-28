@@ -7,7 +7,9 @@ pub mod system;
 pub mod uninstall;
 
 pub type Result<T> = std::result::Result<T, String>;
-pub const APP: &str = "com.ecklf.luma";
+pub const APP: &str = "com.theshadillac.lume";
+/// My Luma's id until 11.0. Never uninstalled from Luma; its Home mount is recognised.
+pub const LEGACY_APP: &str = "com.ecklf.luma";
 pub const ROOTS: [&str; 5] = [
     "/media/developer/apps/usr/palm/applications",
     "/media/cryptofs/apps/usr/palm/applications",

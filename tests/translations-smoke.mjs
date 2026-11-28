@@ -13,6 +13,7 @@ const preferences = path.join(temporary, 'preferences.json');
 const binary = path.resolve(root, process.env.CARGO_TARGET_DIR ?? 'target', 'debug/luma');
 const requests = [];
 const places = {
+  ca: { name: 'Viena', region: 'Viena', country: 'Àustria' },
   en: { name: 'Vienna', region: 'Vienna', country: 'Austria' },
   de: { name: 'Wien', region: 'Wien', country: 'Österreich' },
   zh: { name: '维也纳', region: '维也纳', country: '奥地利' },
@@ -100,9 +101,9 @@ async function scenario(name, script, extra = []) {
 function contains(state, key, language) {
   assert.ok(state.ui_text.includes(messages[key][language]), `Missing rendered ${key}/${language}`);
 }
-const picker = 'settings,down,enter,down,down,enter';
-const weatherPage = 'settings,down,down,down,enter,down,down,enter';
-const inputsPage = 'settings,down,down,down,enter,down,down,down,down,enter';
+const picker = 'settings,down,down,down,down,down,down,down,enter,down,enter';
+const weatherPage = 'settings,down,down,down,down,down,enter,down,down,enter';
+const inputsPage = 'settings,down,down,down,down,down,enter,down,down,down,down,enter';
 const location = `${weatherPage},down,enter`;
 try {
   if (process.env.LUMA_SMOKE_SKIP_BUILD !== '1')
@@ -113,22 +114,15 @@ try {
   );
   const languages = await scenario('picker-en', picker);
   assert.equal(languages.subpage, 'Language');
-  for (const name of ['English', 'Deutsch', '简体中文', 'Español', 'Português (Brasil)'])
+  for (const name of ['Català', 'English', 'Deutsch', '简体中文', 'Español', 'Português (Brasil)'])
     assert.ok(languages.ui_text.includes(name));
 
   const german = await scenario('de-home', `${picker},up,enter,home,down`);
   assert.equal(german.preferences.language, 'de');
-  for (const key of [
-    'home',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(german, key, 'de');
   assert.ok(german.ui_text.includes('Netflix'), 'Installed app names stay intact');
-  const persisted = await scenario('de-settings', 'settings,down');
+  const persisted = await scenario('de-settings', 'settings,down,down,down,down,down,down,down');
   assert.equal(persisted.preferences.language, 'de');
   contains(persisted, 'language', 'de');
 
@@ -137,21 +131,17 @@ try {
     `${picker},${Array(12).fill('down').join(',')},enter,home,down`,
   );
   assert.equal(chinese.preferences.language, 'zh');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(chinese, key, 'zh');
   assert.ok(chinese.ui_text.includes('Netflix'));
   assert.ok(chinese.ui_text.includes('10月21日星期三'));
   const chineseSettings = await scenario('zh-settings', 'settings,down');
-  contains(chineseSettings, 'language', 'zh');
   contains(chineseSettings, 'appNames', 'zh');
+  contains(
+    await scenario('zh-system', 'settings,down,down,down,down,down,down,down'),
+    'language',
+    'zh',
+  );
 
   const selected = await scenario(
     'zh-weather',
@@ -194,13 +184,13 @@ try {
   const input = await scenario('zh-input-options', `${inputsPage},enter`);
   for (const key of ['stateOn', 'stateOff', 'stateAuto', 'inputWhenConnected'])
     contains(input, key, 'zh');
-  const background = await scenario('zh-background', 'settings,down,down,enter');
+  const background = await scenario('zh-background', 'settings,down,down,down,enter');
   for (const key of ['background', 'uploadWallpaper']) contains(background, key, 'zh');
   assert.deepEqual(background.focus, { Background: 3 });
   // Background thumbnails have no captions; their actions are translated in the popup.
   const backgroundOptions = await scenario(
     'zh-background-options',
-    'settings,down,down,enter,down,enter',
+    'settings,down,down,down,enter,down,enter',
   );
   assert.equal(backgroundOptions.modal, true);
   assert.equal(backgroundOptions.focus, 'UseBackground');
@@ -225,15 +215,7 @@ try {
     `${picker},${Array(6).fill('down').join(',')},enter,home,down`,
   );
   assert.equal(portuguese.preferences.language, 'pt');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(portuguese, key, 'pt');
   assert.ok(portuguese.ui_text.includes('QUARTA-FEIRA, 21 DE OUTUBRO'));
   assert.ok(
@@ -246,8 +228,13 @@ try {
     'pt',
     'Portuguese is restored after restart',
   );
-  assert.ok(portugueseSettings.ui_text.includes('Português (Brasil)'));
-  for (const key of ['language', 'appNames', 'clock']) contains(portugueseSettings, key, 'pt');
+  for (const key of ['appNames', 'clock']) contains(portugueseSettings, key, 'pt');
+  const portugueseSystem = await scenario(
+    'pt-system',
+    'settings,down,down,down,down,down,down,down',
+  );
+  assert.ok(portugueseSystem.ui_text.includes('Português (Brasil)'));
+  contains(portugueseSystem, 'language', 'pt');
   assert.equal(JSON.parse(await fs.readFile(preferences, 'utf8')).language, 'pt');
 
   const portugueseDialog = await scenario('pt-dialog', 'apps,down,menu');
@@ -278,26 +265,21 @@ try {
     preferences,
     JSON.stringify({ language: 'en', show_home_names: true, reduced_motion: true }),
   );
-  const vietnamesePicker = `${picker},${Array(8).fill('down').join(',')}`;
+  const swedishPicker = `${picker},${Array(7).fill('down').join(',')}`;
+  const swedishFocused = await scenario('sv-picker', swedishPicker);
+  assert.deepEqual(swedishFocused.focus, { Choice: 9 });
+  assert.equal(swedishFocused.scroll, 0, 'The first ten language rows fit without scrolling');
+  const vietnamesePicker = `${swedishPicker},down`;
   const vietnameseFocused = await scenario('vi-picker', vietnamesePicker);
-  assert.deepEqual(vietnameseFocused.focus, { Choice: 9 });
-  assert.equal(vietnameseFocused.scroll, 0, 'The first ten language rows fit without scrolling');
+  assert.deepEqual(vietnameseFocused.focus, { Choice: 10 });
   assert.ok(vietnameseFocused.ui_text.includes('Tiếng Việt'));
   const chineseFocused = await scenario('zh-picker-last', `${vietnamesePicker},down,down,down`);
-  assert.deepEqual(chineseFocused.focus, { Choice: 12 });
+  assert.deepEqual(chineseFocused.focus, { Choice: 13 });
   assert.ok(chineseFocused.scroll > 0, 'Simplified Chinese must scroll fully into view');
   assert.ok(chineseFocused.ui_text.includes('简体中文'));
   const vietnamese = await scenario('vi-home', `${vietnamesePicker},enter,home,down`);
   assert.equal(vietnamese.preferences.language, 'vi');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(vietnamese, key, 'vi');
   assert.ok(vietnamese.ui_text.includes('THỨ TƯ, 21 THÁNG 10'));
   assert.ok(vietnamese.ui_text.includes('Netflix'), 'Installed app names stay intact');
@@ -305,8 +287,13 @@ try {
 
   const vietnameseSettings = await scenario('vi-settings', 'settings,down');
   assert.equal(vietnameseSettings.preferences.language, 'vi', 'Vietnamese survives a restart');
-  assert.ok(vietnameseSettings.ui_text.includes('Tiếng Việt'));
-  for (const key of ['language', 'appNames', 'clock']) contains(vietnameseSettings, key, 'vi');
+  for (const key of ['appNames', 'clock']) contains(vietnameseSettings, key, 'vi');
+  const vietnameseSystem = await scenario(
+    'vi-system',
+    'settings,down,down,down,down,down,down,down',
+  );
+  assert.ok(vietnameseSystem.ui_text.includes('Tiếng Việt'));
+  contains(vietnameseSystem, 'language', 'vi');
   const vietnameseOptions = await scenario('vi-app-options', 'apps,down,enter');
   for (const key of ['open', 'removeFavorite', 'hideApp', 'deleteApp'])
     contains(vietnameseOptions, key, 'vi');
@@ -343,26 +330,23 @@ try {
   );
   const traditionalPicker = `${picker},${Array(12).fill('down').join(',')}`;
   const traditionalFocused = await scenario('zh-tw-picker', traditionalPicker);
-  assert.deepEqual(traditionalFocused.focus, { Choice: 13 });
+  assert.deepEqual(traditionalFocused.focus, { Choice: 14 });
   assert.ok(traditionalFocused.scroll > 0);
   assert.ok(traditionalFocused.ui_text.includes('繁體中文'));
   const traditional = await scenario('zh-tw-home', `${traditionalPicker},enter,home,down`);
   assert.equal(traditional.preferences.language, 'zh-tw');
-  for (const key of [
-    'home',
-    'apps',
-    'settings',
-    'favorites',
-    'inputsHeading',
-    'evening',
-    'setWeatherLocation',
-  ])
+  for (const key of ['moreApps', 'favorites', 'inputsHeading', 'evening', 'setWeatherLocation'])
     contains(traditional, key, 'zh-tw');
   assert.ok(traditional.ui_text.includes('10月21日星期三'));
   assert.ok(traditional.ui_text.includes('Netflix'));
   const traditionalSettings = await scenario('zh-tw-settings', 'settings,down');
   assert.equal(traditionalSettings.preferences.language, 'zh-tw');
-  for (const key of ['language', 'appNames', 'clock']) contains(traditionalSettings, key, 'zh-tw');
+  for (const key of ['appNames', 'clock']) contains(traditionalSettings, key, 'zh-tw');
+  contains(
+    await scenario('zh-tw-system', 'settings,down,down,down,down,down,down,down'),
+    'language',
+    'zh-tw',
+  );
   const traditionalWeather = await scenario(
     'zh-tw-weather',
     `${location},type:Vienna,back,enter,await-search,down,enter,home,await-weather`,
@@ -373,8 +357,43 @@ try {
     'zh',
   );
   await scenario('zh-tw-4k', 'home,down', ['--capture-scale', '2']);
+
+  await fs.writeFile(
+    preferences,
+    JSON.stringify({ language: 'en', show_home_names: true, reduced_motion: true }),
+  );
+  const catalan = await scenario('ca-home', `${picker},up,up,enter,home,down`);
+  assert.equal(catalan.preferences.language, 'ca');
+  for (const key of ['moreApps', 'favorites', 'evening', 'setWeatherLocation'])
+    contains(catalan, key, 'ca');
+  assert.ok(catalan.ui_text.includes('DIMECRES, 21 D’OCTUBRE'));
+  assert.ok(catalan.ui_text.includes('Netflix'));
+
+  const catalanSettings = await scenario(
+    'ca-settings',
+    'settings,down,down,down,down,down,down,down',
+  );
+  assert.equal(catalanSettings.preferences.language, 'ca', 'Catalan survives a restart');
+  assert.ok(catalanSettings.ui_text.includes('Català'));
+  contains(catalanSettings, 'language', 'ca');
+  const catalanDelete = await scenario('ca-delete-confirm', deleteConfirmation);
+  contains(catalanDelete, 'cancel', 'ca');
+  assert.ok(
+    catalanDelete.ui_text.includes(messages.deleteAppWarning.ca.replace('{app}', 'Netflix')),
+  );
+  const catalanWeather = await scenario(
+    'ca-weather',
+    `${location},type:Viena,back,enter,await-search,down,enter,home,await-weather`,
+  );
+  assert.equal(catalanWeather.preferences.weather_location.country, 'Àustria');
+  contains(catalanWeather, 'partlyCloudy', 'ca');
+  assert.equal(
+    requests.filter((request) => request.path === '/v1/search').at(-1).query.language,
+    'ca',
+  );
+
   console.log(
-    'Native translation checks passed: saved language selection, shared labels, Portuguese and Vietnamese locale formatting and accented glyphs, Vietnamese deletion/cancel UI, localized geocoding/weather, unchanged app names, Chinese glyphs and 4K rendering.',
+    'Native translation checks passed: saved language selection, shared labels, locale formatting and accented glyphs, deletion dialogs, localized geocoding/weather, unchanged app names, Chinese glyphs and 4K rendering.',
   );
 } finally {
   server.closeAllConnections();

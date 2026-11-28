@@ -212,6 +212,385 @@ impl DateFormat {
     }
 }
 
+/// Size of the clock in the header (#180).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+    ExtraLarge,
+}
+
+impl ClockSize {
+    pub const ALL: [Self; 4] = [Self::Small, Self::Medium, Self::Large, Self::ExtraLarge];
+    /// Font size in 1080p units; Medium is the original 24 px clock.
+    pub fn font_size(self) -> f32 {
+        match self {
+            Self::Small => 20.,
+            Self::Medium => 24.,
+            Self::Large => 32.,
+            Self::ExtraLarge => 40.,
+        }
+    }
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Small => "clockSizeSmall",
+            Self::Medium => "clockSizeMedium",
+            Self::Large => "clockSizeLarge",
+            Self::ExtraLarge => "clockSizeExtraLarge",
+        }
+    }
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|size| *size == self).unwrap_or(1)
+    }
+}
+
+/// Where Home's clock block sits vertically (fork option, glass clock).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockPosition {
+    Higher,
+    #[default]
+    Default,
+    Lower,
+}
+
+impl ClockPosition {
+    pub const ALL: [Self; 3] = [Self::Higher, Self::Default, Self::Lower];
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Higher => "positionHigher",
+            Self::Default => "positionDefault",
+            Self::Lower => "positionLower",
+        }
+    }
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|p| *p == self).unwrap_or(1) + 1) % Self::ALL.len()]
+    }
+}
+
+fn deserialize_clock_position<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ClockPosition, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("higher") => ClockPosition::Higher,
+            Some("lower") => ClockPosition::Lower,
+            _ => ClockPosition::Default,
+        },
+    )
+}
+
+/// How the big Home and ambient clock is drawn (fork option). Glass is the original.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockStyle {
+    #[default]
+    Glass,
+    Thin,
+    Bold,
+    Stacked,
+    Minimal,
+    Ticks,
+    Dots,
+    Ring,
+}
+
+impl ClockStyle {
+    pub const ALL: [Self; 8] = [
+        Self::Glass,
+        Self::Thin,
+        Self::Bold,
+        Self::Stacked,
+        Self::Minimal,
+        Self::Ticks,
+        Self::Dots,
+        Self::Ring,
+    ];
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Glass => "glass",
+            Self::Thin => "thin",
+            Self::Bold => "bold",
+            Self::Stacked => "stacked",
+            Self::Minimal => "minimal",
+            Self::Ticks => "ticks",
+            Self::Dots => "dots",
+            Self::Ring => "ring",
+        }
+    }
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Glass => "clockStyleGlass",
+            Self::Thin => "clockStyleThin",
+            Self::Bold => "clockStyleBold",
+            Self::Stacked => "clockStyleStacked",
+            Self::Minimal => "clockStyleMinimal",
+            Self::Ticks => "clockStyleTicks",
+            Self::Dots => "clockStyleDots",
+            Self::Ring => "clockStyleRing",
+        }
+    }
+    pub fn analog(self) -> bool {
+        matches!(self, Self::Minimal | Self::Ticks | Self::Dots | Self::Ring)
+    }
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1) % Self::ALL.len()]
+    }
+}
+
+/// Unknown or missing values keep the original glass clock instead of rejecting preferences.
+fn deserialize_clock_style<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ClockStyle, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(ClockStyle::ALL
+        .into_iter()
+        .find(|style| value.as_str() == Some(style.key()))
+        .unwrap_or_default())
+}
+
+/// A button of the quick settings panel behind the gear (fork).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub enum QuickKey {
+    Ambient,
+    Inputs,
+    TvSettings,
+    /// Switch wallpaper collections (fork).
+    Collections,
+}
+
+impl QuickKey {
+    pub const ALL: [Self; 4] = [
+        Self::Ambient,
+        Self::Inputs,
+        Self::Collections,
+        Self::TvSettings,
+    ];
+    /// Stable name kept in preferences.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Ambient => "ambient",
+            Self::Inputs => "inputs",
+            Self::TvSettings => "tv-settings",
+            Self::Collections => "collections",
+        }
+    }
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Ambient => "ambientNow",
+            Self::Inputs => "inputs",
+            Self::TvSettings => "tvSettings",
+            Self::Collections => "collections",
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Ambient => "clock",
+            Self::Inputs => "input-hdmi",
+            Self::TvSettings => "settings",
+            Self::Collections => "grid",
+        }
+    }
+}
+
+/// UI sound volume steps (fork option). Low matches upstream's original level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiSoundLevel {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl UiSoundLevel {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Low => "volumeLow",
+            Self::Medium => "volumeMedium",
+            Self::High => "volumeHigh",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Low,
+        }
+    }
+}
+
+/// Strength of the time-of-day wallpaper tint (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WallpaperTint {
+    #[default]
+    Off,
+    Subtle,
+    Medium,
+}
+
+impl WallpaperTint {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Off => "stateOff",
+            Self::Subtle => "tintSubtle",
+            Self::Medium => "tintMedium",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Subtle,
+            Self::Subtle => Self::Medium,
+            Self::Medium => Self::Off,
+        }
+    }
+
+    /// Opacity of the wash at full strength (night, or the peak of dawn or golden hour).
+    pub fn alpha(self) -> f32 {
+        match self {
+            Self::Off => 0.,
+            Self::Subtle => 0.1,
+            Self::Medium => 0.2,
+        }
+    }
+}
+
+/// How strongly the darkening gradient shades the wallpaper when it is on (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientStrength {
+    Light,
+    Medium,
+    /// The original look: the fully shaded wallpaper.
+    #[default]
+    Strong,
+}
+
+impl GradientStrength {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Light => "gradientLight",
+            Self::Medium => "gradientMedium",
+            Self::Strong => "gradientStrong",
+        }
+    }
+
+    /// How much of the shaded wallpaper is laid over the plain one.
+    pub fn amount(self) -> f32 {
+        match self {
+            Self::Light => 0.35,
+            Self::Medium => 0.65,
+            Self::Strong => 1.,
+        }
+    }
+}
+
+/// How the app drawer orders apps after the favourites (fork option, from upstream 3.1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppSorting {
+    #[default]
+    Alphabetical,
+    Usage,
+}
+
+impl AppSorting {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Alphabetical => "appSortingAlphabetical",
+            Self::Usage => "appSortingUsage",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Alphabetical => Self::Usage,
+            Self::Usage => Self::Alphabetical,
+        }
+    }
+}
+
+/// What Luma shows when the TV comes back on from standby (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerOn {
+    #[default]
+    Home,
+    Ambient,
+}
+
+impl PowerOn {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Home => Self::Ambient,
+            Self::Ambient => Self::Home,
+        }
+    }
+
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Home => "powerOnHome",
+            Self::Ambient => "powerOnAmbient",
+        }
+    }
+}
+
+/// When Home shows the faint "More apps" hint under its last row (fork option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MoreAppsHint {
+    #[default]
+    Always,
+    Selected,
+    Off,
+}
+
+impl MoreAppsHint {
+    pub const ALL: [Self; 3] = [Self::Always, Self::Selected, Self::Off];
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Always => "hintAlways",
+            Self::Selected => "hintSelected",
+            Self::Off => "stateOff",
+        }
+    }
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|p| *p == self).unwrap_or(0) + 1) % Self::ALL.len()]
+    }
+}
+
+fn deserialize_more_apps_hint<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<MoreAppsHint, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("selected") => MoreAppsHint::Selected,
+            Some("off") => MoreAppsHint::Off,
+            _ => MoreAppsHint::Always,
+        },
+    )
+}
+
+/// Unknown or missing values keep the original medium clock instead of rejecting preferences.
+fn deserialize_clock_size<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ClockSize, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("small") => ClockSize::Small,
+            Some("large") => ClockSize::Large,
+            Some("extra-large") => ClockSize::ExtraLarge,
+            _ => ClockSize::Medium,
+        },
+    )
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Preferences {
@@ -223,6 +602,10 @@ pub struct Preferences {
     pub splash_background: Option<String>,
     pub deleted_backgrounds: Vec<String>,
     pub show_home_names: bool,
+    /// An Inputs button in the top bar that opens a menu of Live TV and the inputs.
+    pub inputs_menu: bool,
+    /// Inputs left out of the Inputs menu, by app ID; separate from their Home card modes.
+    pub inputs_menu_hidden: Vec<String>,
     pub show_app_names: bool,
     pub hour_24: bool,
     pub reduced_motion: bool,
@@ -235,6 +618,8 @@ pub struct Preferences {
     pub input_modes: BTreeMap<String, InputMode>,
     /// Custom names by input app ID; the TV's port and label stay visible as detail.
     pub input_names: BTreeMap<String, String>,
+    /// Bundled input icon overrides by input app ID; absent means automatic detection.
+    pub input_icons: BTreeMap<String, String>,
     #[serde(deserialize_with = "crate::weather::deserialize_enabled")]
     pub show_weather: bool,
     #[serde(deserialize_with = "crate::weather::deserialize_location")]
@@ -246,11 +631,87 @@ pub struct Preferences {
     /// Applied at launch because MSAA is selected when SDL creates the GL window.
     #[serde(deserialize_with = "crate::text_rendering::deserialize")]
     pub text_rendering: crate::text_rendering::TextRendering,
+    /// Home opens with the favourites lowered to show more wallpaper (#85).
+    pub landing_layout: bool,
     #[serde(deserialize_with = "crate::wallpaper_cycle::deserialize")]
     pub wallpaper_cycle: bool,
+    /// How often the wallpaper changes while `wallpaper_cycle` is on.
+    pub cycle_interval: crate::wallpaper_cycle::Interval,
+    /// Rotation's shuffle: for each list it draws from (a collection, its day or night half),
+    /// the wallpapers not yet shown in this pass (fork).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub rotation_queue: BTreeMap<String, Vec<String>>,
     pub wallpaper_gradient: bool,
+    /// Used while the gradient is on.
+    pub gradient_strength: GradientStrength,
     /// Unix seconds of the last automatic or chosen wallpaper change, for the timed modes.
     pub wallpaper_changed: u64,
+    /// Back on Home, or holding Back, opens Recent apps (#175).
+    pub back_recents: bool,
+    #[serde(deserialize_with = "deserialize_clock_size")]
+    pub clock_size: ClockSize,
+    /// Home shows a large frosted-glass clock in place of the greeting (fork option).
+    pub glass_clock: bool,
+    /// Home shows the next five days under the weather (fork option).
+    pub show_forecast: bool,
+    /// Minutes without input on Home before the ambient screen; 0 is off (fork option).
+    pub ambient_minutes: u8,
+    /// Home or the ambient screen when the TV comes back on.
+    pub power_on: PowerOn,
+    /// The selected app tile grows and lifts a little (fork option, on by default).
+    pub tile_lift: bool,
+    /// Where Home's clock block sits (fork option).
+    #[serde(deserialize_with = "deserialize_clock_position")]
+    pub clock_position: ClockPosition,
+    /// How the big clock is drawn: digital looks or analog faces (fork option).
+    #[serde(deserialize_with = "deserialize_clock_style")]
+    pub clock_style: ClockStyle,
+    /// The faint "More apps" hint under Home's last row (fork option).
+    #[serde(deserialize_with = "deserialize_more_apps_hint")]
+    pub more_apps_hint: MoreAppsHint,
+    /// Quick settings buttons switched off, by `QuickKey::key` (Inputs follows `inputs_menu`).
+    pub quick_hidden: Vec<String>,
+    /// Nudges Home's clock block a few pixels every few minutes (OLED care, fork option).
+    pub pixel_shift: bool,
+    /// Day wallpapers by day, night ones after sunset (fork option).
+    pub day_night: bool,
+    /// Wallpapers marked for night, by background id.
+    pub night_wallpapers: Vec<String>,
+    /// Light rain or snow over Home's wallpaper while it rains or snows (fork option).
+    pub weather_effects: bool,
+    /// Category filters and the search box at the top of the app drawer (fork option).
+    pub drawer_toolbar: bool,
+    /// The app drawer's Apps | Spotlight tabs, with Plex rows (fork option, off by default).
+    pub spotlight: bool,
+    /// With Spotlight on, the drawer opens on Spotlight instead of the apps (fork option).
+    pub spotlight_first: bool,
+    /// Short synthesized navigation, select and Back sounds (off by default).
+    pub ui_sounds: bool,
+    /// UI sound volume (fork option).
+    pub ui_sound_level: UiSoundLevel,
+    /// Audio output for UI sounds by its driver name; None plays to the default.
+    pub ui_sound_output: Option<String>,
+    /// Faint time-of-day colour over the wallpaper (fork option).
+    pub wallpaper_tint: WallpaperTint,
+    /// Collections chosen on the TV for wallpapers, overriding what the upload set.
+    pub wallpaper_collections: std::collections::BTreeMap<String, String>,
+    /// The collection last chosen by hand, and when.
+    pub collection_pick: Option<crate::collections::Pick>,
+    /// Custom collections that take over on their own on certain days.
+    pub collection_schedules: std::collections::BTreeMap<String, crate::collections::Schedule>,
+    /// Collections made on the TV, kept while they are still empty (fork). Collections from
+    /// the phone exist through their wallpapers.
+    pub created_collections: Vec<String>,
+    /// A week before a holiday, remind on Home if its collection is still empty.
+    pub holiday_reminders: bool,
+    /// Whether holiday collections take over, mix in, or stay out entirely.
+    pub holiday_mode: crate::collections::HolidayMode,
+    /// The year each holiday was last reminded about, so it happens once a year.
+    pub holiday_reminded: std::collections::BTreeMap<String, i32>,
+    /// Drawer order: A–Z, or most launched first (fork option; favourites keep their order).
+    pub app_sorting: AppSorting,
+    /// Successful launches per app id, kept only on the TV, for the "Most used" order.
+    pub app_launch_counts: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for Preferences {
@@ -263,6 +724,8 @@ impl Default for Preferences {
             splash_background: None,
             deleted_backgrounds: vec![],
             show_home_names: false,
+            inputs_menu: false,
+            inputs_menu_hidden: vec![],
             show_app_names: true,
             hour_24: false,
             reduced_motion: false,
@@ -273,19 +736,74 @@ impl Default for Preferences {
             date_format: DateFormat::default(),
             input_modes: BTreeMap::new(),
             input_names: BTreeMap::new(),
+            input_icons: BTreeMap::new(),
             show_weather: true,
             weather_location: None,
             temperature_unit: Unit::Celsius,
             language: Language::En,
             text_rendering: crate::text_rendering::TextRendering::default(),
+            landing_layout: false,
             wallpaper_cycle: false,
+            cycle_interval: crate::wallpaper_cycle::Interval::default(),
+            rotation_queue: BTreeMap::new(),
             wallpaper_gradient: true,
+            gradient_strength: GradientStrength::default(),
             wallpaper_changed: 0,
+            back_recents: true,
+            clock_size: ClockSize::Medium,
+            glass_clock: false,
+            show_forecast: false,
+            ambient_minutes: 0,
+            power_on: PowerOn::default(),
+            tile_lift: true,
+            clock_position: ClockPosition::Default,
+            clock_style: ClockStyle::Glass,
+            more_apps_hint: MoreAppsHint::Always,
+            quick_hidden: Vec::new(),
+            pixel_shift: false,
+            day_night: false,
+            night_wallpapers: Vec::new(),
+            weather_effects: false,
+            drawer_toolbar: true,
+            spotlight: false,
+            spotlight_first: false,
+            ui_sounds: false,
+            ui_sound_level: UiSoundLevel::default(),
+            ui_sound_output: None,
+            wallpaper_tint: WallpaperTint::default(),
+            wallpaper_collections: Default::default(),
+            collection_pick: None,
+            collection_schedules: Default::default(),
+            created_collections: Vec::new(),
+            holiday_reminders: true,
+            holiday_mode: crate::collections::HolidayMode::default(),
+            holiday_reminded: Default::default(),
+            app_sorting: AppSorting::default(),
+            app_launch_counts: Default::default(),
         }
     }
 }
 
 impl Preferences {
+    /// Whether a quick settings button is switched on. Inputs keeps its earlier setting,
+    /// which used to show an Inputs button in the top bar.
+    pub fn quick_shown(&self, key: QuickKey) -> bool {
+        if key == QuickKey::Inputs {
+            return self.inputs_menu;
+        }
+        !self.quick_hidden.iter().any(|hidden| hidden == key.key())
+    }
+
+    pub fn toggle_quick(&mut self, key: QuickKey) {
+        if key == QuickKey::Inputs {
+            self.inputs_menu = !self.inputs_menu;
+        } else if self.quick_shown(key) {
+            self.quick_hidden.push(key.key().into());
+        } else {
+            self.quick_hidden.retain(|hidden| hidden != key.key());
+        }
+    }
+
     pub fn splash_background(&self) -> &str {
         self.splash_background
             .as_deref()
@@ -375,6 +893,29 @@ impl Preferences {
         }
     }
 
+    pub fn input_icon(&self, id: &str) -> Option<&'static str> {
+        self.input_icons.get(id).and_then(|saved| {
+            INPUT_ICONS
+                .iter()
+                .find(|(icon, _)| *icon == saved)
+                .map(|(icon, _)| *icon)
+        })
+    }
+
+    /// An empty icon restores automatic detection. Unknown assets are never saved.
+    pub fn set_input_icon(&mut self, id: &str, icon: &str) -> bool {
+        if !valid_app_id(id) {
+            return false;
+        }
+        if icon.is_empty() {
+            return self.input_icons.remove(id).is_some();
+        }
+        if !INPUT_ICONS.iter().any(|(known, _)| *known == icon) {
+            return false;
+        }
+        self.input_icons.insert(id.into(), icon.into()) != Some(icon.into())
+    }
+
     pub fn sanitize(&mut self) {
         if self.splash_background.as_ref().is_some_and(|id| {
             !BACKGROUNDS.iter().any(|(known, _)| *known == id) && !crate::wallpapers::valid_id(id)
@@ -419,6 +960,9 @@ impl Preferences {
             });
             self.custom_tiles.truncate(TILE_LIMIT);
         }
+        self.input_icons.retain(|id, icon| {
+            valid_app_id(id) && INPUT_ICONS.iter().any(|(known, _)| *known == icon)
+        });
         self.input_modes.retain(|id, _| valid_app_id(id));
         self.input_names = std::mem::take(&mut self.input_names)
             .into_iter()
@@ -429,6 +973,21 @@ impl Preferences {
             .collect();
     }
 }
+
+/// Every bundled device SVG offered by the native input icon picker.
+pub const INPUT_ICONS: [(&str, &str); 11] = [
+    ("hdmi", "inputIconHdmi"),
+    ("usb", "inputIconUsb"),
+    ("apple-tv", "inputIconAppleTv"),
+    ("computer", "inputIconComputer"),
+    ("console", "inputIconConsole"),
+    ("playstation", "inputIconPlaystation"),
+    ("shield", "inputIconShield"),
+    ("streamer", "inputIconStreamer"),
+    ("switch", "inputIconSwitch"),
+    ("switch2", "inputIconSwitch2"),
+    ("xbox", "inputIconXbox"),
+];
 
 pub const INPUT_NAME_LIMIT: usize = 40;
 

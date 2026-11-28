@@ -94,7 +94,7 @@ export function normalizeAndVerifyPackage(bytes, manifest) {
     'assets/font-license.txt',
     'assets/font-cjk-license.txt',
     'assets/version.txt',
-    ...[350, 400, 450, 500, 550, 600, 650, 800].flatMap((weight) => [
+    ...[200, 350, 400, 450, 500, 550, 600, 650, 800].flatMap((weight) => [
       `assets/font-${weight}.ttf`,
       `assets/font-display-${weight}.ttf`,
     ]),

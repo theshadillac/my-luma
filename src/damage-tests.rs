@@ -87,19 +87,38 @@ fn older_back_buffers_need_every_change_since_their_frame() {
 }
 
 #[test]
-fn changed_clip_or_fade_state_redraws_everything() {
+fn changed_clip_or_fade_includes_the_affected_draws() {
     let mut tracker = Tracker::default();
     let clip = |y: f32| Draw::Clip(Some(Rect::new(0., y, 1920., 500.)));
     tracker.push(&[wallpaper(), clip(100.), shape(100.), Draw::Clip(None)]);
     tracker.push(&[wallpaper(), clip(120.), shape(100.), Draw::Clip(None)]);
-    assert!(tracker.damage(1).is_none());
+    assert_eq!(area(tracker.damage(1)).w, 102.);
     tracker.push(&[
         wallpaper(),
         clip(120.),
         Draw::EdgeFade(Some([0., 1., 2., 3.])),
         shape(100.),
     ]);
-    assert!(tracker.damage(1).is_none());
+    assert_eq!(area(tracker.damage(1)).w, 102.);
+}
+
+#[test]
+fn a_clip_change_redraws_the_visible_old_and_new_pixels_of_an_identical_suffix() {
+    let card = || Draw::Shape(Rect::new(0., 0., 1920., 1080.), 0., 0., [1.; 4]);
+    let clipped = |x| {
+        vec![
+            wallpaper(),
+            Draw::Clip(Some(Rect::new(x, 20., 70., 60.))),
+            card(),
+            Draw::Clip(None),
+            shape(800.),
+        ]
+    };
+    let mut tracker = Tracker::default();
+    tracker.push(&clipped(20.));
+    tracker.push(&clipped(200.));
+    let r = area(tracker.damage(1));
+    assert_eq!((r.x, r.y, r.w, r.h), (18., 18., 254., 64.));
 }
 
 #[test]
@@ -192,4 +211,71 @@ fn an_unchanged_frame_names_a_pixel_inside_the_drawable() {
             "{width}x{height}: [{x}, {y}, {w}, {h}] lies outside the drawable"
         );
     }
+}
+
+#[test]
+fn a_turned_bar_is_covered_at_every_angle() {
+    let bar = Rect::new(100., 100., 10., 200.);
+    let covered = bounds(&Draw::Rotated(bar, 5., 1.1, [1., 1., 1., 1.])).unwrap();
+    for angle in [0., 0.7, 1.5, 2.4, 3.1, 4.5] {
+        let (sin, cos) = f32::sin_cos(angle);
+        for (lx, ly) in [(-5., -100.), (5., -100.), (-5., 100.), (5., 100.)] {
+            let (x, y) = (105. + lx * cos - ly * sin, 200. + lx * sin + ly * cos);
+            assert!(
+                x >= covered.x
+                    && x <= covered.x + covered.w
+                    && y >= covered.y
+                    && y <= covered.y + covered.h,
+                "{angle}: {x},{y}"
+            );
+        }
+    }
+}
+
+#[test]
+fn moving_commands_stay_aligned_with_their_following_clip() {
+    let mut tracker = Tracker::default();
+    tracker.push(&[
+        wallpaper(),
+        Draw::Clip(Some(Rect::new(64., 100., 1792., 900.))),
+        shape(100.),
+        shape(400.),
+        shape(700.),
+        Draw::Clip(None),
+    ]);
+    tracker.push(&[
+        wallpaper(),
+        Draw::Clip(Some(Rect::new(64., 100., 1792., 900.))),
+        shape(120.),
+        shape(420.),
+        shape(720.),
+        Draw::Clip(None),
+    ]);
+    let changed = area(tracker.damage(1));
+    assert_eq!((changed.x, changed.x + changed.w), (99., 821.));
+    assert_eq!((changed.y, changed.h), (299., 102.));
+}
+
+#[test]
+fn a_sliding_row_of_many_tiles_leaves_the_static_scene_out_of_the_damage() {
+    let row = |offset: f32| (0..12).map(move |i| shape(100. + i as f32 * 140. + offset));
+    let still = || Draw::Shape(Rect::new(40., 900., 200., 100.), 8., 0., [1., 1., 1., 1.]);
+    let mut tracker = Tracker::default();
+    tracker.push(
+        &[wallpaper()]
+            .into_iter()
+            .chain(row(0.))
+            .chain([still()])
+            .collect::<Vec<_>>(),
+    );
+    tracker.push(
+        &[wallpaper()]
+            .into_iter()
+            .chain(row(20.))
+            .chain([still()])
+            .collect::<Vec<_>>(),
+    );
+    let changed = area(tracker.damage(1));
+    // Only the sliding row (y 299..401), not the still shape at the bottom.
+    assert_eq!((changed.y, changed.h), (299., 102.));
 }

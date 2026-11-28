@@ -1,5 +1,5 @@
 use crate::{
-    APP, Result,
+    APP, LEGACY_APP, Result,
     system::{self, Pipe},
 };
 use serde_json::{Value, json};
@@ -16,6 +16,7 @@ pub fn allowed(id: &str) -> bool {
             .any(|prefix| id.starts_with(prefix))
         && ![
             APP,
+            LEGACY_APP,
             "com.luma.native",
             "com.luma.launcher",
             "com.luma.launcher.native",
