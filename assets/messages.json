@@ -5999,5 +5999,22 @@
     "sv": "Spotlight-flik",
     "cs": "Karta Spotlight",
     "ca": "Pestanya Spotlight"
+  },
+  "spotlightFirst": {
+    "en": "Drawer opens on",
+    "de": "Leiste öffnet mit",
+    "es": "La bandeja abre en",
+    "zh": "抽屉打开时显示",
+    "zh-tw": "抽屜開啟時顯示",
+    "pt": "A gaveta abre em",
+    "it": "Il cassetto si apre su",
+    "ru": "Панель открывается на",
+    "pl": "Szuflada otwiera się na",
+    "fr": "Le tiroir s’ouvre sur",
+    "vi": "Ngăn mở ở",
+    "nl": "Lade opent op",
+    "sv": "Lådan öppnas på",
+    "cs": "Zásuvka se otevře na",
+    "ca": "El calaix s’obre a"
   }
 }

@@ -37,7 +37,8 @@ pub const SECTION_KEYS: [&str; 7] = [
 ];
 
 /// The setting rows each list section shows, in order (System lists its own below the update card).
-pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
+pub fn section_rows(section: usize, preferences: &Preferences) -> Vec<usize> {
+    let ui_sounds = preferences.ui_sounds;
     match section {
         HOME_SECTION => vec![
             0,
@@ -47,7 +48,13 @@ pub fn section_rows(section: usize, ui_sounds: bool) -> Vec<usize> {
             TILE_LIFT_ROW,
             MORE_APPS_ROW,
         ],
-        DRAWER_SECTION => vec![DRAWER_TOOLBAR_ROW, APP_SORTING_ROW, SPOTLIGHT_ROW],
+        DRAWER_SECTION => {
+            let mut rows = vec![DRAWER_TOOLBAR_ROW, APP_SORTING_ROW, SPOTLIGHT_ROW];
+            if preferences.spotlight {
+                rows.push(SPOTLIGHT_FIRST_ROW);
+            }
+            rows
+        }
         AMBIENT_SECTION => vec![
             AMBIENT_ROW,
             POWER_ON_ROW,
@@ -109,6 +116,8 @@ pub const HOLIDAYS_ROW: usize = 30;
 pub const POWER_ON_ROW: usize = 31;
 /// Spotlight: the app drawer's Apps | Spotlight tabs with Plex rows.
 pub const SPOTLIGHT_ROW: usize = 32;
+/// Which tab the drawer opens on, with Spotlight on.
+pub const SPOTLIGHT_FIRST_ROW: usize = 33;
 /// The Plex app on LG TVs, opened from a Spotlight card.
 pub const PLEX_APP: &str = "cdp-30";
 
@@ -1175,6 +1184,31 @@ impl State {
         self.ease_in_page();
         self.focus = self.first_content();
         self.drawer_return = from;
+        if self.preferences.spotlight && self.preferences.spotlight_first {
+            // The rows load from the main loop (take_spotlight_load).
+            self.spotlight_open = true;
+            let column = self.spotlight.columns.first().copied().unwrap_or(0);
+            self.focus = self.spotlight_card(0, column);
+        }
+    }
+
+    /// Spotlight is showing with no fresh rows and none on the way: start loading (once).
+    pub fn take_spotlight_load(&mut self) -> bool {
+        let stale = self
+            .spotlight
+            .loaded
+            .is_none_or(|loaded| loaded.elapsed() > SPOTLIGHT_STALE);
+        if self.spotlight_tabs()
+            && self.spotlight_open
+            && self.plex_ready
+            && stale
+            && !self.spotlight.loading
+        {
+            self.spotlight.loading = true;
+            self.spotlight.error = None;
+            return true;
+        }
+        false
     }
 
     /// Leaves the app drawer for Home, on the favourite it was opened from where possible.
@@ -2353,7 +2387,7 @@ impl State {
             SYSTEM_SECTION if self.available_update.is_some() => Target::InstallUpdate,
             SYSTEM_SECTION => Target::CheckUpdates,
             section => Target::Setting(
-                section_rows(section, self.preferences.ui_sounds)
+                section_rows(section, &self.preferences)
                     .first()
                     .copied()
                     .unwrap_or(0),
@@ -4032,6 +4066,9 @@ impl State {
                     }
                     APP_SORTING_ROW => {
                         self.preferences.app_sorting = self.preferences.app_sorting.next()
+                    }
+                    SPOTLIGHT_FIRST_ROW => {
+                        self.preferences.spotlight_first = !self.preferences.spotlight_first;
                     }
                     SPOTLIGHT_ROW => {
                         self.preferences.spotlight = !self.preferences.spotlight;

@@ -5333,3 +5333,48 @@ fn spotlight_tabs_sit_above_the_drawer_and_load_plex_rows() {
     assert!(state.select_drawer_tab(true).is_empty());
     assert!(!state.spotlight_open);
 }
+
+#[test]
+fn the_drawer_can_open_on_spotlight() {
+    let mut state = ready();
+    state.preferences.spotlight = true;
+    state.plex_ready = true;
+    state.open_drawer();
+    assert!(!state.spotlight_open, "Apps first by default");
+    assert!(!state.take_spotlight_load());
+    state.return_home();
+    state.preferences.spotlight_first = true;
+    state.open_drawer();
+    assert!(state.spotlight_open);
+    assert_eq!(state.focus, Target::DrawerTab(1), "no rows yet: the tab");
+    assert!(state.take_spotlight_load());
+    assert!(!state.take_spotlight_load(), "only once while loading");
+    // Rows loaded earlier: the drawer opens on the first card of the first row.
+    state.spotlight_loaded(Ok(vec![crate::plex::Row {
+        kind: crate::plex::RowKind::RecentlyAdded,
+        items: vec![crate::plex::Item {
+            key: "1".into(),
+            title: "Dune".into(),
+            subtitle: String::new(),
+            progress: 0.,
+            poster_path: None,
+            poster: None,
+        }],
+    }]));
+    state.return_home();
+    state.open_drawer();
+    assert_eq!(state.focus, Target::SpotlightCard(0, 0));
+    // The option shows only with Spotlight on.
+    assert!(
+        crate::state::section_rows(crate::state::DRAWER_SECTION, &state.preferences)
+            .contains(&crate::state::SPOTLIGHT_FIRST_ROW)
+    );
+    state.preferences.spotlight = false;
+    assert!(
+        !crate::state::section_rows(crate::state::DRAWER_SECTION, &state.preferences)
+            .contains(&crate::state::SPOTLIGHT_FIRST_ROW)
+    );
+    state.return_home();
+    state.open_drawer();
+    assert!(!state.spotlight_open);
+}

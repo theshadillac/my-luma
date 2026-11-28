@@ -1220,6 +1220,9 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         let unix = state::unix_now();
+        if state.take_spotlight_load() {
+            wallpaper_service.spotlight();
+        }
         let plex_ready = wallpaper_service.plex_ready();
         if state.plex_ready != plex_ready {
             state.plex_ready = plex_ready;

@@ -679,6 +679,8 @@ pub struct Preferences {
     pub drawer_toolbar: bool,
     /// The app drawer's Apps | Spotlight tabs, with Plex rows (fork option, off by default).
     pub spotlight: bool,
+    /// With Spotlight on, the drawer opens on Spotlight instead of the apps (fork option).
+    pub spotlight_first: bool,
     /// Short synthesized navigation, select and Back sounds (off by default).
     pub ui_sounds: bool,
     /// UI sound volume (fork option).
@@ -759,6 +761,7 @@ impl Default for Preferences {
             weather_effects: false,
             drawer_toolbar: true,
             spotlight: false,
+            spotlight_first: false,
             ui_sounds: false,
             ui_sound_level: UiSoundLevel::default(),
             ui_sound_output: None,

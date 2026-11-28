@@ -8,9 +8,10 @@ use crate::{
         DAY_NIGHT_ROW, DRAWER_TOOLBAR_ROW, GLASS_CLOCK_ROW, HOLIDAY_REMINDERS_ROW, HOLIDAYS_ROW,
         HOME_FADE_LEFT, HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH,
         HOME_TILE_WIDTH, KEYS, LANDING_DROP, LANDING_ROW, MORE_APPS_ROW, Overlay, PIXEL_SHIFT_ROW,
-        POWER_ON_ROW, Page, QUICK_PANEL_ROW, Rect, SPOTLIGHT_ROW, SYSTEM_SECTION, State, Subpage,
-        TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW, UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW,
-        WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW, WIDGETS_SECTION,
+        POWER_ON_ROW, Page, QUICK_PANEL_ROW, Rect, SPOTLIGHT_FIRST_ROW, SPOTLIGHT_ROW,
+        SYSTEM_SECTION, State, Subpage, TILE_LIFT_ROW, Target, TextField, UI_SOUND_LEVEL_ROW,
+        UI_SOUND_OUTPUT_ROW, UI_SOUNDS_ROW, WALLPAPER_TINT_ROW, WEATHER_EFFECTS_ROW,
+        WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -2701,6 +2702,13 @@ fn weather_summary(
 
 fn library(out: &mut Scene, state: &State, assets: &Assets) {
     if state.spotlight_tabs() && state.spotlight_open {
+        // A dark scrim behind the posters so they stand out from the wallpaper.
+        out.draw.push(Draw::RoundedGradient(
+            Rect::new(0., 0., 1920., 1080.),
+            0.,
+            c(0x000000, 0.5),
+            c(0x000000, 0.72),
+        ));
         spotlight(out, state, assets);
     } else {
         library_grid(out, state, assets);
@@ -4038,6 +4046,17 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     false,
                 ),
                 (
+                    SPOTLIGHT_FIRST_ROW,
+                    "spotlightFirst",
+                    "grid",
+                    Some(if state.preferences.spotlight_first {
+                        "Spotlight"
+                    } else {
+                        language.t("apps")
+                    }),
+                    false,
+                ),
+                (
                     SPOTLIGHT_ROW,
                     "spotlightSetting",
                     "sparkles",
@@ -4150,7 +4169,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets, now: Offset
                     false,
                 ),
             ];
-            let order = crate::state::section_rows(state.section, state.preferences.ui_sounds);
+            let order = crate::state::section_rows(state.section, &state.preferences);
             for (position, (index, key, icon, value, chevron)) in order
                 .iter()
                 .filter_map(|wanted| all.iter().find(|row| row.0 == *wanted).cloned())
