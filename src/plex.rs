@@ -59,6 +59,26 @@ const DISCOVER_HUBS: [&str; 4] = [
     "home.watchlist-available",
 ];
 const DISCOVER_LATE: [&str; 1] = ["home.top_watchlisted"];
+/// Services whose trending rows Stephen doesn't want.
+const SKIPPED_SERVICES: [&str; 4] = ["paramount-plus", "paramount-network", "amc", "aande"];
+/// Services always asked for, in this order, even when Plex's home doesn't list them.
+const WANTED_SERVICES: [(&str, &str); 2] = [
+    ("netflix", "Trending on Netflix"),
+    ("appletv", "Trending on Apple TV"),
+];
+/// Broadcast networks, merged into one row that opens YouTube TV.
+const NETWORKS: [&str; 4] = ["nbc", "abc", "cbs", "fox"];
+pub const NETWORK_TITLE: &str = "Trending on Network TV";
+/// The app a network row opens; it has no brand, so it is found by its title.
+pub const YOUTUBE_TV: &str = "youtube-tv";
+
+/// One Spotlight row from Plex Discover: one list, or several merged (the networks).
+#[derive(Debug, PartialEq)]
+struct Hub {
+    keys: Vec<String>,
+    title: String,
+    service: Option<&'static str>,
+}
 
 fn row(title: &str, service: Option<&'static str>, items: Vec<Item>) -> Row {
     Row {
@@ -262,18 +282,25 @@ impl Client {
         };
         discover_hubs(&home)
             .into_iter()
-            .filter_map(|(key, title, service)| {
-                let started = Instant::now();
-                match self.get_json(&discover_base(), token, &key) {
-                    Ok(list) => Some(row(&title, service, items(&list))),
-                    Err(error) => {
-                        eprintln!(
-                            "Luma spotlight: {title}: {error} after {} ms",
-                            started.elapsed().as_millis()
-                        );
-                        None
-                    }
-                }
+            .filter_map(|hub| {
+                let lists: Vec<Vec<Item>> = hub
+                    .keys
+                    .iter()
+                    .filter_map(|key| {
+                        let started = Instant::now();
+                        self.get_json(&discover_base(), token, key)
+                            .map_err(|error| {
+                                eprintln!(
+                                    "Luma spotlight: {} ({key}): {error} after {} ms",
+                                    hub.title,
+                                    started.elapsed().as_millis()
+                                )
+                            })
+                            .ok()
+                    })
+                    .map(|list| items(&list))
+                    .collect();
+                (!lists.is_empty()).then(|| row(&hub.title, hub.service, interleave(lists)))
             })
             .collect()
     }
@@ -338,19 +365,11 @@ impl Client {
                 .or(value["rating"].as_f64())
                 .unwrap_or(0.)
         };
-        let plays = |value: &Value| value["viewCount"].as_f64().unwrap_or(0.);
-        vec![
-            row(
-                "Top rated in your library",
-                None,
-                gather("unwatched=1&sort=audienceRating:desc", &rating),
-            ),
-            row(
-                "Most played in your library",
-                None,
-                gather("sort=viewCount:desc", &plays),
-            ),
-        ]
+        vec![row(
+            "Top rated in your library",
+            None,
+            gather("unwatched=1&sort=audienceRating:desc", &rating),
+        )]
     }
 
     /// A small poster (about 240 × 360). TMDB posters come straight from TMDB at a small
@@ -455,44 +474,113 @@ impl Client {
     }
 }
 
-/// The discovery rows Spotlight shows, in order: (address, title, service brand). Trending
-/// on each of the user's services follows the first three rows.
-fn discover_hubs(home: &Value) -> Vec<(String, String, Option<&'static str>)> {
+/// Several lists as one: their items in turn, each title once, at most a row's worth.
+fn interleave(lists: Vec<Vec<Item>>) -> Vec<Item> {
+    let mut lists: Vec<std::vec::IntoIter<Item>> = lists.into_iter().map(Vec::into_iter).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut merged = Vec::new();
+    while merged.len() < ROW_LIMIT {
+        let mut any = false;
+        for list in &mut lists {
+            if let Some(item) = list.next() {
+                any = true;
+                if merged.len() < ROW_LIMIT && seen.insert(item.key.clone()) {
+                    merged.push(item);
+                }
+            }
+        }
+        if !any {
+            break;
+        }
+    }
+    merged
+}
+
+/// The discovery rows Spotlight shows, in order. After the first three: trending on Netflix
+/// and Apple TV (asked for even when unlisted), on each other listed service (minus the
+/// skipped ones), then one row merging the broadcast networks.
+fn discover_hubs(home: &Value) -> Vec<Hub> {
     let hubs = home["MediaContainer"]["Hub"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let hub = |id: &str| {
+    let safe_key = |key: &str| {
+        key.starts_with("/hubs/sections/home/")
+            && key.len() <= 120
+            && key[20..]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
+    };
+    let listed = |hub: &Value| -> Option<Hub> {
+        let key = hub["key"].as_str().filter(|key| safe_key(key))?;
+        Some(Hub {
+            keys: vec![key.to_owned()],
+            title: hub["title"].as_str().unwrap_or_default().to_owned(),
+            service: hub["platform"].as_str().and_then(service_brand),
+        })
+    };
+    let by_id = |id: &str| {
         hubs.iter()
             .find(|hub| hub["hubIdentifier"].as_str() == Some(id))
+            .and_then(listed)
     };
-    let services = hubs.iter().filter(|hub| {
-        hub["hubIdentifier"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("home.trend-"))
-    });
-    DISCOVER_HUBS[..3]
+    let trend_key = |platform: &str| format!("/hubs/sections/home/trend-{platform}");
+    let trending: Vec<(&str, &Value)> = hubs
         .iter()
-        .filter_map(|id| hub(id))
-        .chain(services)
-        .chain(DISCOVER_HUBS[3..].iter().filter_map(|id| hub(id)))
-        .chain(DISCOVER_LATE.iter().filter_map(|id| hub(id)))
         .filter_map(|hub| {
-            let key = hub["key"].as_str()?;
-            (key.starts_with("/hubs/sections/home/")
-                && key.len() <= 120
-                && key[20..]
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)))
-            .then(|| {
+            let id = hub["hubIdentifier"].as_str()?;
+            id.starts_with("home.trend-").then(|| {
                 (
-                    key.to_owned(),
-                    hub["title"].as_str().unwrap_or_default().to_owned(),
-                    hub["platform"].as_str().and_then(service_brand),
+                    hub["platform"]
+                        .as_str()
+                        .unwrap_or(&id["home.trend-".len()..]),
+                    hub,
                 )
             })
         })
-        .collect()
+        .collect();
+    let listed_for = |platform: &str| {
+        trending
+            .iter()
+            .find(|(listed, _)| *listed == platform)
+            .and_then(|(_, hub)| listed(hub))
+    };
+    let mut rows: Vec<Hub> = DISCOVER_HUBS[..3]
+        .iter()
+        .filter_map(|id| by_id(id))
+        .collect();
+    for (platform, title) in WANTED_SERVICES {
+        rows.push(listed_for(platform).unwrap_or_else(|| Hub {
+            keys: vec![trend_key(platform)],
+            title: title.to_owned(),
+            service: service_brand(platform),
+        }));
+    }
+    rows.extend(
+        trending
+            .iter()
+            .filter(|(platform, _)| {
+                !SKIPPED_SERVICES.contains(platform)
+                    && !NETWORKS.contains(platform)
+                    && !WANTED_SERVICES.iter().any(|(wanted, _)| wanted == platform)
+            })
+            .filter_map(|(_, hub)| listed(hub)),
+    );
+    rows.push(Hub {
+        keys: NETWORKS
+            .iter()
+            .map(|network| {
+                listed_for(network)
+                    .and_then(|hub| hub.keys.into_iter().next())
+                    .unwrap_or_else(|| trend_key(network))
+            })
+            .collect(),
+        title: NETWORK_TITLE.to_owned(),
+        service: Some(YOUTUBE_TV),
+    });
+    rows.extend(DISCOVER_HUBS[3..].iter().filter_map(|id| by_id(id)));
+    rows.extend(DISCOVER_LATE.iter().filter_map(|id| by_id(id)));
+    rows
 }
 
 fn valid_token(token: &str) -> bool {
@@ -666,24 +754,53 @@ mod tests {
             {"hubIdentifier": "home.top_watchlisted", "key": "/hubs/sections/home/top_watchlisted", "title": "Most Watchlisted This Week"},
             {"hubIdentifier": "home.trending-for-you", "key": "/hubs/sections/home/trending-for-you", "title": "Trending on Your Services"},
             {"hubIdentifier": "home.trend-amazon-prime-video", "key": "/hubs/sections/home/trend-amazon-prime-video", "title": "Trending on Prime Video", "platform": "amazon-prime-video"},
+            {"hubIdentifier": "home.trend-amc", "key": "/hubs/sections/home/trend-amc", "title": "Trending on AMC", "platform": "amc"},
+            {"hubIdentifier": "home.trend-nbc", "key": "/hubs/sections/home/trend-nbc-x", "title": "Trending on NBC", "platform": "nbc"},
             {"hubIdentifier": "home.watchlist-available", "key": "/hubs/sections/home/watchlist-available", "title": "Available on Your Services"},
             {"hubIdentifier": "home.recommended-on-services", "key": "/hubs/sections/home/recommended-on-services", "title": "Recommended on Your Services"},
             {"hubIdentifier": "home.new-for-you", "key": "https://elsewhere.example/x", "title": "New on Your Services"},
             {"hubIdentifier": "home.festive-favorites", "key": "/hubs/sections/home/festive-favorites", "title": "Santa’s Nice List"}
         ]}});
         let hubs = discover_hubs(&home);
-        let titles: Vec<&str> = hubs.iter().map(|(_, title, _)| title.as_str()).collect();
+        let titles: Vec<&str> = hubs.iter().map(|hub| hub.title.as_str()).collect();
         assert_eq!(
             titles,
             [
                 "Trending on Your Services",
                 "Recommended on Your Services",
+                "Trending on Netflix",
+                "Trending on Apple TV",
                 "Trending on Prime Video",
+                "Trending on Network TV",
                 "Available on Your Services",
                 "Most Watchlisted This Week"
             ]
         );
-        assert_eq!(hubs[2].2, Some("prime-video"));
+        assert_eq!(hubs[2].keys, ["/hubs/sections/home/trend-netflix"]);
+        assert_eq!(hubs[2].service, Some("netflix"));
+        assert_eq!(hubs[3].service, Some("apple-tv"));
+        assert_eq!(hubs[4].service, Some("prime-video"));
+        assert_eq!(hubs[5].service, Some(YOUTUBE_TV));
+        assert_eq!(hubs[5].keys.len(), 4);
+        assert_eq!(
+            hubs[5].keys[0], "/hubs/sections/home/trend-nbc-x",
+            "a listed network keeps its own list"
+        );
+        assert_eq!(hubs[5].keys[1], "/hubs/sections/home/trend-abc");
+        let card = |key: &str| Item {
+            key: key.into(),
+            title: key.into(),
+            subtitle: String::new(),
+            progress: 0.,
+            poster_path: None,
+            poster: None,
+        };
+        let merged = interleave(vec![
+            vec![card("a1"), card("same"), card("a3")],
+            vec![card("b1"), card("same")],
+        ]);
+        let keys: Vec<&str> = merged.iter().map(|item| item.key.as_str()).collect();
+        assert_eq!(keys, ["a1", "b1", "same", "a3"]);
         let list = json!({"MediaContainer": {"Metadata": [
             {"ratingKey": "6b0a39ff7c1ba206aa77cd4a", "type": "placeholder", "url": "https://discover.provider.plex.tv/ad/tile"},
             {"ratingKey": "5d9c0855ffd9ef001e991de0", "type": "show", "title": "Bob's Burgers", "year": 2011,

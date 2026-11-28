@@ -5337,6 +5337,28 @@ fn spotlight_tabs_sit_above_the_drawer_and_load_plex_rows() {
             .into()
         )]
     );
+    // The network row opens YouTube TV, found by its title; Plex when it isn't installed.
+    let mut rows = state.spotlight.rows.clone();
+    rows.push(crate::plex::Row {
+        title: crate::plex::NETWORK_TITLE.into(),
+        service: Some(crate::plex::YOUTUBE_TV),
+        items: vec![item("5")],
+    });
+    state.spotlight_loaded(Ok(rows));
+    state.focus = Target::SpotlightCard(2, 0);
+    state.inventory.apps.retain(|app| app.title != "YouTube TV");
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch(crate::state::PLEX_APP.into())]
+    );
+    let mut youtube_tv = state.inventory.apps[0].clone();
+    youtube_tv.id = "youtube.leanback.ytv.v1".into();
+    youtube_tv.title = "YouTube TV".into();
+    state.inventory.apps.push(youtube_tv);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Launch("youtube.leanback.ytv.v1".into())]
+    );
     // Back to Apps, then Spotlight again: no reload yet.
     state.focus = Target::DrawerTab(1);
     let c = controls(&state);

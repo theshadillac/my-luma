@@ -3753,22 +3753,27 @@ impl State {
             Target::DrawerTab(tab) => return self.select_drawer_tab(tab == 1),
             // Apps take no links to a title from other apps: a card in a service's row opens
             // that service's app when installed, every other card opens Plex.
+            // The network row opens YouTube TV, found by its title (it has no brand).
             Target::SpotlightCard(row, _) => {
-                let service = self
-                    .spotlight
-                    .rows
-                    .get(row)
-                    .and_then(|row| row.service)
-                    .and_then(crate::branding::for_key)
-                    .and_then(|brand| {
-                        brand
-                            .ids
-                            .iter()
-                            .find(|id| self.inventory.apps.iter().any(|app| app.id == **id))
-                    });
-                return vec![Effect::Launch(
-                    service.map_or(PLEX_APP.to_string(), |id| (*id).to_string()),
-                )];
+                let service = self.spotlight.rows.get(row).and_then(|row| row.service);
+                let app = if service == Some(crate::plex::YOUTUBE_TV) {
+                    self.inventory
+                        .apps
+                        .iter()
+                        .find(|app| app.title.trim().eq_ignore_ascii_case("YouTube TV"))
+                        .map(|app| app.id.clone())
+                } else {
+                    service
+                        .and_then(crate::branding::for_key)
+                        .and_then(|brand| {
+                            brand
+                                .ids
+                                .iter()
+                                .find(|id| self.inventory.apps.iter().any(|app| app.id == **id))
+                        })
+                        .map(|id| (*id).to_string())
+                };
+                return vec![Effect::Launch(app.unwrap_or_else(|| PLEX_APP.to_string()))];
             }
             Target::MoreApps => self.open_drawer(),
             Target::ClockPosition => {
