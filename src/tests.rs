@@ -5395,3 +5395,46 @@ fn the_drawer_can_open_on_spotlight() {
     state.open_drawer();
     assert!(!state.spotlight_open);
 }
+
+#[test]
+fn every_spotlight_row_is_reachable_with_down() {
+    let mut state = ready();
+    state.preferences.spotlight = true;
+    state.plex_ready = true;
+    state.open(1);
+    state.select_drawer_tab(true);
+    let rows = (0..8)
+        .map(|row| crate::plex::Row {
+            title: format!("Row {row}"),
+            service: None,
+            items: (0..12)
+                .map(|i| crate::plex::Item {
+                    key: format!("{row}x{i}"),
+                    title: format!("Title {i}"),
+                    subtitle: String::new(),
+                    progress: 0.,
+                    poster_path: None,
+                    poster: None,
+                })
+                .collect(),
+        })
+        .collect();
+    state.spotlight_loaded(Ok(rows));
+    state.focus = Target::DrawerTab(1);
+    for row in 0..8 {
+        let c = controls(&state);
+        state.direction(Direction::Down, &c);
+        let c = controls(&state);
+        state.reveal_focus(&c);
+        assert_eq!(state.focus, Target::SpotlightCard(row, 0), "row {row}");
+    }
+    assert!(state.scroll > 0., "the page scrolled to the lower rows");
+    // And back up to the tabs.
+    for _ in 0..8 {
+        let c = controls(&state);
+        state.direction(Direction::Up, &c);
+        let c = controls(&state);
+        state.reveal_focus(&c);
+    }
+    assert_eq!(state.focus, Target::DrawerTab(1));
+}

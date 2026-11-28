@@ -2810,7 +2810,22 @@ fn spotlight(out: &mut Scene, state: &State, assets: &Assets) {
         .push(Draw::Clip(Some(Rect::new(0., 132., 1920., 948.))));
     for (row_index, row) in spot.rows.iter().enumerate() {
         let top = SPOTLIGHT_TOP + row_index as f32 * SPOTLIGHT_ROW_PITCH - s;
+        let column = spot.columns.get(row_index).copied().unwrap_or(0);
+        let first = column.saturating_sub(SPOTLIGHT_STEADY);
         if top > 1080. || top + SPOTLIGHT_ROW_PITCH < 0. {
+            // Off screen: not drawn, but its cards stay focusable, so Up and Down reach them
+            // and scrolling brings them into view.
+            for index in first..row.items.len() {
+                let x = 84. + (index - first) as f32 * (w + SPOTLIGHT_GAP);
+                if x > 1920. {
+                    break;
+                }
+                out.control(
+                    Target::SpotlightCard(row_index, index),
+                    Rect::new(x, top + 52., w, h + 66.),
+                    true,
+                );
+            }
             continue;
         }
         out.text(
@@ -2820,8 +2835,6 @@ fn spotlight(out: &mut Scene, state: &State, assets: &Assets) {
             WHITE,
             false,
         );
-        let column = spot.columns.get(row_index).copied().unwrap_or(0);
-        let first = column.saturating_sub(SPOTLIGHT_STEADY);
         for (index, item) in row.items.iter().enumerate().skip(first) {
             let x = 84. + (index - first) as f32 * (w + SPOTLIGHT_GAP);
             if x > 1920. {

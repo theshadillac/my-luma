@@ -41,6 +41,16 @@ pub struct Row {
 
 /// Plex's discovery service: trending and recommendations for the user's chosen services.
 const DISCOVER: &str = "https://discover.provider.plex.tv";
+
+/// The discovery service's address; desktop test builds can point it at a local stand-in.
+fn discover_base() -> String {
+    if cfg!(debug_assertions)
+        && let Ok(base) = std::env::var("LUMA_PLEX_DISCOVER")
+    {
+        return base;
+    }
+    DISCOVER.to_owned()
+}
 /// Discovery rows shown, in this order; "Trending on <service>" rows follow the first three.
 const DISCOVER_HUBS: [&str; 4] = [
     "home.trending-for-you",
@@ -159,6 +169,7 @@ impl Client {
 
     /// Spotlight's rows, with the posters already saved; `fill_posters` fetches the rest.
     pub fn rows(&mut self, posters: &Path) -> Result<Vec<Row>, String> {
+        let loading = Instant::now();
         let token = self
             .token()
             .ok_or("Add your Plex token on the phone page first")?;
@@ -189,6 +200,14 @@ impl Client {
         {
             rows.extend(self.library_rows(server, &token));
         }
+        for row in &rows {
+            eprintln!("Luma spotlight: {}: {} cards", row.title, row.items.len());
+        }
+        eprintln!(
+            "Luma spotlight: {} rows in {} ms",
+            rows.len(),
+            loading.elapsed().as_millis()
+        );
         rows.retain(|row| !row.items.is_empty());
         if rows.is_empty() {
             return Err(local_error
@@ -234,22 +253,39 @@ impl Client {
 
     /// Plex's discovery rows for the services chosen in the user's Plex account.
     fn discover_rows(&self, token: &str) -> Vec<Row> {
-        let Ok(home) = self.get_json(DISCOVER, token, "/hubs/sections/home") else {
-            return Vec::new();
+        let home = match self.get_json(&discover_base(), token, "/hubs/sections/home") {
+            Ok(home) => home,
+            Err(error) => {
+                eprintln!("Luma spotlight: Plex Discover: {error}");
+                return Vec::new();
+            }
         };
         discover_hubs(&home)
             .into_iter()
             .filter_map(|(key, title, service)| {
-                let list = self.get_json(DISCOVER, token, &key).ok()?;
-                Some(row(&title, service, items(&list)))
+                let started = Instant::now();
+                match self.get_json(&discover_base(), token, &key) {
+                    Ok(list) => Some(row(&title, service, items(&list))),
+                    Err(error) => {
+                        eprintln!(
+                            "Luma spotlight: {title}: {error} after {} ms",
+                            started.elapsed().as_millis()
+                        );
+                        None
+                    }
+                }
             })
             .collect()
     }
 
     /// From the user's own movie and TV libraries: top rated not yet watched, most played.
     fn library_rows(&self, server: &str, token: &str) -> Vec<Row> {
-        let Ok(sections) = self.get_json(server, token, "/library/sections") else {
-            return Vec::new();
+        let sections = match self.get_json(server, token, "/library/sections") {
+            Ok(sections) => sections,
+            Err(error) => {
+                eprintln!("Luma spotlight: libraries: {error}");
+                return Vec::new();
+            }
         };
         let libraries: Vec<(String, &str)> = sections["MediaContainer"]["Directory"]
             .as_array()
@@ -276,6 +312,7 @@ impl Client {
                         token,
                         &format!("/library/sections/{key}/all?type={kind}&{query}"),
                     )
+                    .map_err(|error| eprintln!("Luma spotlight: library {key}: {error}"))
                     .ok()
                 })
                 .flat_map(|list| {
@@ -373,9 +410,17 @@ impl Client {
                 .header("X-Plex-Client-Identifier", "lume-tv")
                 .call()
                 .map_err(unreachable)?;
+            let mut response = response;
             if !response.status().is_redirection() {
                 break response;
             }
+            // Read the redirect's own reply to the end, so its connection is clean for the
+            // next request.
+            let _ = response
+                .body_mut()
+                .as_reader()
+                .take(256 * 1024)
+                .read_to_end(&mut Vec::new());
             // Plex's discovery service redirects to add the user's chosen services. Follow
             // only to the same host, so the token never goes anywhere else.
             let location = response
