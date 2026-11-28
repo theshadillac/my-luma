@@ -33,3 +33,9 @@ Opt-in (1, 4); posters lazy-loaded and cached, page built only when opened (2); 
 - Server: phone-page address if given, else GDM. Token: phone page > Spotlight: Plex; plex-token and plex-server files, 0600.
 - OK on a card opens Plex (cdp-30). Reload when shown after 5 minutes.
 - Not yet tested against Stephen's real server.
+
+## 1.3.1 and 1.4.0 (2026-11-27)
+- 1.3.1: dark scrim behind Spotlight; "Drawer opens on: Apps / Spotlight".
+- Stephen: Up next and Recently added not wanted; wants discovery like Plex's own home (trending, popular, top rated from his collection).
+- Probed on the TV: discover.provider.plex.tv/hubs/sections/home answers for his token; each hub is a placeholder whose items come from its key, which 302-redirects to add his chosen services (aande, abc, amazon-prime-video, amc, appletv, disney-plus, max, hulu, nbc, netflix, paramount-network, paramount-plus, the-roku-channel, showtime, starz, sundance-now, vice-tv). Items: type movie/show/placeholder (ad tiles), thumb on image.tmdb.org or metadata-static.plex.tv. Per-service hubs carry "platform". Items don't name their service.
+- 1.4.0 rows: Continue watching; Trending / Recommended / New on Your Services; Trending on <service>; Available on Your Services; Most Watchlisted This Week; Top rated (unwatched) and Most played in his libraries (library 1 movies, 2 and 7 TV). Service rows open the service app; others open Plex. TMDB key no longer needed for trending; only for network TV later.
